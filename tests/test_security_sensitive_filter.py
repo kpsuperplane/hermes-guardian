@@ -29,7 +29,12 @@ def test_sensitive_reason_detects_core_security_flows():
         ("Your verification code is 123456", "auth code"),
         ("Use this one-time code: 123456", "one-time code"),
         ("Open your magic link to sign in", "magic link"),
+        ("One time [redacted]", "one-time code"),
         ("Security alert: new sign-in detected", "security alert"),
+        ("A new public key was added to your repository", "security key change"),
+        ("A new SSH key was added to your account", "security key change"),
+        ("GitHub token [redacted]", "redacted security content"),
+        ("Subject: [redacted sensitive subject]", "redacted sensitive email"),
         ("https://example.com/reset-password?token=abc", "sensitive link"),
         ("[sensitive email subject redacted]", "redacted sensitive email"),
     ]
@@ -151,6 +156,28 @@ def test_transform_tool_result_replaces_sensitive_plain_text_result():
     }
 
 
+def test_transform_tool_result_removes_sensitive_plain_text_records():
+    plugin = load_plugin()
+
+    transformed = plugin._on_transform_tool_result(
+        tool_name="gmail",
+        result=(
+            "From: GitHub\n"
+            "Subject: A new public key was added\n\n"
+            "From: Kevin Pei\n"
+            "Subject: Hello\n"
+            "Body: How are you?\n\n"
+            "From: Kevin Pei\n"
+            "Subject: One time [redacted]\n"
+        ),
+    )
+
+    parsed = parse_json(transformed)
+    assert parsed["result"] == "From: Kevin Pei\nSubject: Hello\nBody: How are you?"
+    assert parsed["security_sensitive_filter"]["suppressed_count"] == 2
+    assert parsed["security_sensitive_filter"]["reason"] == "security key change"
+
+
 def test_transform_tool_result_leaves_normal_plain_text_unchanged():
     plugin = load_plugin()
 
@@ -171,6 +198,29 @@ def test_transform_tool_result_replaces_sensitive_result_string_in_json():
     parsed = parse_json(transformed)
     assert parsed["result"] == "[suppressed by security-sensitive-filter]"
     assert parsed["security_sensitive_filter"]["reason"] == "auth code"
+
+
+def test_transform_tool_result_scrubs_plain_text_batch_in_json_result():
+    plugin = load_plugin()
+
+    transformed = plugin._on_transform_tool_result(
+        tool_name="gmail",
+        result=json.dumps({
+            "result": (
+                "From: GitHub\n"
+                "Subject: A new public key was added\n\n"
+                "From: Kevin Pei\n"
+                "Subject: Hello\n"
+                "Body: How are you?\n\n"
+                "From: Kevin Pei\n"
+                "Subject: One time [redacted]\n"
+            )
+        }),
+    )
+
+    parsed = parse_json(transformed)
+    assert parsed["result"] == "From: Kevin Pei\nSubject: Hello\nBody: How are you?"
+    assert parsed["security_sensitive_filter"]["suppressed_count"] == 2
 
 
 def test_transform_tool_result_removes_sensitive_list_items_entirely():
@@ -200,6 +250,40 @@ def test_transform_tool_result_removes_sensitive_list_items_entirely():
     ]
     assert parsed["security_sensitive_filter"]["suppressed_count"] == 1
     assert parsed["security_sensitive_filter"]["reason"] == "redacted sensitive email"
+
+
+def test_transform_tool_result_removes_redacted_security_subjects_entirely():
+    plugin = load_plugin()
+
+    transformed = plugin._on_transform_tool_result(
+        tool_name="mcp_search",
+        result=json.dumps({
+            "result": [
+                {
+                    "id": "1",
+                    "subject": "[GitHub] A new public key was added",
+                    "snippet": "security notice",
+                },
+                {
+                    "id": "2",
+                    "subject": "Hello",
+                    "snippet": "How are you?",
+                },
+                {
+                    "id": "3",
+                    "subject": "One time [redacted]",
+                    "snippet": "redacted code",
+                },
+            ]
+        }),
+    )
+
+    parsed = parse_json(transformed)
+    assert parsed["result"] == [
+        {"id": "2", "subject": "Hello", "snippet": "How are you?"}
+    ]
+    assert parsed["security_sensitive_filter"]["suppressed_count"] == 2
+    assert parsed["security_sensitive_filter"]["reason"] == "security key change"
 
 
 def test_transform_tool_result_removes_sensitive_nested_list_items():
@@ -276,6 +360,79 @@ def test_pre_gateway_dispatch_ignores_missing_or_non_text_events():
     assert plugin._on_pre_gateway_dispatch(event=SimpleNamespace(text=123)) is None
 
 
+def test_transform_llm_output_removes_sensitive_email_rows_from_final_response():
+    plugin = load_plugin()
+
+    transformed = plugin._on_transform_llm_output(
+        response_text=(
+            "Loaded your 3 most recent inbox emails:\n\n"
+            "1. Sat, 6 Jun 2026 19:44:07 +0000\n"
+            "   From: Kevin Pei <...@hotmail.com>\n"
+            "   Subject: Hello\n"
+            "   Unread: no\n"
+            "   ID: normal\n\n"
+            "2. Sat, 6 Jun 2026 19:43:59 +0000\n"
+            "   From: Kevin Pei <...@hotmail.com>\n"
+            "   Subject: [redacted sensitive subject]\n"
+            "   Unread: yes\n"
+            "   ID: sensitive-a\n\n"
+            "3. Sat, 6 Jun 2026 19:43:43 +0000\n"
+            "   From: Kevin Pei <...@hotmail.com>\n"
+            "   Subject: [redacted sensitive subject]\n"
+            "   Unread: yes\n"
+            "   ID: sensitive-b\n\n"
+            "The last two subjects were redacted because they appear auth/security-related."
+        )
+    )
+
+    assert transformed is not None
+    assert "\n1." in transformed
+    assert "Subject: Hello" in transformed
+    assert "sensitive-a" not in transformed
+    assert "sensitive-b" not in transformed
+    assert "[redacted sensitive subject]" not in transformed
+    assert "\n2." not in transformed
+    assert "\n3." not in transformed
+    assert "omitted 2 security-sensitive email record(s)" in transformed
+
+
+def test_transform_llm_output_ignores_non_email_security_discussion():
+    plugin = load_plugin()
+
+    assert plugin._on_transform_llm_output(
+        response_text="1. Enable 2FA on important accounts.\n2. Review token permissions."
+    ) is None
+
+
+def test_transform_llm_output_removes_subjectless_email_metadata_after_filter_notice():
+    plugin = load_plugin()
+
+    transformed = plugin._on_transform_llm_output(
+        response_text=(
+            "Loaded your 3 most recent emails. I’m only showing safe metadata because "
+            "the email contents triggered the security-sensitive filter.\n\n"
+            "1. GitHub <noreply@github.com>\n"
+            "   Date: Sat, 06 Jun 2026 12:56:12 -0700\n"
+            "   Labels: UNREAD, CATEGORY_UPDATES\n"
+            "   Message ID: sensitive-a\n\n"
+            "2. Kevin Pei <...@hotmail.com>\n"
+            "   Date: Sat, 6 Jun 2026 19:44:07 +0000\n"
+            "   Labels: CATEGORY_PERSONAL, INBOX\n"
+            "   Message ID: normal-without-subject\n\n"
+            "3. Kevin Pei <...@hotmail.com>\n"
+            "   Date: Sat, 6 Jun 2026 19:43:59 +0000\n"
+            "   Labels: UNREAD, CATEGORY_PERSONAL, INBOX\n"
+            "   Message ID: sensitive-b\n"
+        )
+    )
+
+    assert transformed is not None
+    assert "Message ID:" not in transformed
+    assert "noreply@github.com" not in transformed
+    assert "normal-without-subject" not in transformed
+    assert "omitted 3 security-sensitive email record(s)" in transformed
+
+
 def test_register_wires_all_expected_hooks():
     plugin = load_plugin()
 
@@ -293,7 +450,9 @@ def test_register_wires_all_expected_hooks():
         "pre_tool_call",
         "transform_tool_result",
         "pre_gateway_dispatch",
+        "transform_llm_output",
     ]
     assert ctx.hooks[0][1] is plugin._on_pre_tool_call
     assert ctx.hooks[1][1] is plugin._on_transform_tool_result
     assert ctx.hooks[2][1] is plugin._on_pre_gateway_dispatch
+    assert ctx.hooks[3][1] is plugin._on_transform_llm_output
