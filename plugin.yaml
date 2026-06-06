@@ -1,4 +1,4 @@
-name: email-sensitive-filter
+name: security-sensitive-filter
 version: 1.0.0
 description: Suppress security-sensitive content before it reaches the model
 provides_hooks:

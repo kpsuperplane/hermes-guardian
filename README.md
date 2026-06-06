@@ -1,4 +1,4 @@
-# email-sensitive-filter
+# security-sensitive-filter
 
 Hermes Agent user plugin that suppresses security-sensitive content before it
 reaches the model.
@@ -22,13 +22,13 @@ messages. It does not limit itself to known email fields.
 
 ## Install
 
-Copy this directory into `~/.hermes/plugins/email-sensitive-filter`, then enable
+Copy this directory into `~/.hermes/plugins/security-sensitive-filter`, then enable
 it in `~/.hermes/config.yaml`:
 
 ```yaml
 plugins:
   enabled:
-    - email-sensitive-filter
+    - security-sensitive-filter
 ```
 
 Restart or reload the Hermes gateway for gateway sessions to pick it up.

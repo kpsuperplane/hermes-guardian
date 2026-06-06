@@ -24,7 +24,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_PLUGIN_NAME = "email-sensitive-filter"
+_PLUGIN_NAME = "security-sensitive-filter"
 
 _MESSAGE_KEYS = {
     "body",
@@ -66,8 +66,8 @@ _CODE_CONTEXT_RE = re.compile(
 
 def _safe_stub(suppressed_count: int = 1, reason: str = "security-sensitive content") -> dict[str, Any]:
     return {
-        "result": "[suppressed by email-sensitive-filter]",
-        "email_sensitive_filter": {
+        "result": "[suppressed by security-sensitive-filter]",
+        "security_sensitive_filter": {
             "suppressed": True,
             "suppressed_count": max(1, suppressed_count),
             "reason": reason,
@@ -76,7 +76,7 @@ def _safe_stub(suppressed_count: int = 1, reason: str = "security-sensitive cont
 
 
 def _block_message(reason: str) -> str:
-    return f"Blocked by email-sensitive-filter: {reason} detected in tool arguments."
+    return f"Blocked by security-sensitive-filter: {reason} detected in tool arguments."
 
 
 def _stringify_for_scan(value: Any, *, depth: int = 0) -> str:
@@ -156,7 +156,7 @@ def _scrub(value: Any) -> tuple[Any, int, str | None]:
                 continue
             cleaned[key] = scrubbed
         if suppressed:
-            meta = cleaned.get("email_sensitive_filter")
+            meta = cleaned.get("security_sensitive_filter")
             if not isinstance(meta, dict):
                 meta = {}
             meta.update({
@@ -164,7 +164,7 @@ def _scrub(value: Any) -> tuple[Any, int, str | None]:
                 "suppressed_count": suppressed,
                 "reason": first_reason or "security-sensitive email",
             })
-            cleaned["email_sensitive_filter"] = meta
+            cleaned["security_sensitive_filter"] = meta
         return cleaned, suppressed, first_reason
 
     if reason:
