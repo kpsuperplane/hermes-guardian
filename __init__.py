@@ -6,10 +6,11 @@ not overwrite it. It filters:
 * All tool results through transform_tool_result.
 * All gateway inbound messages through pre_gateway_dispatch.
 
-The policy is deterministic and intentionally conservative: if a single
-unstructured result looks like a password reset, OTP, magic link, or account
-security email, the whole result is replaced with a safe stub. For structured
-lists of message-like dicts, only matching message records are removed.
+The policy is deterministic and intentionally conservative: every value in a
+tool result or gateway message is scanned. If a single unstructured result
+looks like a password reset, OTP, magic link, or account security email, the
+whole result is replaced with a safe stub. For structured lists, matching
+items are removed entirely.
 """
 
 from __future__ import annotations
@@ -23,21 +24,6 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _PLUGIN_NAME = "email-sensitive-filter"
-
-_TEXT_KEYS = {
-    "body",
-    "content",
-    "date",
-    "from",
-    "html",
-    "message",
-    "result",
-    "sender",
-    "snippet",
-    "subject",
-    "text",
-    "to",
-}
 
 _MESSAGE_KEYS = {
     "body",
@@ -98,11 +84,7 @@ def _stringify_for_scan(value: Any, *, depth: int = 0) -> str:
     if isinstance(value, list):
         return "\n".join(_stringify_for_scan(v, depth=depth + 1) for v in value[:50])
     if isinstance(value, dict):
-        parts = []
-        for key, val in value.items():
-            key_s = str(key).lower()
-            if key_s in _TEXT_KEYS or any(token in key_s for token in ("body", "content", "sender", "snippet", "subject")):
-                parts.append(_stringify_for_scan(val, depth=depth + 1))
+        parts = [_stringify_for_scan(val, depth=depth + 1) for val in value.values()]
         return "\n".join(p for p in parts if p)
     return str(value)
 
@@ -141,6 +123,12 @@ def _scrub(value: Any) -> tuple[Any, int, str | None]:
         suppressed = 0
         first_reason = None
         for item in value:
+            item_reason_pre = _sensitive_reason(item)
+            if item_reason_pre:
+                suppressed += 1
+                if first_reason is None:
+                    first_reason = item_reason_pre
+                continue
             scrubbed, count, item_reason = _scrub(item)
             suppressed += count
             if first_reason is None and item_reason:

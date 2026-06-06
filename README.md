@@ -8,6 +8,9 @@ looks like password resets, one-time codes, magic links, account recovery,
 verification flows, new-login alerts, or upstream redaction placeholders such
 as `[sensitive email subject redacted]`.
 
+The scanner recursively checks every value in tool results and inbound gateway
+messages. It does not limit itself to known email fields.
+
 ## Hooks
 
 - `transform_tool_result`: scans all tool results before they are added to
@@ -30,8 +33,7 @@ Restart or reload the Hermes gateway for gateway sessions to pick it up.
 
 ## Behavior
 
-- Sensitive structured records are removed from lists when possible.
+- Sensitive structured list items are removed entirely when possible.
 - Sensitive unstructured results are replaced with a suppression stub.
 - Sensitive inbound gateway messages are skipped before model dispatch.
 - Normal content passes through unchanged.
-
