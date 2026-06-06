@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -43,6 +44,40 @@ def test_sensitive_reason_ignores_normal_content():
     assert plugin._sensitive_reason("Lunch at noon tomorrow") is None
     assert plugin._sensitive_reason({"url": "https://example.com/docs"}) is None
     assert plugin._sensitive_reason({"items": [{"title": "normal status update"}]}) is None
+
+
+def test_sensitive_finding_includes_match_and_context():
+    plugin = load_plugin()
+
+    finding = plugin._sensitive_finding(
+        "Please open https://example.com/reset-password?token=abc to continue"
+    )
+
+    assert finding == {
+        "reason": "sensitive link",
+        "match": "https://example.com/reset-password?token=abc",
+        "context": "Please open https://example.com/reset-password?token=abc to continue",
+    }
+
+
+def test_unsafe_diagnostic_logging_is_opt_in(monkeypatch, caplog):
+    plugin = load_plugin()
+    text = "Your verification code is 123456"
+    monkeypatch.setattr(plugin, "_UNSAFE_DIAGNOSTICS_FLAG", Path("/tmp/missing-unsafe-diagnostic-flag"))
+    monkeypatch.delenv("SECURITY_SENSITIVE_FILTER_UNSAFE_DIAGNOSTICS", raising=False)
+
+    with caplog.at_level(logging.WARNING):
+        plugin._log_unsafe_diagnostic("test", text)
+    assert "UNSAFE diagnostic" not in caplog.text
+
+    caplog.clear()
+    monkeypatch.setenv("SECURITY_SENSITIVE_FILTER_UNSAFE_DIAGNOSTICS", "1")
+    with caplog.at_level(logging.WARNING):
+        plugin._log_unsafe_diagnostic("test", text)
+
+    assert "UNSAFE diagnostic" in caplog.text
+    assert "reason=auth code" in caplog.text
+    assert "Your verification code is 123456" in caplog.text
 
 
 def test_recursive_scan_checks_unexpected_nested_fields():
@@ -262,4 +297,3 @@ def test_register_wires_all_expected_hooks():
     assert ctx.hooks[0][1] is plugin._on_pre_tool_call
     assert ctx.hooks[1][1] is plugin._on_transform_tool_result
     assert ctx.hooks[2][1] is plugin._on_pre_gateway_dispatch
-

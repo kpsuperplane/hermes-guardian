@@ -18,13 +18,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _PLUGIN_NAME = "security-sensitive-filter"
+_UNSAFE_DIAGNOSTICS_FLAG = Path(__file__).with_name(".unsafe-diagnostics")
 
 _MESSAGE_KEYS = {
     "body",
@@ -64,6 +67,56 @@ _CODE_CONTEXT_RE = re.compile(
 )
 
 
+def _unsafe_diagnostics_enabled() -> bool:
+    return _UNSAFE_DIAGNOSTICS_FLAG.exists() or os.getenv(
+        "SECURITY_SENSITIVE_FILTER_UNSAFE_DIAGNOSTICS", ""
+    ).lower() in {"1", "true", "yes", "on"}
+
+
+def _context(text: str, start: int, end: int, *, radius: int = 120) -> str:
+    prefix = max(0, start - radius)
+    suffix = min(len(text), end + radius)
+    return text[prefix:suffix].replace("\n", "\\n")
+
+
+def _sensitive_finding(value: Any) -> dict[str, str] | None:
+    text = _stringify_for_scan(value)
+    if not text:
+        return None
+    for pattern, reason in _SENSITIVE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return {
+                "reason": reason,
+                "match": match.group(0),
+                "context": _context(text, match.start(), match.end()),
+            }
+    match = _CODE_CONTEXT_RE.search(text)
+    if match:
+        return {
+            "reason": "auth code",
+            "match": match.group(0),
+            "context": _context(text, match.start(), match.end()),
+        }
+    return None
+
+
+def _log_unsafe_diagnostic(surface: str, value: Any) -> None:
+    if not _unsafe_diagnostics_enabled():
+        return
+    finding = _sensitive_finding(value)
+    if not finding:
+        return
+    logger.warning(
+        "%s UNSAFE diagnostic: surface=%s reason=%s match=%r context=%r",
+        _PLUGIN_NAME,
+        surface,
+        finding["reason"],
+        finding["match"],
+        finding["context"],
+    )
+
+
 def _safe_stub(suppressed_count: int = 1, reason: str = "security-sensitive content") -> dict[str, Any]:
     return {
         "result": "[suppressed by security-sensitive-filter]",
@@ -95,15 +148,8 @@ def _stringify_for_scan(value: Any, *, depth: int = 0) -> str:
 
 
 def _sensitive_reason(value: Any) -> str | None:
-    text = _stringify_for_scan(value)
-    if not text:
-        return None
-    for pattern, reason in _SENSITIVE_PATTERNS:
-        if pattern.search(text):
-            return reason
-    if _CODE_CONTEXT_RE.search(text):
-        return "auth code"
-    return None
+    finding = _sensitive_finding(value)
+    return finding["reason"] if finding else None
 
 
 def _looks_like_message_record(value: Any) -> bool:
@@ -181,6 +227,7 @@ def _on_pre_tool_call(
     reason = _sensitive_reason(args)
     if not reason:
         return None
+    _log_unsafe_diagnostic(f"pre_tool_call:{tool_name}", args)
     logger.info("%s: blocked sensitive tool call to %s (%s)", _PLUGIN_NAME, tool_name, reason)
     return {"action": "block", "message": _block_message(reason)}
 
@@ -200,12 +247,14 @@ def _on_transform_tool_result(
         reason = _sensitive_reason(result)
         if not reason:
             return None
+        _log_unsafe_diagnostic(f"transform_tool_result:{tool_name}", result)
         return json.dumps(_safe_stub(reason=reason), ensure_ascii=False)
 
     scrubbed, suppressed, reason = _scrub(deepcopy(parsed))
     if not suppressed:
         return None
 
+    _log_unsafe_diagnostic(f"transform_tool_result:{tool_name}", parsed)
     if scrubbed is None:
         scrubbed = _safe_stub(suppressed, reason or "security-sensitive content")
     logger.info("%s: suppressed %d sensitive record(s) from %s", _PLUGIN_NAME, suppressed, tool_name)
@@ -221,6 +270,7 @@ def _on_pre_gateway_dispatch(event: Any = None, **_: Any) -> dict[str, Any] | No
     reason = _sensitive_reason(text)
     if not reason:
         return None
+    _log_unsafe_diagnostic("pre_gateway_dispatch", text)
     logger.info("%s: skipped sensitive inbound message before dispatch (%s)", _PLUGIN_NAME, reason)
     return {"action": "skip", "reason": "security-sensitive content suppressed before model dispatch"}
 
