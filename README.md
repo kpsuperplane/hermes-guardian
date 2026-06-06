@@ -13,6 +13,8 @@ messages. It does not limit itself to known email fields.
 
 ## Hooks
 
+- `pre_tool_call`: scans all tool arguments before execution and blocks calls
+  containing sensitive reset, verification, magic-link, or code content.
 - `transform_tool_result`: scans all tool results before they are added to
   model context.
 - `pre_gateway_dispatch`: scans inbound gateway messages before agent
@@ -33,6 +35,7 @@ Restart or reload the Hermes gateway for gateway sessions to pick it up.
 
 ## Behavior
 
+- Sensitive tool calls are blocked before execution.
 - Sensitive structured list items are removed entirely when possible.
 - Sensitive unstructured results are replaced with a suppression stub.
 - Sensitive inbound gateway messages are skipped before model dispatch.

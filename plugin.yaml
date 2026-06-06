@@ -2,5 +2,6 @@ name: email-sensitive-filter
 version: 1.0.0
 description: Suppress security-sensitive content before it reaches the model
 provides_hooks:
+  - pre_tool_call
   - transform_tool_result
   - pre_gateway_dispatch

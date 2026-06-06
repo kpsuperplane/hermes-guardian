@@ -3,6 +3,7 @@
 This plugin is intentionally local to ~/.hermes/plugins so Hermes updates do
 not overwrite it. It filters:
 
+* All tool calls through pre_tool_call.
 * All tool results through transform_tool_result.
 * All gateway inbound messages through pre_gateway_dispatch.
 
@@ -72,6 +73,10 @@ def _safe_stub(suppressed_count: int = 1, reason: str = "security-sensitive cont
             "reason": reason,
         },
     }
+
+
+def _block_message(reason: str) -> str:
+    return f"Blocked by email-sensitive-filter: {reason} detected in tool arguments."
 
 
 def _stringify_for_scan(value: Any, *, depth: int = 0) -> str:
@@ -167,6 +172,19 @@ def _scrub(value: Any) -> tuple[Any, int, str | None]:
     return value, 0, None
 
 
+def _on_pre_tool_call(
+    tool_name: str = "",
+    args: Any = None,
+    **_: Any,
+) -> dict[str, str] | None:
+    """Block sensitive tool calls before browser/web/MCP tools can execute."""
+    reason = _sensitive_reason(args)
+    if not reason:
+        return None
+    logger.info("%s: blocked sensitive tool call to %s (%s)", _PLUGIN_NAME, tool_name, reason)
+    return {"action": "block", "message": _block_message(reason)}
+
+
 def _on_transform_tool_result(
     tool_name: str = "",
     result: Any = None,
@@ -208,5 +226,6 @@ def _on_pre_gateway_dispatch(event: Any = None, **_: Any) -> dict[str, Any] | No
 
 
 def register(ctx) -> None:
+    ctx.register_hook("pre_tool_call", _on_pre_tool_call)
     ctx.register_hook("transform_tool_result", _on_transform_tool_result)
     ctx.register_hook("pre_gateway_dispatch", _on_pre_gateway_dispatch)
