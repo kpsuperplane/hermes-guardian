@@ -162,7 +162,7 @@ def _scrub(value: Any) -> tuple[Any, int, str | None]:
             meta.update({
                 "suppressed": True,
                 "suppressed_count": suppressed,
-                "reason": first_reason or "security-sensitive email",
+                "reason": first_reason or "security-sensitive content",
             })
             cleaned["security_sensitive_filter"] = meta
         return cleaned, suppressed, first_reason
@@ -207,7 +207,7 @@ def _on_transform_tool_result(
         return None
 
     if scrubbed is None:
-        scrubbed = _safe_stub(suppressed, reason or "security-sensitive email")
+        scrubbed = _safe_stub(suppressed, reason or "security-sensitive content")
     logger.info("%s: suppressed %d sensitive record(s) from %s", _PLUGIN_NAME, suppressed, tool_name)
     return json.dumps(scrubbed, ensure_ascii=False)
 
@@ -221,7 +221,7 @@ def _on_pre_gateway_dispatch(event: Any = None, **_: Any) -> dict[str, Any] | No
     reason = _sensitive_reason(text)
     if not reason:
         return None
-    logger.info("%s: skipped sensitive inbound email before dispatch (%s)", _PLUGIN_NAME, reason)
+    logger.info("%s: skipped sensitive inbound message before dispatch (%s)", _PLUGIN_NAME, reason)
     return {"action": "skip", "reason": "security-sensitive content suppressed before model dispatch"}
 
 

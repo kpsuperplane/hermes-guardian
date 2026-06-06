@@ -40,3 +40,11 @@ Restart or reload the Hermes gateway for gateway sessions to pick it up.
 - Sensitive unstructured results are replaced with a suppression stub.
 - Sensitive inbound gateway messages are skipped before model dispatch.
 - Normal content passes through unchanged.
+
+## Tests
+
+Run the local test suite with:
+
+```bash
+python -m pytest -q
+```
