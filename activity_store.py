@@ -1,49 +1,180 @@
-"""Activity persistence and payload helpers for Hermes Guardian."""
+"""Modularized guardian runtime module."""
 
 from __future__ import annotations
 
-from .core import (
-    _activity_connect,
-    _activity_count,
-    _activity_datatables_payload,
-    _activity_datatables_row,
-    _activity_filter_clauses,
-    _activity_group_key,
-    _activity_group_seconds,
-    _activity_marker,
-    _activity_max_rows,
-    _activity_plain_reason_line,
-    _activity_row_from_sql,
-    _activity_rows,
-    _activity_retention_days,
-    _ensure_activity_db,
-    _emit_activity,
-    _group_activity_rows,
-    _grouped_activity_rows,
-    _prune_activity_db,
-    _policy_snapshot,
-    _datatables_column_name,
-)
+def _activity_connect() -> sqlite3.Connection:
+    _ACTIVITY_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(_ACTIVITY_DB_PATH), timeout=2.0)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-__all__ = [
-    "_activity_connect",
-    "_activity_max_rows",
-    "_activity_retention_days",
-    "_activity_group_seconds",
-    "_ensure_activity_db",
-    "_emit_activity",
-    "_prune_activity_db",
-    "_activity_rows",
-    "_activity_filter_clauses",
-    "_activity_count",
-    "_activity_row_from_sql",
-    "_activity_plain_reason_line",
-    "_activity_datatables_row",
-    "_datatables_column_name",
-    "_activity_datatables_payload",
-    "_activity_group_key",
-    "_activity_marker",
-    "_group_activity_rows",
-    "_grouped_activity_rows",
-    "_policy_snapshot",
-]
+
+def _activity_max_rows() -> int:
+    raw = _env(_ACTIVITY_MAX_ROWS_ENV, str(_DEFAULT_ACTIVITY_MAX_ROWS)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_ACTIVITY_MAX_ROWS
+    return max(0, value)
+
+
+def _activity_retention_days() -> int:
+    raw = _env(_ACTIVITY_RETENTION_DAYS_ENV, str(_DEFAULT_ACTIVITY_RETENTION_DAYS)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_ACTIVITY_RETENTION_DAYS
+    return max(0, value)
+
+
+def _activity_group_seconds() -> int:
+    raw = _env(_ACTIVITY_GROUP_SECONDS_ENV, str(_DEFAULT_ACTIVITY_GROUP_SECONDS)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_ACTIVITY_GROUP_SECONDS
+    return max(0, min(value, 3600))
+
+
+def _ensure_activity_db() -> None:
+    global _ACTIVITY_DB_INITIALIZED
+    if _ACTIVITY_DB_INITIALIZED:
+        return
+    with _LOCK:
+        if _ACTIVITY_DB_INITIALIZED:
+            return
+        try:
+            with _activity_connect() as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS activity (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts INTEGER NOT NULL,
+                        decision TEXT NOT NULL,
+                        mode TEXT NOT NULL,
+                        session_label TEXT NOT NULL,
+                        session_hash TEXT NOT NULL,
+                        owner_hash TEXT NOT NULL,
+                        tool_name TEXT NOT NULL,
+                        action_family TEXT NOT NULL,
+                        destination TEXT NOT NULL,
+                        data_classes TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        approval_id TEXT NOT NULL,
+                        rule_id TEXT NOT NULL,
+                        rule_source TEXT NOT NULL,
+                        action_detail TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+                )
+                columns = {
+                    str(row["name"])
+                    for row in conn.execute("PRAGMA table_info(activity)").fetchall()
+                }
+                if "action_detail" not in columns:
+                    conn.execute("ALTER TABLE activity ADD COLUMN action_detail TEXT NOT NULL DEFAULT ''")
+                conn.execute("CREATE INDEX IF NOT EXISTS activity_ts_idx ON activity(ts)")
+                conn.execute("CREATE INDEX IF NOT EXISTS activity_decision_idx ON activity(decision)")
+                conn.execute("CREATE INDEX IF NOT EXISTS activity_action_idx ON activity(action_family)")
+                conn.execute("CREATE INDEX IF NOT EXISTS activity_destination_idx ON activity(destination)")
+            _ACTIVITY_DB_INITIALIZED = True
+        except Exception as exc:
+            logger.debug("%s: failed to initialize activity db: %s", _PLUGIN_NAME, exc)
+
+
+def _emit_activity(
+    decision: str,
+    *,
+    session_id: str | None = "",
+    owner_hash: str = "",
+    tool_name: str = "",
+    action_family: str = "",
+    destination: str = "",
+    data_classes: list[str] | set[str] | tuple[str, ...] | None = None,
+    reason: str = "",
+    approval_id: str = "",
+    rule_id: str = "",
+    rule_source: str = "",
+    action_detail: str = "",
+) -> None:
+    """Persist sanitized activity metadata for dashboard/debugging."""
+    if decision not in _ACTIVITY_DECISIONS:
+        decision = "allowed"
+    safe_classes = sorted(str(cls) for cls in (data_classes or []) if str(cls) in _ALL_PRIVACY_CLASSES)
+    sid = _normalize_session_id(session_id)
+    try:
+        _ensure_activity_db()
+        with _activity_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO activity (
+                    ts, decision, mode, session_label, session_hash, owner_hash,
+                    tool_name, action_family, destination, data_classes, reason,
+                    approval_id, rule_id, rule_source, action_detail
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(_now()),
+                    decision,
+                    _privacy_policy(),
+                    _safe_session_label(sid),
+                    _short_hash(sid),
+                    _short_hash(owner_hash),
+                    str(tool_name or "")[:120],
+                    str(action_family or "")[:80],
+                    str(destination or "")[:160],
+                    ",".join(safe_classes),
+                    str(reason or "")[:1000],
+                    str(approval_id or "")[:80],
+                    str(rule_id or "")[:80],
+                    str(rule_source or "")[:80],
+                    str(action_detail or "")[:500],
+                ),
+            )
+        _prune_activity_db()
+    except Exception as exc:
+        logger.debug("%s: failed to write activity event: %s", _PLUGIN_NAME, exc)
+
+
+def _prune_activity_db(*, force: bool = False) -> dict[str, int]:
+    """Bound activity DB size by age and row count.
+
+    A value of 0 disables the corresponding limit.
+    """
+    global _LAST_ACTIVITY_PRUNE
+    now = _now()
+    if not force and now - _LAST_ACTIVITY_PRUNE < _ACTIVITY_PRUNE_INTERVAL_SECONDS:
+        return {"deleted": 0, "remaining": -1}
+    _LAST_ACTIVITY_PRUNE = now
+
+    max_rows = _activity_max_rows()
+    retention_days = _activity_retention_days()
+    deleted = 0
+    remaining = 0
+    try:
+        _ensure_activity_db()
+        with _activity_connect() as conn:
+            if retention_days > 0:
+                cutoff = int(now - retention_days * 86400)
+                deleted += conn.execute("DELETE FROM activity WHERE ts < ?", (cutoff,)).rowcount
+            if max_rows > 0:
+                deleted += conn.execute(
+                    """
+                    DELETE FROM activity
+                    WHERE id NOT IN (
+                        SELECT id FROM activity ORDER BY ts DESC, id DESC LIMIT ?
+                    )
+                    """,
+                    (max_rows,),
+                ).rowcount
+            remaining = int(conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0])
+        if deleted:
+            with _activity_connect() as conn:
+                conn.isolation_level = None
+                conn.execute("VACUUM")
+    except Exception as exc:
+        logger.debug("%s: failed to prune activity db: %s", _PLUGIN_NAME, exc)
+    return {"deleted": int(deleted or 0), "remaining": remaining}
+
+
