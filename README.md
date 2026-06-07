@@ -316,6 +316,19 @@ In `llm`, a strict deterministic blocklist runs first. If the action is not
 explicitly malicious, Hermes Guardian sends sanitized metadata to the plugin LLM
 for a structured decision.
 
+Terminal URL fetches are direction-aware. A command that only reads a
+user-requested URL and stages the fetched bytes in `/tmp` or `/var/tmp` is
+treated as inbound remote-read activity, even for paste-style hosts. The risky
+case is the opposite direction: posting, uploading, copying, or sending private
+or local data to paste bins, webhooks, tunnels, or other dropbox-style
+endpoints. Those outbound shapes remain hard-blocked.
+
+Fetched public-page text is also source-aware for security-sensitive matching.
+If a public remote-read result contains example text like "verification code
+123456", Hermes Guardian does not suppress it as Kevin's private auth code.
+Private sources such as email, messages, authenticated account pages, and
+sensitive URLs still receive categorical security-sensitive suppression.
+
 ## LLM Privacy Mode
 
 `HERMES_GUARDIAN_PRIVACY=llm` is intended to approximate Codex-style
@@ -356,24 +369,28 @@ When egress is blocked, the model/user sees a message like:
 ```text
 Hermes Guardian blocked this egress.
 
-Approval ID: amber-river-4827
+Approval ID: browser-type-4827
 Action: browser_type
 Destination: example.com
 Action detail: browser_type to example.com
 Data classes: email, contacts
 
 Kevin can approve with:
-/guardian approve amber-river-4827 once
-/guardian approve amber-river-4827 session
-/guardian approve amber-river-4827 always
+/guardian approve browser-type-4827 once
+/guardian approve browser-type-4827 session
+/guardian approve browser-type-4827 always
 or deny with:
-/guardian deny amber-river-4827
+/guardian deny browser-type-4827
 ```
 
-Approval IDs use two simple words plus four digits so they are easier to read
-and type on mobile. Hyphens are optional when approving or denying, so
-`/guardian approve amberriver4827 once` works too. IDs are random,
-short-lived, and scoped to the gateway sender identity captured for the session.
+Approval IDs use a short, request-relevant slug plus four random digits, so
+they are easier to understand and type on mobile. When Hermes exposes a plugin
+LLM interface, Guardian asks it to suggest the slug from sanitized action
+metadata only; otherwise it falls back to a local slug such as `message-send`,
+`notion-write`, `browser-type`, or `terminal-curl`. Hyphens are optional when
+approving or denying, so `/guardian approve browsertype4827 once` works too.
+IDs remain short-lived and scoped to the gateway sender identity captured for
+the session.
 
 Approval scopes:
 
@@ -424,7 +441,9 @@ Command notes:
 ## Dashboard
 
 Hermes Guardian includes a local read-only dashboard for understanding decisions
-and recent activity.
+and recent activity. The activity feed uses a paginated DataTables view backed
+by server-side SQLite queries, so the browser does not render the whole activity
+database at once.
 
 Start it from the gateway:
 
@@ -444,9 +463,19 @@ Read-only endpoints:
 GET /
 GET /api/activity
 GET /api/activity?decision=blocked&data_class=email
+GET /api/activity/datatables
 GET /api/policy
 GET /api/debug?action_family=mcp_write&destination=mcp:notion&data_classes=email
 ```
+
+`/api/activity/datatables` accepts DataTables server-side query parameters such
+as `draw`, `start`, `length`, `search[value]`, `order[0][column]`, and
+`order[0][dir]`. Page sizes are limited to `25`, `50`, or `100`. Sorting is
+restricted to safe metadata columns, and searching only scans sanitized metadata
+stored in the activity database.
+
+DataTables JS/CSS assets are pinned and vendored under the plugin directory, so
+the dashboard does not need a runtime CDN request.
 
 The dashboard shows sanitized metadata only:
 
@@ -460,6 +489,10 @@ The dashboard shows sanitized metadata only:
 - Approval/rule identifiers.
 - Short session hashes.
 - Sanitized action detail, such as a short command summary.
+
+Rows show compact metadata by default. Click the expand control on a row to view
+the full sanitized reason, sanitized action detail, policy mode, row ID,
+timestamp, and approval/rule metadata.
 
 It does not store raw tool arguments, email bodies, typed text, tokenized URLs,
 file contents, or message content.
