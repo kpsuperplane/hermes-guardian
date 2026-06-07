@@ -1,9 +1,5 @@
 # Hermes Guardian
 
-|<img width="1452" height="1548" alt="CleanShot 2026-06-06 at 20 18 00@2x" src="https://github.com/user-attachments/assets/b6ca1061-8c45-4bdf-9f05-565b5a775bc4" />|<img width="1032" height="996" alt="CleanShot 2026-06-06 at 20 20 11@2x" src="https://github.com/user-attachments/assets/115ae1a2-4a78-4e7e-9ee9-c810f5462817" />|
-<img width="2572" height="666" alt="CleanShot 2026-06-06 at 20 20 34@2x" src="https://github.com/user-attachments/assets/963eef8e-b3da-4b14-9480-73c4a72ec5d6" />
-
-
 Hermes Guardian is a user plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent)
 that adds deterministic protection around security-sensitive content and private
 data egress.
@@ -12,6 +8,8 @@ It is designed for people who want their Hermes agent to read useful private
 context such as email, contacts, documents, memory, calendar entries, and local
 system output, while preventing that context from being sent outward through
 tools unless the action is explicitly allowed.
+
+<img width="2434" height="1892" alt="CleanShot 2026-06-06 at 20 24 01@2x" src="https://github.com/user-attachments/assets/fafaa94a-dc19-4211-9240-aa5dcda01d78" />
 
 ## What It Does
 
