@@ -9,8 +9,6 @@ context such as email, contacts, documents, memory, calendar entries, and local
 system output, while preventing that context from being sent outward through
 tools unless the action is explicitly allowed.
 
-Formerly `privacy-egress-guard`, and before that `security-sensitive-filter`.
-
 ## What It Does
 
 Hermes Guardian has two protection layers:
