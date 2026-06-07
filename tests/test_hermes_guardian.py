@@ -97,6 +97,26 @@ def test_sensitive_reason_ignores_normal_content():
     assert plugin._sensitive_reason("Lunch at noon tomorrow") is None
     assert plugin._sensitive_reason({"url": "https://example.com/docs"}) is None
     assert plugin._sensitive_reason({"items": [{"title": "normal status update"}]}) is None
+    assert plugin._sensitive_reason("Use skill_view to inspect code examples and snippets.") is None
+    assert plugin._sensitive_reason("The Notion resource explains verification code flows.") is None
+
+
+def test_doc_read_tools_do_not_suppress_code_documentation():
+    plugin = load_plugin()
+
+    skill_result = plugin._on_transform_tool_result(
+        tool_name="skill_view",
+        result="This skill explains code execution and how to format code snippets.",
+    )
+    notion_result = plugin._on_transform_tool_result(
+        tool_name="mcp_notion_read_resource",
+        result=json.dumps({
+            "content": "A runbook about verification code flows and code examples.",
+        }),
+    )
+
+    assert skill_result is None
+    assert notion_result is None
 
 
 def test_sensitive_finding_includes_match_and_context():

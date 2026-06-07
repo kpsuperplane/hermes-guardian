@@ -15,17 +15,17 @@ Hermes gateway internals, approval queues, or platform adapter APIs.
 from __future__ import annotations
 
 import hashlib
-import html
 import http.server
+import importlib.util
 import json
 import logging
 import os
 import re
 import secrets
 import sqlite3
+import sys
 import threading
 import time
-from datetime import datetime
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -33,6 +33,24 @@ from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 logger = logging.getLogger(__name__)
+
+
+def _load_sibling_module(name: str) -> Any:
+    module_name = f"{__name__}.{name}"
+    if module_name in sys.modules:
+        return sys.modules[module_name]
+    module_path = Path(__file__).with_name(f"{name}.py")
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_presentation = _load_sibling_module("presentation")
+_security = _load_sibling_module("security")
 
 _PLUGIN_NAME = "hermes-guardian"
 _FORMER_PLUGIN_NAME = "privacy-egress-guard"
@@ -176,62 +194,11 @@ _ACTIVITY_DECISIONS = {
     "tainted",
 }
 
-_MESSAGE_KEYS = {
-    "body",
-    "from",
-    "html",
-    "message_id",
-    "sender",
-    "snippet",
-    "subject",
-    "thread_id",
-}
-
-_SECURITY_SENSITIVE_PATTERNS = [
-    (re.compile(r"\[\s*sensitive\s+email\s+subject\s+redacted\s*\]", re.I), "redacted sensitive email"),
-    (re.compile(r"\[\s*sensitive\s+email\s+(?:content|body|message)\s+redacted\s*\]", re.I), "redacted sensitive email"),
-    (re.compile(r"\[\s*redacted\s+sensitive\s+(?:email\s+)?subject\s*\]", re.I), "redacted sensitive email"),
-    (re.compile(r"\bpassword\s+(reset|change|recovery)\b", re.I), "password reset"),
-    (re.compile(r"\breset\s+(your|the|my)?\s*password\b", re.I), "password reset"),
-    (re.compile(r"\bforgot\s+(your|my)?\s*password\b", re.I), "password recovery"),
-    (re.compile(r"\baccount\s+recovery\b", re.I), "account recovery"),
-    (re.compile(r"\b(recovery|security|verification|authentication|login|sign[- ]?in)\s+code\b", re.I), "auth code"),
-    (re.compile(r"\b(one[- ]?time|temporary)\s+(password|passcode|code)\b", re.I), "one-time code"),
-    (re.compile(r"\bone[- ]?time\b.{0,80}\[?\s*redacted\s*\]?", re.I | re.S), "one-time code"),
-    (re.compile(r"\bOTP\b", re.I), "otp"),
-    (re.compile(r"\b(2FA|two[- ]?factor|multi[- ]?factor)\b", re.I), "multi-factor auth"),
-    (re.compile(r"\bmagic\s+link\b", re.I), "magic link"),
-    (re.compile(r"\b(public|ssh|gpg|deploy)\s+key\b.{0,120}\b(added|created|removed|deleted|changed)\b", re.I | re.S), "security key change"),
-    (re.compile(r"\b(added|created|removed|deleted|changed)\b.{0,120}\b(public|ssh|gpg|deploy)\s+key\b", re.I | re.S), "security key change"),
-    (re.compile(r"\bverify\s+(your\s+)?(email|account|identity)\b", re.I), "account verification"),
-    (re.compile(r"\bconfirm\s+(your\s+)?(email|account|identity)\b", re.I), "account confirmation"),
-    (re.compile(r"\bsecurity\s+alert\b", re.I), "security alert"),
-    (re.compile(r"\bnew\s+(sign[- ]?in|login)\b", re.I), "new login alert"),
-    (re.compile(r"\bsuspicious\s+(sign[- ]?in|login|activity)\b", re.I), "suspicious activity"),
-    (re.compile(r"\bunauthori[sz]ed\s+(sign[- ]?in|login|activity)\b", re.I), "unauthorized activity"),
-    (re.compile(r"\b(password|reset|recover|verify|verification|auth|authentication|login|sign[- ]?in|one[- ]?time|otp|2fa|token|passcode|code|security|magic|key)\b.{0,120}\[?\s*redacted\s*\]?", re.I | re.S), "redacted security content"),
-    (re.compile(r"\[?\s*redacted\s*\]?.{0,120}\b(password|reset|recover|verify|verification|auth|authentication|login|sign[- ]?in|one[- ]?time|otp|2fa|token|passcode|code|security|magic|key)\b", re.I | re.S), "redacted security content"),
-    (re.compile(r"https?://[^\s\"'<>]*(reset|recover|verify|confirm|magic|otp|2fa)[^\s\"'<>]*", re.I), "sensitive link"),
-]
-
-_CODE_CONTEXT_RE = re.compile(
-    r"\b(code|otp|passcode|pin)\b.{0,80}\b[A-Z0-9][A-Z0-9 -]{4,15}\b",
-    re.I | re.S,
-)
-_NUMBERED_RECORD_START_RE = re.compile(r"(?m)(?=^\s*\d+[\.)]\s+)")
-_HEADER_RECORD_START_RE = re.compile(r"(?m)(?=^\s*(?:\d+[\.)]\s*)?(?:From|Sender):\s)")
-_EMAIL_SHAPED_TEXT_RE = re.compile(
-    r"(?im)^\s*(?:\d+[\.)]\s*)?(?:From|Sender|Subject|Unread|Labels|ID|Message ID):\s"
-)
-
-_EMAIL_ADDRESS_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
-_PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}(?!\d)")
-_SSN_RE = re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)")
-_PRIVATE_FIELD_RE = re.compile(
-    r"\b(email|phone|address|contact|attendee|recipient|sender|full\s+name|"
-    r"first\s+name|last\s+name|dob|date\s+of\s+birth|ssn|passport)\b",
-    re.I,
-)
+_MESSAGE_KEYS = _security._MESSAGE_KEYS
+_EMAIL_ADDRESS_RE = _security._EMAIL_ADDRESS_RE
+_PHONE_RE = _security._PHONE_RE
+_SSN_RE = _security._SSN_RE
+_PRIVATE_FIELD_RE = _security._PRIVATE_FIELD_RE
 
 _SOURCE_TAINT_RULES: list[tuple[re.Pattern[str], set[str]]] = [
     (re.compile(r"(^|_)(gmail|email|mail|inbox|message)(_|$)", re.I), {"email"}),
@@ -1027,51 +994,19 @@ def _history_timezone() -> ZoneInfo | None:
 
 
 def _context(text: str, start: int, end: int, *, radius: int = 120) -> str:
-    prefix = max(0, start - radius)
-    suffix = min(len(text), end + radius)
-    return text[prefix:suffix].replace("\n", "\\n")
+    return _security._context(text, start, end, radius=radius)
 
 
 def _stringify_for_scan(value: Any, *, depth: int = 0) -> str:
-    if value is None or depth > 6:
-        return ""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (int, float, bool)):
-        return str(value)
-    if isinstance(value, list):
-        return "\n".join(_stringify_for_scan(v, depth=depth + 1) for v in value[:50])
-    if isinstance(value, dict):
-        parts = [_stringify_for_scan(val, depth=depth + 1) for val in value.values()]
-        return "\n".join(p for p in parts if p)
-    return str(value)
+    return _security._stringify_for_scan(value, depth=depth)
 
 
 def _sensitive_finding(value: Any) -> dict[str, str] | None:
-    text = _stringify_for_scan(value)
-    if not text:
-        return None
-    for pattern, reason in _SECURITY_SENSITIVE_PATTERNS:
-        match = pattern.search(text)
-        if match:
-            return {
-                "reason": reason,
-                "match": match.group(0),
-                "context": _context(text, match.start(), match.end()),
-            }
-    match = _CODE_CONTEXT_RE.search(text)
-    if match:
-        return {
-            "reason": "auth code",
-            "match": match.group(0),
-            "context": _context(text, match.start(), match.end()),
-        }
-    return None
+    return _security._sensitive_finding(value)
 
 
 def _sensitive_reason(value: Any) -> str | None:
-    finding = _sensitive_finding(value)
-    return finding["reason"] if finding else None
+    return _security._sensitive_reason(value)
 
 
 def _log_unsafe_diagnostic(surface: str, value: Any) -> None:
@@ -1091,38 +1026,19 @@ def _log_unsafe_diagnostic(surface: str, value: Any) -> None:
 
 
 def _safe_stub(suppressed_count: int = 1, reason: str = "security-sensitive content") -> dict[str, Any]:
-    return {
-        "result": "[suppressed by hermes-guardian]",
-        "hermes_guardian": {
-            "suppressed": True,
-            "suppressed_count": max(1, suppressed_count),
-            "reason": reason,
-            "former_plugin": _FORMER_PLUGIN_NAME,
-        },
-        "security_sensitive_filter": {
-            "suppressed": True,
-            "suppressed_count": max(1, suppressed_count),
-            "reason": reason,
-        },
-    }
+    return _security._safe_stub(suppressed_count=suppressed_count, reason=reason)
 
 
 def _block_message(reason: str) -> str:
-    return f"Blocked by {_PLUGIN_NAME}: {reason} detected in tool arguments."
+    return _security._block_message(reason)
 
 
 def _email_shaped_text(value: str) -> bool:
-    return bool(_EMAIL_SHAPED_TEXT_RE.search(value))
+    return _security._email_shaped_text(value)
 
 
 def _looks_like_message_record(value: Any) -> bool:
-    if not isinstance(value, dict):
-        return False
-    keys = {str(k).lower() for k in value.keys()}
-    return len(keys & _MESSAGE_KEYS) >= 2 or (
-        ("subject" in keys or "snippet" in keys)
-        and ("id" in keys or "messageid" in keys or "threadid" in keys)
-    )
+    return _security._looks_like_message_record(value)
 
 
 def _scrub_text_records(
@@ -1130,131 +1046,14 @@ def _scrub_text_records(
     *,
     hide_subjectless_email_records: bool = False,
 ) -> tuple[str, int, str | None]:
-    """Remove sensitive records from plaintext batches when records are obvious."""
-    starts = [match.start() for match in _NUMBERED_RECORD_START_RE.finditer(text)]
-    numbered_records = len(starts) >= 2
-    if not numbered_records:
-        starts = [match.start() for match in _HEADER_RECORD_START_RE.finditer(text)]
-    if len(starts) < 2:
-        return text, 0, None
-
-    prefix = text[:starts[0]]
-    records = []
-    for index, start in enumerate(starts):
-        end = starts[index + 1] if index + 1 < len(starts) else len(text)
-        records.append(text[start:end])
-
-    cleaned = []
-    suppressed = 0
-    first_reason = None
-    for record in records:
-        reason = _sensitive_reason(record)
-        if not reason and hide_subjectless_email_records and _email_shaped_text(record):
-            if not re.search(r"(?im)^\s*Subject:\s*\S", record):
-                reason = "redacted sensitive email metadata"
-        if reason:
-            suppressed += 1
-            if first_reason is None:
-                first_reason = reason
-            continue
-        cleaned.append(record)
-
-    if not suppressed or not cleaned:
-        return text, suppressed, first_reason
-    if numbered_records:
-        item_index = 0
-        renumbered = []
-        for record in cleaned:
-            if re.match(r"^\s*\d+[\.)]\s+", record):
-                item_index += 1
-                record = re.sub(r"^(\s*)\d+([\.)]\s+)", rf"\g<1>{item_index}\2", record, count=1)
-            renumbered.append(record)
-        cleaned = renumbered
-    return prefix + "".join(cleaned).strip(), suppressed, first_reason
+    return _security._scrub_text_records(
+        text,
+        hide_subjectless_email_records=hide_subjectless_email_records,
+    )
 
 
 def _scrub(value: Any) -> tuple[Any, int, str | None]:
-    reason = _sensitive_reason(value)
-    if _looks_like_message_record(value) and reason:
-        return None, 1, reason
-
-    if isinstance(value, dict) and reason and isinstance(value.get("result"), str):
-        scrubbed_text, suppressed, text_reason = _scrub_text_records(value["result"])
-        if suppressed and scrubbed_text.strip():
-            cleaned = dict(value)
-            cleaned["result"] = scrubbed_text
-            meta = cleaned.get("hermes_guardian")
-            if not isinstance(meta, dict):
-                meta = {}
-            meta.update({
-                "suppressed": True,
-                "suppressed_count": suppressed,
-                "reason": text_reason or reason,
-                "former_plugin": _FORMER_PLUGIN_NAME,
-            })
-            cleaned["hermes_guardian"] = meta
-            cleaned["security_sensitive_filter"] = {
-                "suppressed": True,
-                "suppressed_count": suppressed,
-                "reason": text_reason or reason,
-            }
-            return cleaned, suppressed, text_reason or reason
-        return _safe_stub(reason=reason), 1, reason
-
-    if isinstance(value, list):
-        cleaned = []
-        suppressed = 0
-        first_reason = None
-        for item in value:
-            item_reason_pre = _sensitive_reason(item)
-            if item_reason_pre:
-                suppressed += 1
-                if first_reason is None:
-                    first_reason = item_reason_pre
-                continue
-            scrubbed, count, item_reason = _scrub(item)
-            suppressed += count
-            if first_reason is None and item_reason:
-                first_reason = item_reason
-            if count and scrubbed is None:
-                continue
-            cleaned.append(scrubbed)
-        return cleaned, suppressed, first_reason
-
-    if isinstance(value, dict):
-        cleaned = {}
-        suppressed = 0
-        first_reason = None
-        for key, item in value.items():
-            scrubbed, count, item_reason = _scrub(item)
-            suppressed += count
-            if first_reason is None and item_reason:
-                first_reason = item_reason
-            if count and scrubbed is None:
-                continue
-            cleaned[key] = scrubbed
-        if suppressed:
-            meta = cleaned.get("hermes_guardian")
-            if not isinstance(meta, dict):
-                meta = {}
-            meta.update({
-                "suppressed": True,
-                "suppressed_count": suppressed,
-                "reason": first_reason or "security-sensitive content",
-                "former_plugin": _FORMER_PLUGIN_NAME,
-            })
-            cleaned["hermes_guardian"] = meta
-            cleaned["security_sensitive_filter"] = {
-                "suppressed": True,
-                "suppressed_count": suppressed,
-                "reason": first_reason or "security-sensitive content",
-            }
-        return cleaned, suppressed, first_reason
-
-    if reason:
-        return _safe_stub(reason=reason), 1, reason
-    return value, 0, None
-
+    return _security._scrub(value)
 
 def _normalize_session_id(session_id: str | None) -> str:
     return session_id or _GLOBAL_SESSION_ID
@@ -2378,314 +2177,58 @@ def _dashboard_url() -> str:
 
 
 def _activity_display_tool(row: dict[str, Any]) -> str:
-    tool = str(row.get("tool_name") or row.get("action_family") or "").strip()
-    if row.get("decision") == "tainted" and tool.lower() in {"terminal", "execute_code", "code_execution", "shell"}:
-        return f"{tool} result"
-    return tool
+    return _presentation.activity_display_tool(row)
 
 
 def _clip_text(value: Any, limit: int = 120, *, ellipsis: str = "…", fallback: str = "") -> str:
-    text = str(value or "").strip() or fallback
-    if len(text) <= limit:
-        return text
-    suffix = ellipsis or ""
-    return text[: max(0, limit - len(suffix))].rstrip() + suffix
+    return _presentation.clip_text(value, limit, ellipsis=ellipsis, fallback=fallback)
 
 
 def _friendly_activity_timestamp(ts: Any) -> str:
-    try:
-        dt = datetime.fromtimestamp(int(ts or 0), tz=_history_timezone())
-    except Exception:
-        dt = datetime.fromtimestamp(0, tz=_history_timezone())
-    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    hour = dt.hour % 12 or 12
-    am_pm = "AM" if dt.hour < 12 else "PM"
-    zone = dt.tzname() or time.tzname[0] or "local"
-    return f"{months[dt.month - 1]} {dt.day}, {dt.year} {hour}:{dt.minute:02d} {am_pm} {zone}"
+    return _presentation.friendly_activity_timestamp(ts, _history_timezone())
 
 
 def _activity_time_text(row: dict[str, Any]) -> str:
-    count = int(row.get("count") or 1)
-    if count <= 1:
-        return _friendly_activity_timestamp(row.get("ts"))
-    first_ts = int(row.get("first_ts") or row.get("ts") or 0)
-    latest_ts = int(row.get("ts") or 0)
-    if first_ts == latest_ts:
-        return _friendly_activity_timestamp(latest_ts)
-    first_text = _friendly_activity_timestamp(first_ts)
-    latest_text = _friendly_activity_timestamp(latest_ts)
-    if first_text == latest_text:
-        return latest_text
-    return f"{first_text} - {latest_text}"
+    return _presentation.activity_time_text(row, _history_timezone())
 
 
 def _activity_display_reason(row: dict[str, Any]) -> str:
-    reason = str(row.get("reason") or "").strip()
-    if reason == "private source result" and row.get("decision") == "tainted":
-        classes = {
-            cls.strip()
-            for cls in str(row.get("data_classes") or "").split(",")
-            if cls.strip() in _ALL_PRIVACY_CLASSES
-        }
-        return _taint_reason_for_tool_result(str(row.get("tool_name") or ""), classes)
-    return reason
+    return _presentation.activity_display_reason(
+        row,
+        all_privacy_classes=_ALL_PRIVACY_CLASSES,
+        taint_reason_for_tool_result=_taint_reason_for_tool_result,
+    )
 
 
 def _activity_status_icon(decision: str) -> str:
-    status_icons = {
-        "allowed": "✅",
-        "auto_approved": "✅",
-        "blocked": "❌",
-        "denied": "❌",
-        "manual_approved": "✅",
-        "mode_off_allowed": "✅",
-        "privacy_off_allowed": "✅",
-        "read": "🌐",
-        "security_blocked": "❌",
-        "security_suppressed": "❌",
-        "tainted": "📥",
-    }
-    return status_icons.get(str(decision or "").strip(), "•")
+    return _presentation.activity_status_icon(decision)
 
 
 def _activity_reason_prefix(decision: str) -> str:
-    if decision == "read":
-        return "Read"
-    if decision in {"allowed", "auto_approved", "manual_approved", "mode_off_allowed", "privacy_off_allowed"}:
-        return "Allowed"
-    if decision == "denied":
-        return "Denied"
-    if decision in {"blocked", "security_blocked", "security_suppressed"}:
-        return "Blocked"
-    return ""
+    return _presentation.activity_reason_prefix(decision)
 
 
 def _activity_reason_line_text(row: dict[str, Any], *, limit: int = 72, marker_limit: int = 72) -> str:
-    decision = str(row.get("decision") or "").strip()
-    if decision == "tainted":
-        return ""
-    reason = _clip_text(_activity_display_reason(row), limit, ellipsis="...", fallback="")
-    if not reason:
-        return ""
-    marker = _activity_marker(row)
-    suffix = f" (`{_clip_text(marker, marker_limit, ellipsis='...', fallback='')}`)" if marker else ""
-    prefix = _activity_reason_prefix(decision)
-    return f"{prefix}: {reason}{suffix}" if prefix else f"{reason}{suffix}"
+    return _presentation.activity_reason_line_text(
+        row,
+        marker=_activity_marker(row),
+        display_reason=_activity_display_reason(row),
+        limit=limit,
+        marker_limit=marker_limit,
+    )
 
 
 def _activity_taints_text(row: dict[str, Any], *, code: bool = False, html_code: bool = False) -> str:
-    raw_classes = str(row.get("data_classes") or "").strip()
-    classes = _clip_text(raw_classes, 120, fallback="") if raw_classes else ""
-    if not classes or classes in {"none", "n/a"}:
-        return "🏷️ No taints"
-    if html_code:
-        return f"🏷️ <code>{html.escape(classes, quote=True)}</code>"
-    if code:
-        return f"🏷️ `{classes}`"
-    return f"🏷️ {classes}"
+    return _presentation.activity_taints_text(row, code=code, html_code=html_code)
 
 
 def _dashboard_html() -> str:
-    policy = _policy_snapshot()
-    def esc(value: Any) -> str:
-        return html.escape(str(value or ""), quote=True)
-
-    def rule_classes_html(classes: list[str]) -> str:
-        safe_classes = sorted(str(cls) for cls in classes if str(cls))
-        if set(safe_classes) == _ALL_PRIVACY_CLASSES:
-            title = esc(", ".join(safe_classes))
-            return f'<span class="rule-chip" title="{title}">all data classes</span>'
-        if not safe_classes:
-            return '<span class="rule-chip muted">no data classes</span>'
-        return "".join(
-            f'<span class="rule-chip">{esc(cls)}</span>'
-            for cls in safe_classes
-        )
-
-    rules = policy["rules"]
-    rule_items = "".join(
-        f'<li class="rule-item"><div class="rule-main">'
-        f'<span class="rule-source">{esc(rule["source"])}</span>'
-        f'<span>{esc(rule["action_family"])} -> {esc(rule["destination"])}</span></div>'
-        f'<div class="rule-classes">{rule_classes_html(rule["data_classes"])}</div></li>'
-        for rule in rules
-    ) or "<li>No allow rules.</li>"
-    sessions = policy["sessions"]
-    session_items = "".join(
-        f"<li><code>{esc(session['session_hash'])}</code> "
-        f"{esc(','.join(session['taint']) or 'no taint')} "
-        f"{esc(session['browser_host'])}</li>"
-        for session in sessions
-    ) or "<li>No tracked sessions.</li>"
-
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hermes Guardian</title>
-  <link rel="stylesheet" href="/assets/datatables/{_DATATABLES_VERSION}/dataTables.dataTables.min.css">
-  <style>
-    :root {{ color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
-    body {{ margin: 0; background: #f7f7f5; color: #1d1d1b; }}
-    header {{ background: #22312d; color: white; padding: 18px 24px; }}
-    main {{ padding: 20px 24px 32px; max-width: 1280px; margin: 0 auto; }}
-    h1 {{ margin: 0; font-size: 22px; font-weight: 700; }}
-    h2 {{ font-size: 16px; margin: 0 0 10px; }}
-    .sub {{ margin-top: 4px; color: #d7e5de; font-size: 13px; }}
-    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 18px; }}
-    section {{ background: white; border: 1px solid #deded9; border-radius: 8px; padding: 14px; }}
-    dl {{ display: grid; grid-template-columns: 110px 1fr; gap: 6px 10px; margin: 0; font-size: 13px; }}
-    dt {{ color: #5f625d; }}
-    dd {{ margin: 0; font-weight: 600; }}
-    ul {{ margin: 0; padding-left: 18px; font-size: 13px; }}
-    code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }}
-    .rule-item {{ margin: 0 0 8px; min-width: 0; }}
-    .rule-main {{ display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; min-width: 0; overflow-wrap: anywhere; }}
-    .rule-classes {{ display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; min-width: 0; }}
-    .rule-source {{ display: inline-flex; border-radius: 4px; padding: 1px 5px; background: #e5ebe7; color: #4d5b53; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }}
-    .rule-chip {{ display: inline-flex; max-width: 100%; border-radius: 4px; padding: 1px 5px; background: #edf1ed; color: #38413b; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }}
-    .rule-chip.muted {{ color: #6c716b; }}
-    .table-wrap {{ background: white; border: 1px solid #deded9; border-radius: 8px; padding: 10px; overflow-x: auto; }}
-    #activity-table {{ width: 100%; font-size: 13px; }}
-    #activity-table td, #activity-table th {{ vertical-align: top; }}
-    #activity-table td.dt-control {{ width: 26px; text-align: center; cursor: pointer; color: #3f6256; font-weight: 800; }}
-    #activity-table td.dt-control::before {{ content: "+"; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 1px solid #9aa19a; border-radius: 50%; }}
-    #activity-table tr.dt-hasChild td.dt-control::before {{ content: "-"; }}
-    .dt-detail {{ display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 7px 12px; padding: 10px 12px 12px 38px; font-size: 13px; line-height: 1.35; background: #f8faf8; border-left: 4px solid #9aa19a; }}
-    .dt-detail dt {{ color: #5f625d; font-weight: 700; }}
-    .dt-detail dd {{ margin: 0; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all; font-weight: 500; }}
-    .dt-pill {{ display: inline-flex; align-items: center; border-radius: 4px; padding: 1px 5px; background: #edf1ed; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }}
-    .empty {{ background: white; border: 1px solid #deded9; border-radius: 8px; padding: 16px; color: #5f625d; }}
-    @media (prefers-color-scheme: dark) {{
-      body {{ background: #151715; color: #eeeeea; }}
-      header {{ background: #111d1a; }}
-      section, .table-wrap, .empty {{ background: #1d211e; border-color: #383d38; }}
-      dt {{ color: #a7ada5; }}
-      .empty {{ color: #a7ada5; }}
-      #activity-table td.dt-control {{ color: #9cc7b8; }}
-      .dt-detail {{ background: #191d1a; }}
-      .dt-detail dt {{ color: #a7ada5; }}
-      .dt-pill {{ background: #2a302c; }}
-      .rule-source {{ background: #26312b; color: #b8c8bf; }}
-      .rule-chip {{ background: #2a302c; color: #dce5df; }}
-      .rule-chip.muted {{ color: #a7ada5; }}
-    }}
-  </style>
-</head>
-<body>
-  <header>
-    <h1>Hermes Guardian</h1>
-    <div class="sub">Sanitized permission activity only. Raw tool args and private content are not logged.</div>
-  </header>
-  <main>
-    <div class="grid">
-      <section>
-        <h2>Policy</h2>
-        <dl>
-          <dt>Privacy policy</dt><dd>{esc(policy['privacy_policy'])}</dd>
-          <dt>Allowlist env</dt><dd>{'set' if policy['allowlist_env_set'] else 'not set'}</dd>
-          <dt>Max rows</dt><dd>{esc(policy['activity_max_rows'])}</dd>
-          <dt>Retention</dt><dd>{esc(policy['activity_retention_days'])} days</dd>
-          <dt>Grouping</dt><dd>{esc(policy['activity_group_seconds'])} seconds</dd>
-          <dt>Activity DB</dt><dd><code>{esc(policy['activity_db'])}</code></dd>
-        </dl>
-      </section>
-      <section>
-        <h2>Allow Rules</h2>
-        <ul>{rule_items}</ul>
-      </section>
-      <section>
-        <h2>Tracked Sessions</h2>
-        <ul>{session_items}</ul>
-      </section>
-    </div>
-    <h2>Activity Feed</h2>
-    <div class="table-wrap">
-      <table id="activity-table">
-        <thead>
-          <tr>
-            <th></th>
-            <th>Status</th>
-            <th>Time</th>
-            <th>Tool</th>
-            <th>Action</th>
-            <th>Destination</th>
-            <th>Taints</th>
-            <th>Reason</th>
-          </tr>
-        </thead>
-      </table>
-    </div>
-  </main>
-  <script src="/assets/jquery/{_JQUERY_VERSION}/jquery.min.js"></script>
-  <script src="/assets/datatables/{_DATATABLES_VERSION}/dataTables.min.js"></script>
-  <script>
-    const escapeText = (value) => value == null ? "" : String(value);
-    const escapeHtml = (value) => escapeText(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#39;");
-    const renderText = (data, type) => type === "display" ? escapeHtml(data) : data;
-    const renderStatus = (_data, type, row) => {{
-      if (type !== "display") return row.decision || "";
-      return `${{escapeHtml(row.icon)}} ${{escapeHtml(row.decision)}}`;
-    }};
-    const addDetail = (dl, label, value) => {{
-      const dt = document.createElement("dt");
-      dt.textContent = label;
-      const dd = document.createElement("dd");
-      dd.textContent = value == null || value === "" ? "n/a" : String(value);
-      dl.append(dt, dd);
-    }};
-    const detailNode = (data) => {{
-      const dl = document.createElement("dl");
-      dl.className = "dt-detail";
-      addDetail(dl, "Reason", data.reason);
-      addDetail(dl, "Action detail", data.action_detail);
-      addDetail(dl, "Policy", data.mode);
-      addDetail(dl, "Session", data.session_hash);
-      addDetail(dl, "Owner", data.owner_hash);
-      addDetail(dl, "Approval", data.approval_id);
-      addDetail(dl, "Rule", [data.rule_source, data.rule_id].filter(Boolean).join(" "));
-      addDetail(dl, "Row", `#${{data.id}} @ ${{data.ts}}`);
-      return dl;
-    }};
-    const activityTable = new DataTable("#activity-table", {{
-      ajax: "/api/activity/datatables",
-      processing: true,
-      serverSide: true,
-      pageLength: 25,
-      lengthMenu: [25, 50, 100],
-      order: [[2, "desc"]],
-      columns: [
-        {{ data: null, defaultContent: "", orderable: false, searchable: false, className: "dt-control" }},
-        {{ data: "decision", name: "decision", render: renderStatus }},
-        {{ data: "time", name: "ts", render: renderText }},
-        {{ data: "tool", name: "tool_name", render: renderText }},
-        {{ data: "action_family", name: "action_family", render: renderText }},
-        {{ data: "destination", name: "destination", render: renderText }},
-        {{ data: "data_classes", name: "data_classes", render: (data, type) => type === "display" && data ? `<span class="dt-pill">${{escapeHtml(data)}}</span>` : data }},
-        {{ data: "reason_short", name: "reason", render: renderText }},
-      ],
-    }});
-    activityTable.on("click", "tbody td.dt-control", function (event) {{
-      const tr = event.target.closest("tr");
-      const row = activityTable.row(tr);
-      if (row.child.isShown()) {{
-        row.child.hide();
-        tr.classList.remove("dt-hasChild");
-      }} else {{
-        row.child(detailNode(row.data())).show();
-        tr.classList.add("dt-hasChild");
-      }}
-    }});
-  </script>
-</body>
-</html>"""
-
+    return _presentation.dashboard_html(
+        _policy_snapshot(),
+        jquery_version=_JQUERY_VERSION,
+        datatables_version=_DATATABLES_VERSION,
+        all_privacy_classes=_ALL_PRIVACY_CLASSES,
+    )
 
 class _DashboardHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
