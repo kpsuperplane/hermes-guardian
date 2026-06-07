@@ -3,3 +3,9 @@ __pycache__/
 .pytest_cache/
 .coverage
 .unsafe-diagnostics
+privacy-rules.json
+privacy-rules.json.tmp
+guardian-rules.json
+guardian-rules.json.tmp
+activity.sqlite3
+activity.sqlite3-*

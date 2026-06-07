@@ -1,7 +1,11 @@
-name: security-sensitive-filter
-version: 1.0.0
-description: Suppress security-sensitive content before it reaches the model
+name: hermes-guardian
+version: 2.0.0
+description: Hermes Guardian security and egress policy enforcement
 provides_hooks:
   - pre_tool_call
   - transform_tool_result
   - pre_gateway_dispatch
+  - transform_llm_output
+  - pre_llm_call
+  - on_session_reset
+  - on_session_end
