@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,11 +13,10 @@ import pytest
 @pytest.fixture(autouse=True)
 def clear_guardian_env(monkeypatch):
     monkeypatch.delenv("HERMES_GUARDIAN_ALLOWLIST", raising=False)
-    monkeypatch.delenv("HERMES_GUARDIAN_SECURITY", raising=False)
+    monkeypatch.delenv("HERMES_GUARDIAN_PRIVACY", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_HISTORY_TIMEZONE", raising=False)
     monkeypatch.delenv("PRIVACY_EGRESS_GUARD_ALLOWLIST", raising=False)
-    monkeypatch.delenv("PRIVACY_EGRESS_GUARD_SECURITY", raising=False)
     monkeypatch.delenv("PRIVACY_EGRESS_GUARD_ACTIVITY_GROUP_SECONDS", raising=False)
     monkeypatch.delenv("PRIVACY_EGRESS_GUARD_HISTORY_TIMEZONE", raising=False)
 
@@ -278,7 +278,6 @@ def test_transform_tool_result_source_based_taint_classes():
         ("mnemosyne_search", "memory"),
         ("mcp_notion_read_page", "documents"),
         ("calendar_list_events", "calendar"),
-        ("terminal", "local_system"),
     ]
 
     for tool_name, expected in cases:
@@ -288,6 +287,49 @@ def test_transform_tool_result_source_based_taint_classes():
             session_id="s1",
         )
         assert expected in plugin._session_taint("s1")
+
+
+def test_low_risk_terminal_result_does_not_taint_local_system():
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    assert plugin._on_pre_tool_call("terminal", {"command": "pwd"}, session_id="s1") is None
+    plugin._on_transform_tool_result(
+        tool_name="terminal",
+        result=json.dumps({"result": "/root"}),
+        session_id="s1",
+    )
+
+    assert "local_system" not in plugin._session_taint("s1")
+    rows = plugin._activity_rows({"decision": "tainted"}, limit=10)
+    assert rows == []
+
+
+def test_content_bearing_terminal_result_taints_local_system():
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    assert plugin._on_pre_tool_call("terminal", {"command": "cat ~/.hermes/config.yaml"}, session_id="s1") is None
+    plugin._on_transform_tool_result(
+        tool_name="terminal",
+        result=json.dumps({"result": "timezone: America/Los_Angeles"}),
+        session_id="s1",
+    )
+
+    assert "local_system" in plugin._session_taint("s1")
+
+
+def test_terminal_result_without_call_policy_uses_content_detection_only():
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    plugin._on_transform_tool_result(
+        tool_name="terminal",
+        result=json.dumps({"result": "plain startup output"}),
+        session_id="s1",
+    )
+
+    assert plugin._session_taint("s1") == set()
 
 
 def test_taint_is_scoped_by_session():
@@ -453,9 +495,9 @@ def test_tainted_session_blocks_terminal_and_code_execution():
     assert "Action: terminal_exec" in code["message"]
 
 
-def test_security_off_bypasses_guardian_but_not_security(monkeypatch):
+def test_privacy_off_bypasses_guardian_but_not_security(monkeypatch):
     plugin = load_plugin()
-    monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "off")
+    monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "off")
     bind_owner(plugin)
     plugin._taint_session("s1", {"email"})
 
@@ -470,9 +512,9 @@ def test_security_off_bypasses_guardian_but_not_security(monkeypatch):
     assert "auth code" in blocked["message"]
 
 
-def test_strict_security_blocks_guardian_by_default(monkeypatch):
+def test_strict_privacy_blocks_guardian_by_default(monkeypatch):
     plugin = load_plugin()
-    monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "strict")
+    monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "strict")
     bind_owner(plugin)
     plugin._taint_session("s1", {"memory"})
 
@@ -482,9 +524,9 @@ def test_strict_security_blocks_guardian_by_default(monkeypatch):
     assert "Action: terminal_exec" in result["message"]
 
 
-def test_read_only_security_allows_low_risk_terminal_command(monkeypatch):
+def test_read_only_privacy_allows_low_risk_terminal_command(monkeypatch):
     plugin = load_plugin()
-    monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "read-only")
+    monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "read-only")
     bind_owner(plugin)
     plugin._taint_session("s1", {"memory"})
 
@@ -494,9 +536,9 @@ def test_read_only_security_allows_low_risk_terminal_command(monkeypatch):
     assert not plugin._PENDING_APPROVALS
 
 
-def test_read_only_security_falls_back_to_manual_for_risky_terminal(monkeypatch):
+def test_read_only_privacy_falls_back_to_manual_for_risky_terminal(monkeypatch):
     plugin = load_plugin()
-    monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "read-only")
+    monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "read-only")
     bind_owner(plugin)
     plugin._taint_session("s1", {"memory"})
 
@@ -506,9 +548,9 @@ def test_read_only_security_falls_back_to_manual_for_risky_terminal(monkeypatch)
     assert "Action: terminal_exec" in result["message"]
 
 
-def test_read_only_security_does_not_auto_approve_messages(monkeypatch):
+def test_read_only_privacy_does_not_auto_approve_messages(monkeypatch):
     plugin = load_plugin()
-    monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "read-only")
+    monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "read-only")
     bind_owner(plugin)
     plugin._taint_session("s1", {"email"})
 
@@ -520,29 +562,38 @@ def test_read_only_security_does_not_auto_approve_messages(monkeypatch):
 
 def test_guardian_self_test_passes_in_read_only_with_notion_allowlist(monkeypatch):
     plugin = load_plugin()
-    monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "read-only")
+    monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "read-only")
     monkeypatch.setenv("HERMES_GUARDIAN_ALLOWLIST", "mcp_write:mcp:notion")
 
     result = plugin._handle_guardian_command("self-test")
 
     assert "self-test: PASS" in result
-    assert "security=read-only" in result
+    assert "privacy=read-only" in result
     assert "notion_write=allowed" in result
 
 
-def test_security_policy_does_not_alias_old_values(monkeypatch):
+def test_privacy_policy_does_not_alias_old_values(monkeypatch):
     plugin = load_plugin()
 
-    monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "manual")
-    assert plugin._security_policy() == "strict"
+    monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "manual")
+    assert plugin._privacy_policy() == "strict"
 
-    monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "auto-approve")
-    assert plugin._security_policy() == "strict"
+    monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "auto-approve")
+    assert plugin._privacy_policy() == "strict"
 
 
-def test_llm_security_allows_model_approved_guardian(monkeypatch):
+def test_privacy_policy_ignores_old_security_env_names(monkeypatch):
     plugin = load_plugin()
+
     monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "llm")
+    monkeypatch.setenv("PRIVACY_EGRESS_GUARD_SECURITY", "off")
+
+    assert plugin._privacy_policy() == "strict"
+
+
+def test_llm_privacy_allows_model_approved_guardian(monkeypatch):
+    plugin = load_plugin()
+    monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "llm")
     fake_llm = FakeSecurityLlm({
         "outcome": "allow",
         "risk_level": "low",
@@ -572,9 +623,9 @@ def test_llm_verdict_schema_uses_distinct_authorization_labels():
     assert "User authorization:" not in plugin._LLM_POLICY_INSTRUCTIONS
 
 
-def test_llm_security_denial_falls_back_to_manual_approval(monkeypatch):
+def test_llm_privacy_denial_falls_back_to_manual_approval(monkeypatch):
     plugin = load_plugin()
-    monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "llm")
+    monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "llm")
     fake_llm = FakeSecurityLlm({
         "outcome": "deny",
         "risk_level": "high",
@@ -594,9 +645,9 @@ def test_llm_security_denial_falls_back_to_manual_approval(monkeypatch):
     assert any("llm high" in row["reason"] for row in rows)
 
 
-def test_llm_security_hard_block_skips_model_and_pending_approval(monkeypatch):
+def test_llm_privacy_hard_block_skips_model_and_pending_approval(monkeypatch):
     plugin = load_plugin()
-    monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "llm")
+    monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "llm")
     fake_llm = FakeSecurityLlm({
         "outcome": "allow",
         "risk_level": "low",
@@ -619,9 +670,9 @@ def test_llm_security_hard_block_skips_model_and_pending_approval(monkeypatch):
     assert not plugin._PENDING_APPROVALS
 
 
-def test_llm_security_without_llm_fails_closed_to_manual_approval(monkeypatch):
+def test_llm_privacy_without_llm_fails_closed_to_manual_approval(monkeypatch):
     plugin = load_plugin()
-    monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "llm")
+    monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "llm")
     plugin._PLUGIN_LLM = None
     bind_owner(plugin)
     plugin._taint_session("s1", {"memory"})
@@ -717,7 +768,7 @@ def test_dashboard_payload_filters_activity_by_decision():
 
     payload = plugin._dashboard_payload({"decision": "blocked"}, limit=10)
 
-    assert payload["policy"]["security"] == "strict"
+    assert payload["policy"]["privacy_policy"] == "strict"
     assert payload["activity"]
     assert all(row["decision"] == "blocked" for row in payload["activity"])
 
@@ -979,17 +1030,17 @@ def test_guardian_debug_command_does_not_consume_once_approval():
     assert len(plugin._ONCE_APPROVALS[plugin._GLOBAL_SESSION_ID]) == 1
 
 
-def test_guardian_debug_command_reports_security_off(monkeypatch):
+def test_guardian_debug_command_reports_privacy_off(monkeypatch):
     plugin = load_plugin()
-    monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "off")
+    monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "off")
 
     response = plugin._handle_guardian_command(
         "debug action=message_send destination=friend classes=email"
     )
 
     assert "Decision: allowed" in response
-    assert "Security: off" in response
-    assert "security policy is off" in response
+    assert "Privacy policy: off" in response
+    assert "privacy policy is off" in response
 
 
 def test_guardian_history_command_lists_recent_sanitized_activity():
@@ -1175,6 +1226,36 @@ def test_approval_once_allows_matching_retry_then_expires():
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
     blocked_again = plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     assert blocked_again is not None
+
+
+def test_pending_approval_id_is_human_friendly():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+
+    blocked = plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
+    assert blocked is not None
+    approval_id = first_pending_id(plugin)
+
+    assert re.fullmatch(r"[a-z]+-[a-z]+-\d{4}", approval_id)
+    assert f"Approval ID: {approval_id}" in blocked["message"]
+    assert f"/guardian approve {approval_id} once" in blocked["message"]
+
+
+def test_approval_accepts_hyphenless_friendly_id():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
+    approval_id = first_pending_id(plugin)
+    compact_id = approval_id.replace("-", "")
+
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {compact_id} once"))
+    response = plugin._handle_guardian_command(f"approve {compact_id} once")
+
+    assert "Approved message_send" in response
+    assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
 
 
 def test_approval_session_allows_same_destination_only_same_session():

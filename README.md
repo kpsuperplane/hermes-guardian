@@ -28,6 +28,16 @@ outbound actions are checked before they execute. If a tool call would send or
 expose that private context to a destination that has not been approved, Hermes
 Guardian blocks the call and creates a short-lived approval ID.
 
+The privacy policy controls how private-context egress is handled:
+
+- `strict`: require manual approval unless an allow rule matches.
+- `read-only`: automatically allow a small set of metadata-verified low-risk
+  local reads, and require approval for everything else.
+- `llm`: run a deterministic malicious-action blocklist first, then delegate
+  low-risk judgment to a sanitized LLM verifier.
+- `off`: disable private-egress approval checks while still blocking
+  security/access-sensitive content.
+
 The original tool call is not paused or resumed. After approval, the agent must
 retry the action.
 
@@ -80,10 +90,10 @@ enabled      git      2.0.0    hermes-guardian
 Configuration is read from environment variables. On a typical Hermes install,
 put these in `~/.hermes/.env` or in the environment used by the gateway service.
 
-### Security Policy
+### Privacy Policy
 
 ```bash
-HERMES_GUARDIAN_SECURITY=strict
+HERMES_GUARDIAN_PRIVACY=strict
 ```
 
 Supported values:
@@ -194,13 +204,6 @@ HERMES_GUARDIAN_UNSAFE_DIAGNOSTICS=1
 This is for development only. It can log sensitive detection matches and context
 snippets. Do not enable it in production or on shared systems.
 
-### Legacy Environment Names
-
-The old `PRIVACY_EGRESS_GUARD_*` environment variable names are still accepted
-as fallback aliases so existing installs do not break during migration.
-
-Prefer the new `HERMES_GUARDIAN_*` names for all new configuration.
-
 ## Data Classes
 
 Hermes Guardian tracks private context using these data classes:
@@ -211,14 +214,23 @@ Hermes Guardian tracks private context using these data classes:
 - `memory`: Hermes memory, Mnemosyne, and session-search results.
 - `documents`: Notion, Drive, files, document bodies, and document metadata.
 - `calendar`: meetings, attendees, schedule details, and event data.
-- `local_system`: terminal output, code execution output, local files, and local
-  runtime details.
+- `local_system`: local file/content-bearing terminal output, code execution
+  output, and local runtime details that may contain private context.
 - `browser_private_input`: private or user-derived text typed into a browser
   page.
 
-Source-based taint wins over content detection. For example, reading email
-taints the session as `email` even if the returned email text contains no
+Source-based taint wins over content detection for private sources such as
+email, contacts, memory, documents, and calendar tools. For example, reading
+email taints the session as `email` even if the returned email text contains no
 obvious PII regex match.
+
+`local_system` is intentionally more permissive. Hermes Guardian does not taint
+a session merely because a terminal startup or metadata command returned output.
+Commands such as `pwd`, `date`, `whoami`, `hostname`, `ls`, `stat`, `du`, and
+`df` are treated as metadata-only for result-taint purposes. Content-bearing
+commands such as `cat ~/.hermes/config.yaml`, code execution, unknown local
+system results with private-content patterns, or non-metadata terminal reads can
+still taint the session as `local_system`.
 
 ## Security-Sensitive Blocking
 
@@ -281,6 +293,12 @@ similar tools can exfiltrate data in many ways.
 In `strict`, terminal/code actions require approval when private data is in
 scope.
 
+Terminal result taint is a separate question. To avoid noisy startup state,
+Hermes Guardian records the command shape before a local-system tool runs and
+only adds `local_system` taint when the resulting command is content-bearing or
+code-like. Metadata-only terminal commands do not leave persistent
+`local_system` taint behind.
+
 In `read-only`, Hermes Guardian allows a small metadata-verified set of low-risk
 read commands, such as:
 
@@ -296,9 +314,9 @@ In `llm`, a strict deterministic blocklist runs first. If the action is not
 explicitly malicious, Hermes Guardian sends sanitized metadata to the plugin LLM
 for a structured decision.
 
-## LLM Security Mode
+## LLM Privacy Mode
 
-`HERMES_GUARDIAN_SECURITY=llm` is intended to approximate Codex-style
+`HERMES_GUARDIAN_PRIVACY=llm` is intended to approximate Codex-style
 low-risk-action approval while keeping private content out of the verifier
 prompt.
 
@@ -336,22 +354,24 @@ When egress is blocked, the model/user sees a message like:
 ```text
 Hermes Guardian blocked this egress.
 
-Approval ID: peg_8f3c2a91
+Approval ID: amber-river-4827
 Action: browser_type
 Destination: example.com
 Action detail: browser_type to example.com
 Data classes: email, contacts
 
 Kevin can approve with:
-/guardian approve peg_8f3c2a91 once
-/guardian approve peg_8f3c2a91 session
-/guardian approve peg_8f3c2a91 always
+/guardian approve amber-river-4827 once
+/guardian approve amber-river-4827 session
+/guardian approve amber-river-4827 always
 or deny with:
-/guardian deny peg_8f3c2a91
+/guardian deny amber-river-4827
 ```
 
-Approval IDs are random, short-lived, and scoped to the gateway sender identity
-captured for the session.
+Approval IDs use two simple words plus four digits so they are easier to read
+and type on mobile. Hyphens are optional when approving or denying, so
+`/guardian approve amberriver4827 once` works too. IDs are random,
+short-lived, and scoped to the gateway sender identity captured for the session.
 
 Approval scopes:
 
@@ -519,7 +539,7 @@ It also registers the gateway slash command:
 For a personal Hermes install, a practical default is:
 
 ```bash
-HERMES_GUARDIAN_SECURITY=llm
+HERMES_GUARDIAN_PRIVACY=llm
 HERMES_GUARDIAN_ALLOWLIST="mcp_write:mcp:notion"
 HERMES_GUARDIAN_DASHBOARD_HOST=127.0.0.1
 HERMES_GUARDIAN_DASHBOARD_PORT=8787

@@ -44,8 +44,84 @@ _APPROVAL_TTL_SECONDS = 10 * 60
 _RECENT_COMMAND_TTL_SECONDS = 30
 _GLOBAL_SESSION_ID = "__global__"
 _CLI_OWNER_HASH = "cli"
+_APPROVAL_WORDS_LEFT = [
+    "amber",
+    "azure",
+    "brisk",
+    "calm",
+    "cedar",
+    "clear",
+    "cobalt",
+    "coral",
+    "crisp",
+    "dawn",
+    "ember",
+    "frost",
+    "gold",
+    "green",
+    "harbor",
+    "indigo",
+    "ivory",
+    "jade",
+    "lunar",
+    "maple",
+    "marble",
+    "meadow",
+    "mint",
+    "north",
+    "opal",
+    "pearl",
+    "quiet",
+    "rose",
+    "silver",
+    "solar",
+    "spruce",
+    "steady",
+    "stone",
+    "swift",
+    "teal",
+    "violet",
+]
+_APPROVAL_WORDS_RIGHT = [
+    "anchor",
+    "arch",
+    "beacon",
+    "bridge",
+    "brook",
+    "canyon",
+    "cloud",
+    "comet",
+    "copper",
+    "delta",
+    "field",
+    "flare",
+    "garden",
+    "grove",
+    "harbor",
+    "lantern",
+    "meadow",
+    "mesa",
+    "orbit",
+    "peak",
+    "quartz",
+    "ridge",
+    "river",
+    "signal",
+    "slate",
+    "spark",
+    "spring",
+    "summit",
+    "tide",
+    "tower",
+    "trail",
+    "valley",
+    "vista",
+    "wave",
+    "willow",
+    "zenith",
+]
 _ALLOWLIST_ENV = "HERMES_GUARDIAN_ALLOWLIST"
-_SECURITY_ENV = "HERMES_GUARDIAN_SECURITY"
+_PRIVACY_ENV = "HERMES_GUARDIAN_PRIVACY"
 _DASHBOARD_HOST_ENV = "HERMES_GUARDIAN_DASHBOARD_HOST"
 _DASHBOARD_PORT_ENV = "HERMES_GUARDIAN_DASHBOARD_PORT"
 _ACTIVITY_MAX_ROWS_ENV = "HERMES_GUARDIAN_ACTIVITY_MAX_ROWS"
@@ -54,7 +130,6 @@ _ACTIVITY_GROUP_SECONDS_ENV = "HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS"
 _HISTORY_TIMEZONE_ENV = "HERMES_GUARDIAN_HISTORY_TIMEZONE"
 _LEGACY_ENV_NAMES = {
     _ALLOWLIST_ENV: "PRIVACY_EGRESS_GUARD_ALLOWLIST",
-    _SECURITY_ENV: "PRIVACY_EGRESS_GUARD_SECURITY",
     _DASHBOARD_HOST_ENV: "PRIVACY_EGRESS_GUARD_DASHBOARD_HOST",
     _DASHBOARD_PORT_ENV: "PRIVACY_EGRESS_GUARD_DASHBOARD_PORT",
     _ACTIVITY_MAX_ROWS_ENV: "PRIVACY_EGRESS_GUARD_ACTIVITY_MAX_ROWS",
@@ -100,7 +175,7 @@ _ACTIVITY_DECISIONS = {
     "denied",
     "manual_approved",
     "mode_off_allowed",
-    "security_off_allowed",
+    "privacy_off_allowed",
     "security_blocked",
     "security_suppressed",
     "tainted",
@@ -187,6 +262,19 @@ _READ_ONLY_AUTO_APPROVE_DENY_RE = re.compile(
 _READ_ONLY_TERMINAL_SAFE_RE = re.compile(
     r"^\s*(pwd|date|whoami|id|uname|hostname|ls|find|rg|grep|cat|head|tail|wc|stat|du|df|test|true|false)"
     r"(\s|$)",
+    re.I,
+)
+_LOCAL_SYSTEM_NO_TAINT_DENY_RE = re.compile(
+    r"(\b(curl|wget|scp|sftp|ssh|rsync|nc|netcat|telnet|ftp|openssl|base64|python|python3|node|npm|npx|perl|ruby|php)\b"
+    r"|https?://|>>?|<|;|&&|\|\||`|\$\()",
+    re.I,
+)
+_LOCAL_SYSTEM_NO_TAINT_FIRST_RE = re.compile(
+    r"^\s*(pwd|date|whoami|id|uname|hostname|ls|stat|du|df|test|true|false)(\s|$)",
+    re.I,
+)
+_LOCAL_SYSTEM_NO_TAINT_FILTER_RE = re.compile(
+    r"^\s*(grep|wc|head|tail)(\s|$)",
     re.I,
 )
 _LLM_SECURITY_HARD_DENY_RE = re.compile(
@@ -285,8 +373,8 @@ def _unsafe_diagnostics_enabled() -> bool:
     ).lower() in {"1", "true", "yes", "on"}
 
 
-def _security_policy() -> str:
-    raw = _env(_SECURITY_ENV, "strict").strip().lower().replace("_", "-")
+def _privacy_policy() -> str:
+    raw = _env(_PRIVACY_ENV, "strict").strip().lower().replace("_", "-")
     if raw == "off":
         return "off"
     if raw in {"strict", ""}:
@@ -295,7 +383,7 @@ def _security_policy() -> str:
         return "read-only"
     if raw == "llm":
         return "llm"
-    logger.warning("%s: invalid %s=%r; using strict", _PLUGIN_NAME, _SECURITY_ENV, raw)
+    logger.warning("%s: invalid %s=%r; using strict", _PLUGIN_NAME, _PRIVACY_ENV, raw)
     return "strict"
 
 
@@ -428,7 +516,7 @@ def _emit_activity(
                 (
                     int(_now()),
                     decision,
-                    _security_policy(),
+                    _privacy_policy(),
                     _safe_session_label(sid),
                     _short_hash(sid),
                     _short_hash(owner_hash),
@@ -523,7 +611,7 @@ def _activity_rows(filters: dict[str, str], *, limit: int = 200) -> list[dict[st
             "ts": row["ts"],
             "decision": row["decision"],
             "mode": row["mode"],
-            "security": row["mode"],
+            "privacy_policy": row["mode"],
             "session_label": row["session_label"],
             "session_hash": row["session_hash"],
             "owner_hash": row["owner_hash"],
@@ -641,7 +729,7 @@ def _policy_snapshot() -> dict[str, Any]:
         ]
         rules = _configured_allow_rules() + _load_persistent_rules().get("rules", [])
     return {
-        "security": _security_policy(),
+        "privacy_policy": _privacy_policy(),
         "allowlist_env_set": bool(_env(_ALLOWLIST_ENV, "").strip()),
         "activity_db": str(_ACTIVITY_DB_PATH),
         "activity_max_rows": _activity_max_rows(),
@@ -955,6 +1043,7 @@ def _ensure_session(session_id: str | None, owner_hash: str | None = None) -> di
                 "owner_hash": owner_hash,
                 "browser_host": "",
                 "browser_private_hosts": set(),
+                "local_system_result_policies": [],
             },
         )
         if owner_hash:
@@ -1048,9 +1137,87 @@ def _classes_from_content(value: Any) -> set[str]:
     return classes
 
 
-def _taint_classes_for_tool_result(tool_name: str, result_value: Any, status: str = "") -> set[str]:
+def _is_local_system_tool(tool_name: str) -> bool:
+    return bool(_TERMINAL_TOOL_RE.match(str(tool_name or "").lower()))
+
+
+def _terminal_command_for_args(args: Any) -> str:
+    if isinstance(args, dict):
+        return str(args.get("command") or args.get("cmd") or "")
+    return ""
+
+
+def _terminal_command_result_is_metadata_only(command: str) -> bool:
+    command = str(command or "").strip()
+    if not command:
+        return False
+    if _LOCAL_SYSTEM_NO_TAINT_DENY_RE.search(command):
+        return False
+    segments = [segment.strip() for segment in command.split("|")]
+    if not segments or not _LOCAL_SYSTEM_NO_TAINT_FIRST_RE.search(segments[0]):
+        return False
+    return all(_LOCAL_SYSTEM_NO_TAINT_FILTER_RE.search(segment) for segment in segments[1:])
+
+
+def _local_system_result_taint_classes(tool_name: str, args: Any) -> set[str]:
+    lower = str(tool_name or "").lower()
+    if lower in {"execute_code", "code_execution", "shell"}:
+        return {"local_system"}
+    if lower == "terminal":
+        command = _terminal_command_for_args(args)
+        if _terminal_command_result_is_metadata_only(command):
+            return set()
+        return {"local_system"}
+    return set()
+
+
+def _record_local_system_result_policy(session_id: str | None, tool_name: str, args: Any) -> None:
+    if not _is_local_system_tool(tool_name):
+        return
+    entry = {
+        "tool_name": str(tool_name or "").lower(),
+        "taint": sorted(_local_system_result_taint_classes(tool_name, args)),
+        "ts": _now(),
+    }
+    with _LOCK:
+        state = _ensure_session(session_id)
+        policies = state.setdefault("local_system_result_policies", [])
+        policies.append(entry)
+        del policies[:-10]
+
+
+def _consume_local_system_result_policy(session_id: str | None, tool_name: str) -> set[str]:
+    if not _is_local_system_tool(tool_name):
+        return set()
+    lower = str(tool_name or "").lower()
+    cutoff = _now() - 120
+    with _LOCK:
+        state = _ensure_session(session_id)
+        policies = [
+            policy
+            for policy in state.get("local_system_result_policies", [])
+            if float(policy.get("ts", 0)) >= cutoff
+        ]
+        state["local_system_result_policies"] = policies
+        for index, policy in enumerate(policies):
+            if policy.get("tool_name") == lower:
+                policies.pop(index)
+                return set(policy.get("taint") or [])
+    return set()
+
+
+def _taint_classes_for_tool_result(
+    tool_name: str,
+    result_value: Any,
+    status: str = "",
+    session_id: str | None = None,
+) -> set[str]:
     if str(status or "").lower() == "error":
         return set()
+    if _is_local_system_tool(tool_name):
+        classes = _classes_from_content(result_value)
+        classes.update(_consume_local_system_result_policy(session_id, tool_name))
+        return classes
     classes = _classes_from_tool_name(tool_name)
     if classes:
         return classes
@@ -1411,7 +1578,7 @@ def _terminal_command_is_low_risk(args: Any) -> bool:
 
 
 def _read_only_auto_approves(shape: dict[str, Any], args: Any) -> bool:
-    """Metadata-only low-risk verifier for read-only security policy.
+    """Metadata-only low-risk verifier for read-only privacy policy.
 
     This deliberately does not inspect or transmit raw private content. Anything
     not recognized as low-risk falls back to manual approval.
@@ -1549,9 +1716,44 @@ def _llm_security_verdict(shape: dict[str, Any], args: Any) -> dict[str, str]:
         }
 
 
+def _approval_id_compact(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def _new_approval_id() -> str:
+    with _LOCK:
+        existing = set(_PENDING_APPROVALS)
+        existing_compact = {_approval_id_compact(value) for value in existing}
+    for _ in range(32):
+        candidate = (
+            f"{secrets.choice(_APPROVAL_WORDS_LEFT)}-"
+            f"{secrets.choice(_APPROVAL_WORDS_RIGHT)}-"
+            f"{secrets.randbelow(10_000):04d}"
+        )
+        if candidate not in existing and _approval_id_compact(candidate) not in existing_compact:
+            return candidate
+    return f"guardian-{secrets.token_hex(4)}"
+
+
+def _resolve_pending_approval_id(approval_id: str) -> str | None:
+    approval_id = str(approval_id or "").strip().lower()
+    if not approval_id:
+        return None
+    with _LOCK:
+        if approval_id in _PENDING_APPROVALS:
+            return approval_id
+        compact = _approval_id_compact(approval_id)
+        matches = [
+            stored_id
+            for stored_id in _PENDING_APPROVALS
+            if _approval_id_compact(stored_id) == compact
+        ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _create_pending_approval(shape: dict[str, Any]) -> dict[str, Any]:
     approval = {
-        "id": f"peg_{secrets.token_hex(4)}",
+        "id": _new_approval_id(),
         "session_id": shape["session_id"],
         "owner_hash": shape.get("owner_hash") or "",
         "tool_name": shape["tool_name"],
@@ -1708,7 +1910,7 @@ def _dashboard_html() -> str:
         suffix = f" (<code>{esc(clip(marker))}</code>)" if marker else ""
         if decision == "tainted":
             return ""
-        if decision in {"allowed", "auto_approved", "manual_approved", "mode_off_allowed", "security_off_allowed"}:
+        if decision in {"allowed", "auto_approved", "manual_approved", "mode_off_allowed", "privacy_off_allowed"}:
             return f"Allowed: {esc(reason)}{suffix}"
         if decision == "denied":
             return f"Denied: {esc(reason)}{suffix}"
@@ -1723,7 +1925,7 @@ def _dashboard_html() -> str:
         "denied": "❌",
         "manual_approved": "✅",
         "mode_off_allowed": "✅",
-        "security_off_allowed": "✅",
+        "privacy_off_allowed": "✅",
         "security_blocked": "❌",
         "security_suppressed": "❌",
         "tainted": "📥",
@@ -1795,7 +1997,7 @@ def _dashboard_html() -> str:
     .activity-card {{ background: white; border: 1px solid #deded9; border-left: 4px solid #9aa19a; border-radius: 8px; padding: 12px 14px; }}
     .activity-card.blocked, .activity-card.security_blocked {{ border-left-color: #cf3d2e; }}
     .activity-card.security_suppressed {{ border-left-color: #c97918; }}
-    .activity-card.auto_approved, .activity-card.allowed, .activity-card.manual_approved, .activity-card.mode_off_allowed, .activity-card.security_off_allowed {{ border-left-color: #2f8d46; }}
+    .activity-card.auto_approved, .activity-card.allowed, .activity-card.manual_approved, .activity-card.mode_off_allowed, .activity-card.privacy_off_allowed {{ border-left-color: #2f8d46; }}
     .activity-card.denied {{ border-left-color: #6550c4; }}
     .activity-card.tainted {{ border-left-color: #2d75bb; }}
     .activity-title {{ display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; }}
@@ -1826,7 +2028,7 @@ def _dashboard_html() -> str:
       <section>
         <h2>Policy</h2>
         <dl>
-          <dt>Security</dt><dd>{esc(policy['security'])}</dd>
+          <dt>Privacy policy</dt><dd>{esc(policy['privacy_policy'])}</dd>
           <dt>Allowlist env</dt><dd>{'set' if policy['allowlist_env_set'] else 'not set'}</dd>
           <dt>Max rows</dt><dd>{esc(policy['activity_max_rows'])}</dd>
           <dt>Retention</dt><dd>{esc(policy['activity_retention_days'])} days</dd>
@@ -2020,7 +2222,7 @@ def _guardian_history_command(tokens: list[str]) -> str:
         suffix = f" (`{clip(marker)}`)" if marker else ""
         if decision == "tainted":
             return ""
-        if decision in {"allowed", "auto_approved", "manual_approved", "mode_off_allowed", "security_off_allowed"}:
+        if decision in {"allowed", "auto_approved", "manual_approved", "mode_off_allowed", "privacy_off_allowed"}:
             return f"Allowed: {reason}{suffix}"
         if decision == "denied":
             return f"Denied: {reason}{suffix}"
@@ -2035,7 +2237,7 @@ def _guardian_history_command(tokens: list[str]) -> str:
         "denied": "❌",
         "manual_approved": "✅",
         "mode_off_allowed": "✅",
-        "security_off_allowed": "✅",
+        "privacy_off_allowed": "✅",
         "security_blocked": "❌",
         "security_suppressed": "❌",
         "tainted": "📥",
@@ -2106,23 +2308,23 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
         "data_classes": classes,
         "fingerprint": "debug",
     }
-    security = _security_policy()
-    if security == "off":
+    privacy_policy = _privacy_policy()
+    if privacy_policy == "off":
         return {
             "decision": "allowed",
-            "security": security,
-            "source": {"source": "security_off", "rule_id": ""},
+            "privacy_policy": privacy_policy,
+            "source": {"source": "privacy_off", "rule_id": ""},
             "action_family": action_family,
             "destination": destination,
             "data_classes": classes,
             "tool_name": tool_name,
-            "reason": "security policy is off",
+            "reason": "privacy policy is off",
         }
     source = _approval_source(shape, consume_once=False)
     if source:
         return {
             "decision": "allowed",
-            "security": security,
+            "privacy_policy": privacy_policy,
             "source": source,
             "action_family": action_family,
             "destination": destination,
@@ -2132,7 +2334,7 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
         }
     return {
         "decision": "blocked",
-        "security": security,
+        "privacy_policy": privacy_policy,
         "source": None,
         "action_family": action_family,
         "destination": destination,
@@ -2159,7 +2361,7 @@ def _guardian_debug_command(tokens: list[str]) -> str:
     return (
         "Guardian debug decision\n"
         f"Decision: {result['decision']}\n"
-        f"Security: {result['security']}\n"
+        f"Privacy policy: {result['privacy_policy']}\n"
         f"Action: {result['action_family'] or '(missing)'}\n"
         f"Destination: {result['destination'] or '(missing)'}\n"
         f"Data classes: {classes}\n"
@@ -2205,7 +2407,7 @@ def _handle_guardian_command(raw_args: str = "") -> str:
 
 
 def _guardian_self_test() -> str:
-    """Exercise security policy/allowlist decisions without raw private data."""
+    """Exercise privacy policy/allowlist decisions without raw private data."""
     session_id = f"selftest_{secrets.token_hex(4)}"
     _ensure_session(session_id, _CLI_OWNER_HASH)
     _taint_session(session_id, {"memory"})
@@ -2227,21 +2429,21 @@ def _guardian_self_test() -> str:
     )
     _on_session_reset(session_id=session_id)
 
-    security = _security_policy()
-    safe_ok = safe is None if security in {"read-only", "off"} else safe is not None
-    risky_ok = risky is not None if security != "off" else risky is None
+    privacy_policy = _privacy_policy()
+    safe_ok = safe is None if privacy_policy in {"read-only", "off"} else safe is not None
+    risky_ok = risky is not None if privacy_policy != "off" else risky is None
     notion_ok = notion is None
     if safe_ok and risky_ok and notion_ok:
         return (
             "hermes-guardian self-test: PASS\n"
-            f"security={security}\n"
-            "safe_terminal=pwd allowed in read-only security policy\n"
-            "risky_terminal=curl requires manual approval unless security=off\n"
+            f"privacy={privacy_policy}\n"
+            "safe_terminal=pwd allowed in read-only privacy policy\n"
+            "risky_terminal=curl requires manual approval unless privacy=off\n"
             "notion_write=allowed by configured allowlist"
         )
     return (
         "hermes-guardian self-test: FAIL\n"
-        f"security={security}\n"
+        f"privacy={privacy_policy}\n"
         f"safe_terminal_result={'allowed' if safe is None else 'blocked'}\n"
         f"risky_terminal_result={'allowed' if risky is None else 'blocked'}\n"
         f"notion_write_result={'allowed' if notion is None else 'blocked'}"
@@ -2326,10 +2528,12 @@ def _guardian_revoke(owner_hash: str, rule_id: str) -> str:
 
 
 def _guardian_deny(owner_hash: str, approval_id: str) -> str:
+    requested_id = approval_id
     with _LOCK:
+        approval_id = _resolve_pending_approval_id(approval_id) or ""
         approval = _PENDING_APPROVALS.get(approval_id)
         if not approval:
-            return f"No pending approval found for {approval_id}."
+            return f"No pending approval found for {requested_id}."
         if approval.get("owner_hash") != owner_hash and owner_hash != _CLI_OWNER_HASH:
             return "Approval denied: this request belongs to a different user/session."
         _PENDING_APPROVALS.pop(approval_id, None)
@@ -2351,11 +2555,13 @@ def _guardian_deny(owner_hash: str, approval_id: str) -> str:
 def _guardian_approve(owner_hash: str, approval_id: str, scope: str) -> str:
     if scope not in {"once", "session", "always"}:
         return "Approval scope must be one of: once, session, always."
+    requested_id = approval_id
     with _LOCK:
         _prune_expired()
+        approval_id = _resolve_pending_approval_id(approval_id) or ""
         approval = _PENDING_APPROVALS.get(approval_id)
         if not approval:
-            return f"No pending approval found for {approval_id}."
+            return f"No pending approval found for {requested_id}."
         if approval.get("owner_hash") != owner_hash and owner_hash != _CLI_OWNER_HASH:
             return "Approval denied: this request belongs to a different user/session."
         _PENDING_APPROVALS.pop(approval_id, None)
@@ -2426,22 +2632,23 @@ def _on_pre_tool_call(
         _set_browser_host(session_id, _extract_url(args))
         return None
 
-    security = _security_policy()
-    if security == "off":
+    privacy_policy = _privacy_policy()
+    if privacy_policy == "off":
         action = _egress_action_for_tool(tool_name, args, session_id)
         if action:
             data_classes = _data_classes_for_egress(session_id, args)
             if data_classes:
                 _emit_activity(
-                    "security_off_allowed",
+                    "privacy_off_allowed",
                     session_id=session_id,
                     tool_name=tool_name,
                     action_family=action[0],
                     destination=action[1],
                     data_classes=data_classes,
-                    reason="security policy off",
+                    reason="privacy policy off",
                     action_detail=_activity_action_detail(tool_name, args, action[0], action[1]),
                 )
+        _record_local_system_result_policy(session_id, tool_name, args)
         return None
 
     action = _egress_action_for_tool(tool_name, args, session_id)
@@ -2461,6 +2668,7 @@ def _on_pre_tool_call(
             reason="no private data in scope",
             action_detail=_activity_action_detail(tool_name, args, action_family, destination),
         )
+        _record_local_system_result_policy(session_id, tool_name, args)
         return None
 
     action_family, destination = action
@@ -2489,9 +2697,10 @@ def _on_pre_tool_call(
             rule_source=source.get("source", ""),
             action_detail=shape.get("action_detail", ""),
         )
+        _record_local_system_result_policy(session_id, tool_name, args)
         return None
 
-    if security == "read-only" and _read_only_auto_approves(shape, args):
+    if privacy_policy == "read-only" and _read_only_auto_approves(shape, args):
         logger.info(
             "%s: read-only policy approved low-risk Hermes Guardian %s to %s for session %s",
             _PLUGIN_NAME,
@@ -2511,10 +2720,11 @@ def _on_pre_tool_call(
             rule_source="read-only",
             action_detail=shape.get("action_detail", ""),
         )
+        _record_local_system_result_policy(session_id, tool_name, args)
         return None
 
     blocked_reason = "requires approval"
-    if security == "llm":
+    if privacy_policy == "llm":
         hard_reason = _llm_hard_deny_reason(shape, args)
         if hard_reason:
             logger.info(
@@ -2565,6 +2775,7 @@ def _on_pre_tool_call(
                 rule_source="llm",
                 action_detail=shape.get("action_detail", ""),
             )
+            _record_local_system_result_policy(session_id, tool_name, args)
             return None
         blocked_reason = (
             f"requires approval (llm {verdict.get('risk_level', 'unknown')}: "
@@ -2613,7 +2824,7 @@ def _on_transform_tool_result(
         parsed_ok = False
         parsed = result
 
-    taint_classes = _taint_classes_for_tool_result(tool_name, parsed, status=status)
+    taint_classes = _taint_classes_for_tool_result(tool_name, parsed, status=status, session_id=session_id)
     if taint_classes:
         _taint_session(session_id, taint_classes)
         _emit_activity(
