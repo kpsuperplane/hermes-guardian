@@ -15,7 +15,8 @@ def _guardian_hmac_key() -> bytes:
             return key
     except Exception as exc:
         logger.warning("%s: failed to load approval HMAC key: %s", _PLUGIN_NAME, exc)
-    return hashlib.sha256(str(_GUARDIAN_HMAC_KEY_PATH).encode("utf-8")).digest()
+        raise RuntimeError("guardian HMAC key unavailable") from exc
+    raise RuntimeError("guardian HMAC key was invalid")
 
 
 def _args_hmac(args: Any) -> str:
@@ -135,10 +136,10 @@ def _read_only_auto_approves(shape: dict[str, Any], args: Any) -> bool:
     return False
 
 
-def _sanitize_url_for_llm(value: str) -> str:
+def _sanitize_url_for_llm(value: str) -> Any:
     parsed = urlparse(value)
     if not parsed.scheme or not parsed.hostname:
-        return value[:160]
+        return _string_shape_summary_for_llm(value)
     netloc = parsed.hostname.lower()
     try:
         port = parsed.port
@@ -146,15 +147,8 @@ def _sanitize_url_for_llm(value: str) -> str:
         port = None
     if port is not None:
         netloc = f"{netloc}:{port}"
-    path = parsed.path or ""
-    if path:
-        path = "/".join(
-            "<token-like>" if re.fullmatch(r"[A-Za-z0-9._~+=-]{24,}", segment) else segment
-            for segment in path.split("/")
-        )
-    if len(path) > 80:
-        path = path[:77] + "..."
-    return f"{parsed.scheme}://{netloc}{path}"
+    path_marker = "/<path:redacted>" if parsed.path and parsed.path != "/" else ""
+    return f"{parsed.scheme}://{netloc}{path_marker}"
 
 
 def _redact_command_for_llm(command: str) -> str:
@@ -164,6 +158,22 @@ def _redact_command_for_llm(command: str) -> str:
     command = re.sub(r"(['\"])(?:(?=(\\?))\2.)*?\1", lambda m: f"{m.group(1)}<string:{len(m.group(0))}>{m.group(1)}", command)
     command = re.sub(r"\b[A-Za-z0-9_-]{24,}\b", "<token-like>", command)
     return command[:500]
+
+
+def _string_shape_summary_for_llm(value: str, *, reason: str | None = None, classes: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "redacted": True,
+        "length": len(value),
+        "privacy_classes": list(classes or []),
+        "security_sensitive": bool(reason),
+        "shape": {
+            "has_url": bool(_extract_urls(value)),
+            "has_email": bool(_EMAIL_ADDRESS_RE.search(value)),
+            "has_phone": bool(_PHONE_RE.search(value)),
+            "has_token_like": bool(re.search(r"\b[A-Za-z0-9_-]{24,}\b", value)),
+            "word_count": len(re.findall(r"\w+", value)),
+        },
+    }
 
 
 def _safe_arg_summary_for_llm(value: Any, *, key: str = "", depth: int = 0) -> Any:
@@ -187,13 +197,8 @@ def _safe_arg_summary_for_llm(value: Any, *, key: str = "", depth: int = 0) -> A
         if key_l in _LLM_COMMAND_OR_CODE_KEYS:
             return _redact_command_for_llm(value)
         if key_l in _LLM_CONTENT_KEYS or reason or classes:
-            return {
-                "redacted": True,
-                "length": len(value),
-                "privacy_classes": classes,
-                "security_sensitive": bool(reason),
-            }
-        return value[:160]
+            return _string_shape_summary_for_llm(value, reason=reason, classes=classes)
+        return _string_shape_summary_for_llm(value, reason=reason, classes=classes)
     if isinstance(value, (int, float, bool)) or value is None:
         return value
     return f"<{type(value).__name__}>"

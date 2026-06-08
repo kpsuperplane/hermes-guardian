@@ -99,6 +99,34 @@ def test_llm_verifier_input_includes_safe_contextual_metadata_without_raw_recipi
     assert "private summary" not in encoded
 
 
+def test_llm_verifier_input_summarizes_unclassified_strings_under_unknown_keys():
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    fake_llm = FakeSecurityLlm({
+        "outcome": "deny",
+        "risk_level": "medium",
+        "authorization_level": "unknown",
+        "rationale": "needs manual approval",
+    })
+    plugin._PLUGIN_LLM = fake_llm
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"documents"})
+    raw_note = "project codename blue lantern launch window is friday"
+
+    plugin._on_pre_tool_call(
+        "mcp_notion_update_page",
+        {"page_id": "roadmap", "notes": raw_note},
+        session_id="s1",
+    )
+
+    payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
+    encoded = json.dumps(payload, sort_keys=True)
+    assert raw_note not in encoded
+    assert payload["sanitized_arguments"]["notes"]["redacted"] is True
+    assert payload["sanitized_arguments"]["notes"]["length"] == len(raw_note)
+    assert "word_count" in payload["sanitized_arguments"]["notes"]["shape"]
+
+
 def test_llm_privacy_hard_block_skips_model_and_pending_approval(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
@@ -288,9 +316,10 @@ def test_url_sanitizer_strips_userinfo_and_long_path_tokens():
         "example.com",
     )
 
-    assert sanitized == "https://example.com/reset/<token-like>"
+    assert sanitized == "https://example.com/<path:redacted>"
     assert detail == "request example.com: <url path/query redacted>"
     assert "user:password" not in sanitized
+    assert "abcdefghijklmnopqrstuvwxyz123456" not in json.dumps(sanitized)
     assert "abcdefghijklmnopqrstuvwxyz123456" not in detail
     assert "token=secret" not in detail
 

@@ -207,6 +207,22 @@ def test_pending_approval_storage_failure_still_blocks(monkeypatch):
     assert plugin._PENDING_APPROVALS
 
 
+def test_unavailable_hmac_key_blocks_approval_fail_closed(tmp_path):
+    plugin = load_plugin()
+    bad_key_path = tmp_path / "hmac-key-is-directory"
+    bad_key_path.mkdir()
+    plugin._GUARDIAN_HMAC_KEY_PATH = bad_key_path
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+
+    result = plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "private summary"}, session_id="s1")
+
+    assert result is not None
+    assert result["action"] == "block"
+    assert "fail-closed" in result["message"]
+    assert not plugin._PENDING_APPROVALS
+
+
 def test_tainted_final_response_to_unknown_destination_is_suppressed():
     plugin = load_plugin()
     plugin._taint_session("s1", {"email"})

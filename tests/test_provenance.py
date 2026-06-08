@@ -130,6 +130,23 @@ def test_security_sensitive_strings_are_not_indexed():
     assert "provenance" not in state or not state["provenance"]
 
 
+def test_unavailable_hmac_key_suppresses_result_fail_closed(tmp_path):
+    plugin = load_plugin()
+    bad_key_path = tmp_path / "hmac-key-is-directory"
+    bad_key_path.mkdir()
+    plugin._GUARDIAN_HMAC_KEY_PATH = bad_key_path
+
+    result = plugin._on_transform_tool_result(
+        tool_name="mcp_gmail_search",
+        result=json.dumps({"messages": [{"snippet": COPIED_EMAIL_PHRASE}]}),
+        session_id="s1",
+    )
+    parsed = json.loads(result)
+
+    assert parsed["hermes_guardian"]["suppressed"] is True
+    assert "fail-closed" in parsed["hermes_guardian"]["reason"]
+
+
 def test_raw_content_absent_from_session_activity_approval_and_llm_input():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")

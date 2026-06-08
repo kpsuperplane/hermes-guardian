@@ -21,25 +21,9 @@ def _provenance_normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip().lower()
 
 
-def _provenance_hmac_key() -> bytes:
-    try:
-        if not _GUARDIAN_HMAC_KEY_PATH.exists():
-            _GUARDIAN_HMAC_KEY_PATH.write_bytes(secrets.token_bytes(32))
-            try:
-                _GUARDIAN_HMAC_KEY_PATH.chmod(0o600)
-            except Exception:
-                pass
-        key = _GUARDIAN_HMAC_KEY_PATH.read_bytes()
-        if len(key) >= 32:
-            return key
-    except Exception as exc:
-        logger.warning("%s: failed to load provenance HMAC key: %s", _PLUGIN_NAME, exc)
-    return hashlib.sha256(str(_GUARDIAN_HMAC_KEY_PATH).encode("utf-8")).digest()
-
-
 def _provenance_fingerprint(normalized_text: str) -> str:
     payload = f"provenance-v1:{normalized_text}".encode("utf-8")
-    return hmac.new(_provenance_hmac_key(), payload, hashlib.sha256).hexdigest()
+    return hmac.new(_guardian_hmac_key(), payload, hashlib.sha256).hexdigest()
 
 
 def _provenance_text_leaves(value: Any, *, depth: int = 0) -> list[str]:
