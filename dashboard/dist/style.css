@@ -214,9 +214,21 @@
   align-items: flex-start;
 }
 
+.hermes-guardian-security-check > input {
+  flex: 0 0 auto;
+  margin-top: 0.1rem;
+}
+
 .hermes-guardian-security-rule-text {
   display: grid;
   gap: 0.18rem;
+}
+
+.hermes-guardian-language-pack-text {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex-wrap: wrap;
 }
 
 .hermes-guardian-rule-disabled {

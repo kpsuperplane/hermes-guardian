@@ -596,7 +596,7 @@
                   disabled: pack.required === true,
                   onChange: function (event) { patchLanguagePack(pack.id, event.target.checked); },
                 }),
-                h("span", { className: "hermes-guardian-security-rule-text" },
+                h("span", { className: "hermes-guardian-language-pack-text" },
                   h("span", null, text(pack.name || pack.id)),
                   h("span", { className: "hermes-guardian-muted" }, text(pack.id) + (pack.required ? " · required" : "")),
                 ),
