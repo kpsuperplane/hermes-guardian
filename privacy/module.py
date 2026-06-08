@@ -29,6 +29,8 @@ def _record_allowed_tool_side_effects(
     action_family: str = "",
     mark_browser_private_input: bool = False,
 ) -> None:
+    if str(tool_name or "").lower() == "browser_navigate":
+        _set_browser_host(session_id, _extract_url(args))
     if mark_browser_private_input and action_family == "browser_type":
         _mark_browser_private_input(session_id)
     _record_local_system_result_policy(session_id, tool_name, args)
@@ -306,8 +308,32 @@ def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_r
 
 
 def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: str = "") -> dict[str, str] | None:
-    if str(tool_name or "").lower() == "browser_navigate":
-        _set_browser_host(session_id, _extract_url(args))
+    intrinsic_risk = _intrinsic_risk_for_tool(tool_name, args)
+    if intrinsic_risk:
+        reason = str(intrinsic_risk.get("reason") or "intrinsic source-and-sink risk")
+        action_family = str(intrinsic_risk.get("action_family") or "")
+        destination = str(intrinsic_risk.get("destination") or "")
+        data_classes = set(intrinsic_risk.get("data_classes") or [])
+        _emit_egress_activity(
+            "security_blocked",
+            session_id=session_id,
+            tool_name=tool_name,
+            action_family=action_family,
+            destination=destination,
+            data_classes=data_classes,
+            reason=reason,
+            action_detail=_activity_action_detail(tool_name, args, action_family, destination),
+        )
+        _notify_cron_failure_if_needed(
+            session_id=session_id,
+            tool_name=tool_name,
+            decision="security_blocked",
+            action_family=action_family,
+            destination=destination,
+            data_classes=data_classes,
+            reason=reason,
+        )
+        return {"action": "block", "message": f"Blocked by {_PLUGIN_NAME}: {reason}."}
 
     privacy_policy = _privacy_policy()
     action = _egress_action_for_tool(tool_name, args, session_id)
@@ -318,6 +344,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
 
     if not action:
         _emit_read_activity_if_applicable(tool_name, args, session_id)
+        _record_allowed_tool_side_effects(session_id, tool_name, args)
         return None
 
     action_family, destination = action
@@ -403,9 +430,106 @@ def _privacy_observe_tool_result(
             reason=_taint_reason_for_tool_result(tool_name, taint_classes),
         )
 
+    if str(tool_name or "").lower().startswith("browser_"):
+        url = _extract_url(parsed)
+        if url:
+            _set_browser_host(session_id, url)
+        if _browser_result_has_private_context(parsed):
+            _mark_browser_private_input(session_id)
+            _emit_activity(
+                "tainted",
+                session_id=session_id,
+                tool_name=tool_name,
+                data_classes={"browser_private_input"},
+                reason="tainted by browser private context",
+            )
+
     return {
         "parsed": parsed,
         "parsed_ok": parsed_ok,
         "taint_classes": taint_classes,
         "public_remote_read": public_remote_read,
     }
+
+
+def _final_response_destination(
+    *,
+    session_id: str | None = "",
+    platform: str = "",
+    recipient: str = "",
+    chat_type: str = "",
+) -> str:
+    state = _ensure_session(session_id)
+    platform = str(platform or state.get("platform") or "unknown").strip().lower() or "unknown"
+    recipient = str(recipient or "").strip()
+    chat_type = str(chat_type or "").strip().lower()
+    parts = [platform]
+    if chat_type:
+        parts.append(chat_type)
+    if recipient:
+        parts.append(_short_hash(recipient))
+    return ":".join(parts)
+
+
+def _final_destination_is_owner_private(
+    *,
+    session_id: str | None = "",
+    platform: str = "",
+    sender_id: str = "",
+    chat_type: str = "",
+) -> bool:
+    state = _ensure_session(session_id)
+    platform = str(platform or state.get("platform") or "unknown").strip().lower()
+    sender_id = str(sender_id or state.get("sender_id") or "").strip()
+    chat_type = str(chat_type or "").strip().lower()
+    if platform == "cli":
+        return True
+    if chat_type in {"group", "supergroup", "channel", "guild", "server", "room"}:
+        return False
+    owner_hash = str(state.get("owner_hash") or "")
+    if sender_id:
+        return _hash_identity(platform or "unknown", sender_id) == owner_hash
+    return bool(owner_hash and platform and platform != "unknown")
+
+
+def _privacy_transform_llm_output(response_text: str = "", **kwargs: Any) -> str | None:
+    session_id = str(kwargs.get("session_id") or "")
+    classes = _session_taint(session_id)
+    if not classes:
+        return None
+    platform = str(kwargs.get("platform") or "")
+    sender_id = str(kwargs.get("sender_id") or kwargs.get("user_id") or "")
+    chat_type = str(kwargs.get("chat_type") or kwargs.get("channel_type") or kwargs.get("conversation_type") or "")
+    recipient = str(kwargs.get("recipient") or kwargs.get("to") or kwargs.get("chat_id") or kwargs.get("channel") or "")
+    destination = _final_response_destination(
+        session_id=session_id,
+        platform=platform,
+        recipient=recipient,
+        chat_type=chat_type,
+    )
+    if _final_destination_is_owner_private(
+        session_id=session_id,
+        platform=platform,
+        sender_id=sender_id,
+        chat_type=chat_type,
+    ):
+        _emit_egress_activity(
+            "allowed",
+            session_id=session_id,
+            tool_name="llm_output",
+            action_family="final_response",
+            destination=destination,
+            data_classes=classes,
+            reason="owner-visible final response",
+        )
+        return None
+    _emit_egress_activity(
+        "blocked",
+        session_id=session_id,
+        tool_name="llm_output",
+        action_family="final_response",
+        destination=destination,
+        data_classes=classes,
+        reason="tainted final response to non-owner destination",
+    )
+    return "[hermes-guardian suppressed a tainted final response to this destination.]"

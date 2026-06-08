@@ -169,29 +169,36 @@ def _security_pre_gateway_dispatch(event: Any = None) -> dict[str, Any] | None:
 
 
 def _security_transform_llm_output(response_text: str = "") -> str | None:
-    if not isinstance(response_text, str) or not response_text or not _email_shaped_text(response_text):
+    if not isinstance(response_text, str) or not response_text:
         return None
 
-    hide_subjectless = bool(re.search(r"(?i)security-sensitive filter|Hermes Guardian|security filter|triggered", response_text))
-    scrubbed_text, suppressed, reason = _scrub_text_records(
-        response_text,
-        hide_subjectless_email_records=hide_subjectless,
-    )
-    if not suppressed or scrubbed_text == response_text:
-        return None
-
-    _log_unsafe_diagnostic("transform_llm_output", response_text)
-    logger.info("%s: suppressed %d sensitive final response record(s)", _PLUGIN_NAME, suppressed)
-    _emit_activity("security_suppressed", tool_name="llm_output", reason=reason or "security-sensitive response")
-    if not scrubbed_text.strip():
-        return (
-            "[hermes-guardian omitted "
-            + str(suppressed)
-            + " security-sensitive email record(s).]"
+    reason = _sensitive_reason(response_text)
+    if _email_shaped_text(response_text):
+        hide_subjectless = bool(re.search(r"(?i)security-sensitive filter|Hermes Guardian|security filter|triggered", response_text))
+        scrubbed_text, suppressed, record_reason = _scrub_text_records(
+            response_text,
+            hide_subjectless_email_records=hide_subjectless,
         )
-    return (
-        scrubbed_text.rstrip()
-        + "\n\n[hermes-guardian omitted "
-        + str(suppressed)
-        + " security-sensitive email record(s).]"
-    )
+        if suppressed and scrubbed_text != response_text:
+            _log_unsafe_diagnostic("transform_llm_output", response_text)
+            logger.info("%s: suppressed %d sensitive final response record(s)", _PLUGIN_NAME, suppressed)
+            _emit_activity("security_suppressed", tool_name="llm_output", reason=record_reason or reason or "security-sensitive response")
+            if not scrubbed_text.strip():
+                return (
+                    "[hermes-guardian omitted "
+                    + str(suppressed)
+                    + " security-sensitive email record(s).]"
+                )
+            return (
+                scrubbed_text.rstrip()
+                + "\n\n[hermes-guardian omitted "
+                + str(suppressed)
+                + " security-sensitive email record(s).]"
+            )
+
+    if not reason:
+        return None
+    _log_unsafe_diagnostic("transform_llm_output", response_text)
+    logger.info("%s: suppressed sensitive final response (%s)", _PLUGIN_NAME, reason)
+    _emit_activity("security_suppressed", tool_name="llm_output", reason=reason)
+    return "[hermes-guardian omitted security-sensitive final response.]"

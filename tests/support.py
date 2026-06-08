@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +21,9 @@ def load_plugin():
     module._PERSISTENT_RULES_MTIME = None
     module._PERSISTENT_RULES_ERROR = False
     module._ACTIVITY_DB_PATH = Path(f"/tmp/hermes-guardian-test-activity-{id(module)}.sqlite3")
+    test_name = os.environ.get("PYTEST_CURRENT_TEST", "default").split(" ", 1)[0]
+    test_digest = hashlib.sha256(test_name.encode("utf-8")).hexdigest()[:16]
+    module._GUARDIAN_HMAC_KEY_PATH = Path(f"/tmp/hermes-guardian-test-hmac-{test_digest}.key")
     for path in [module._ACTIVITY_DB_PATH, module._ACTIVITY_DB_PATH.with_suffix(".sqlite3-wal"), module._ACTIVITY_DB_PATH.with_suffix(".sqlite3-shm")]:
         path.unlink(missing_ok=True)
     module._ACTIVITY_DB_INITIALIZED = False

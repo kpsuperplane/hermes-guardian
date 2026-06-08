@@ -337,18 +337,19 @@ def test_browser_console_action_detail_redacts_private_expression():
     assert "<email>" in rows[0]["action_detail"]
 
 
-def test_public_web_search_under_taint_logs_read_without_blocking():
+def test_web_search_query_under_taint_requires_approval():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"email"})
 
     result = plugin._on_pre_tool_call("web_search", {"query": "python docs"}, session_id="s1")
 
-    assert result is None
+    assert result is not None
+    assert "Action: web_read" in result["message"]
     rows = plugin._activity_rows({}, limit=5)
-    assert rows[0]["decision"] == "read"
+    assert rows[0]["decision"] == "blocked"
     assert rows[0]["action_family"] == "web_read"
-    assert rows[0]["data_classes"] == ""
+    assert rows[0]["data_classes"] == "email"
 
 
 def test_tainted_session_blocks_delegation_model_api_cron_and_local_writes():

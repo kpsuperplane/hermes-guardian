@@ -1,15 +1,56 @@
 # Hermes Guardian
 
 Hermes Guardian is a user plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent)
-that adds deterministic protection around security-sensitive content and private
-data egress.
+that adds privacy-aware egress guardrails around security-sensitive content and
+private data flows.
 
 It is designed for people who want their Hermes agent to read useful private
 context such as email, contacts, documents, memory, calendar entries, and local
 system output, while preventing that context from being sent outward through
-tools unless the action is explicitly allowed.
+Hermes-mediated tools unless the action is explicitly allowed.
+
+Hermes Guardian is not a sandbox, not a complete information-flow-control
+system, and not a proof of noninterference. It is designed to complement Hermes
+Agent's built-in sandboxing, credential scoping, SSRF protection, gateway
+authorization, and dangerous-command controls. For untrusted input surfaces,
+run Hermes with OS/container/network isolation and use Guardian as the semantic
+egress/declassification layer above that boundary.
 
 <img width="2434" height="1892" alt="CleanShot 2026-06-06 at 20 24 01@2x" src="https://github.com/user-attachments/assets/fafaa94a-dc19-4211-9240-aa5dcda01d78" />
+
+## Security Model At A Glance
+
+Guardian's core security claim is intentionally narrow:
+
+> For Hermes-mediated tool calls that Guardian classifies as outbound egress,
+> if the current session has observed private data and no matching allow rule or
+> approval exists, Guardian blocks the tool call before execution.
+
+That is a useful policy invariant, but it depends on several assumptions:
+
+- Relevant actions pass through Hermes plugin hooks.
+- Guardian correctly classifies the tool call as a sink.
+- Guardian hook failures fail closed.
+- High-risk runtimes such as terminal, code execution, browser console/CDP, and
+  MCP servers are contained by Hermes/OS/network configuration.
+- The user treats approval rules as declassification decisions, not generic
+  trust grants.
+
+Guardian should be deployed as one layer in a defense-in-depth stack:
+
+```text
+Hermes OS/container/network containment
++ Hermes env/MCP credential filtering
++ Hermes SSRF/private-network protection
++ Hermes gateway authorization
++ Hermes dangerous-command approval and hardline blocks
++ Guardian taint, egress policy, approvals, and metadata-only audit
+```
+
+The model is simple: Hermes limits what the agent and tools can reach; Guardian
+limits where private information can flow after the agent has legitimately seen
+it.
+
 
 ## What It Does
 
@@ -22,8 +63,9 @@ Hermes Guardian has two protection modules:
 
 Security-sensitive content is never approval-gated. It is blocked or suppressed
 outright. This includes password resets, OTPs, 2FA codes, magic links, account
-verification links, login/security alerts, security key changes, and known
-upstream redaction placeholders such as `[sensitive email subject redacted]`.
+verification links, login/security alerts, security key changes, credential
+material, and known upstream redaction placeholders such as
+`[sensitive email subject redacted]`.
 
 Private context is handled differently. The model can still use normal private
 context when the user asks for it, but once a session has seen private data,
@@ -48,11 +90,39 @@ retry the action.
 ## Design Goals
 
 - Plugin-only: no Hermes internals, adapter patches, or private approval queues.
-- Deterministic first: source names, tool names, structured fields, and regexes.
-- Fail closed for sensitive content and storage failures.
-- Keep private data available for useful reasoning, but control where it leaves.
+- Defense-in-depth: complement Hermes isolation and runtime hardening rather
+  than replacing them.
+- Flow control over prompt detection: assume untrusted text may influence the
+  model, then control outbound data flows.
+- Deterministic first: source names, tool names, structured fields, and regexes
+  before optional LLM judgment.
+- Fail closed for security-sensitive content, storage failures, and policy
+  uncertainty.
+- Keep normal private data available for useful reasoning, but control where it
+  leaves.
 - Store only safe metadata for approvals, rules, history, and diagnostics.
 - Stay resilient across Hermes updates by living under `~/.hermes/plugins`.
+
+
+
+## How Guardian Complements Hermes Built-in Security
+
+Hermes and Guardian operate at different layers.
+
+| Layer | Hermes built-in role | Guardian role |
+|---|---|---|
+| OS/process containment | Docker, remote backends, and whole-process wrapping limit filesystem/process/network reach. | Assumes this is the hard boundary; does not replace it. |
+| Credential exposure | Env filtering, Docker env allowlists, MCP env filtering, and credential-file passthrough controls reduce accidental secret availability. | Treats private tool results and explicitly forwarded credentials as sensitive sources. |
+| Network target safety | SSRF/private-network/cloud-metadata protections and website blocklists constrain what URL-capable tools may reach. | Gates public destinations when tainted data may be embedded in URLs, searches, messages, or tool payloads. |
+| Gateway access | Platform allowlists and DM pairing control who can talk to the agent. | Uses owner/session/cron scope for approvals and persistent declassification rules. |
+| Command safety | Dangerous-command approval and hardline blocks stop destructive shell behavior. | Adds privacy-aware checks for non-destructive commands that may leak data. |
+| Prompt-injection hygiene | Context/skill/memory scanners reduce obvious malicious instructions before ingestion. | Assumes scanners can fail and enforces flow policy after private data enters context. |
+
+Recommended reading:
+
+- Hermes security guide: <https://hermes-agent.nousresearch.com/docs/user-guide/security>
+- Hermes security policy: <https://github.com/NousResearch/hermes-agent/blob/main/SECURITY.md>
+- Guardian theory document: [`theory.md`](./theory.md)
 
 ## Architecture
 
@@ -204,6 +274,13 @@ Dashboard tabs:
 Dashboard actions return toast notifications rather than persistent inline save
 messages.
 
+Dashboard mutation routes are defense-in-depth guarded. Set
+`HERMES_GUARDIAN_DASHBOARD_MUTATIONS=0` to disable HTTP mutations, or set
+`HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN` and send it in
+`x-hermes-guardian-token` for mutation requests. The dashboard UI also requires
+explicit confirmation before switching privacy mode to `off` or creating a
+global wildcard allow rule.
+
 ### Activity Retention
 
 ```bash
@@ -314,6 +391,8 @@ suppresses content matching categories such as:
 - Security alerts, new-login alerts, suspicious-login alerts, and unauthorized
   activity notices.
 - SSH, GPG, deploy key, or public key change notices.
+- Private keys, cloud/API tokens, bearer tokens, JWTs, session cookies, and
+  `.env`-style secret assignments.
 - Known upstream sensitive-email redaction placeholders.
 
 For tool calls, security-sensitive arguments are blocked before execution. For
@@ -322,24 +401,45 @@ entirely rather than merely redacting the subject.
 
 ## Egress Policy
 
-When a session has private data in scope, Hermes Guardian checks outbound tool
-calls before they execute.
+When a session has private data in scope, Hermes Guardian checks classified
+outbound tool calls before they execute.
 
-These actions normally require approval:
+These actions normally require approval when tainted private data is in scope:
 
 - Messaging and send tools.
 - MCP write-like tools with names containing verbs such as `create`, `update`,
-  `delete`, `send`, `post`, `comment`, `share`, `invite`, `append`, or
-  `publish`.
+  `delete`, `send`, `post`, `comment`, `share`, `invite`, `append`,
+  `publish`, `upload`, `patch`, or `insert`.
+- Unknown MCP tools under taint, unless they are confidently classified as
+  read-only.
+- MCP read/search/query tools under taint when their arguments send query text
+  or request bodies to the remote MCP service.
 - Browser typing into an unapproved host.
-- Browser clicking or submitting after private text was typed into the current
-  host.
+- Browser clicking, pressing, dialog handling, or submitting after private text
+  was typed into the current host.
 - Raw browser CDP calls.
 - Terminal, shell, and code execution.
-- Web/API calls whose arguments contain detected personal data.
+- Web/search/navigation/API calls whose arguments contain detected personal
+  data or send URL paths, URL queries, search queries, or bodies after the
+  session is tainted.
+- Model/media tools that may send private prompt context to another model or
+  generation service.
 
-Read-only browsing and search are allowed when the arguments do not contain
-private data. Content returned from those tools may still taint the session.
+Read-only browsing and search are allowed only when the arguments do not send
+private-looking or tainted session-derived text outward. Content returned from
+those tools may still taint the session.
+
+Final model responses are also treated as an egress surface. Tainted responses
+to owner-private CLI/DM destinations are allowed and logged; tainted responses
+to group, cron, or unknown destinations are suppressed with a Guardian marker.
+
+Approval rules are declassification rules. A persistent allow rule should mean:
+
+> This owner/session/cron context may send this class of private data through
+> this action family to this destination.
+
+Keep allow rules narrow. Prefer destination-specific rules such as
+`mcp:notion` or a specific message channel over wildcard destinations.
 
 ## Browser Behavior
 
@@ -347,18 +447,20 @@ Hermes Guardian tracks browser host state from navigation and browser result
 metadata when available.
 
 - `browser_navigate` updates the current host and clears private-typing state
-  for the new page.
+  for the new page after the navigation is allowed or when result metadata shows
+  the final URL.
 - `browser_type` is blocked under taint unless the host/action/classes are
   approved.
-- `browser_click` is blocked if private text was typed on the current host and
-  that host is not approved.
+- `browser_click`, `browser_press`, and `browser_dialog` are blocked if private
+  text was typed on the current host or browser result metadata indicates a
+  private/authenticated page context and that host is not approved.
 - `browser_cdp` requires approval under taint.
 - URL query strings are not persisted in approval records or allow rules.
 
 ## Terminal And Code Behavior
 
 Terminal and code execution are conservative because shell, Python, Node, and
-similar tools can exfiltrate data in many ways.
+similar tools can read local state and exfiltrate data in many ways.
 
 In `strict`, terminal/code actions require approval when private data is in
 scope.
@@ -369,16 +471,17 @@ only adds `local_system` taint when the resulting command is content-bearing or
 code-like. Metadata-only terminal commands do not leave persistent
 `local_system` taint behind.
 
-In `read-only`, Hermes Guardian allows a small metadata-verified set of low-risk
-read commands, such as:
+In `read-only`, Hermes Guardian allows a small metadata-verified set of
+low-risk read commands, such as:
 
 ```text
-pwd, date, whoami, id, uname, hostname, ls, find, rg, grep, cat, head, tail,
-wc, stat, du, df, test, true, false
+pwd, date, whoami, id, uname, hostname, ls, wc, stat, du, df, test, true, false
 ```
 
 Commands with network tools, URLs, redirects, pipes, command chaining,
-substitution, or script runtimes are not auto-approved by `read-only`.
+substitution, script runtimes, or content-bearing reads such as `cat`, `grep`,
+`rg`, `find`, `sed`, `awk`, `jq`, or `sqlite3` are not auto-approved by
+`read-only`.
 
 In `llm`, a strict deterministic blocklist runs first. If the action is not
 explicitly malicious, Hermes Guardian sends sanitized metadata to the plugin LLM
@@ -386,16 +489,23 @@ for a structured decision.
 
 Terminal URL fetches are direction-aware. A command that only reads a
 user-requested URL and stages the fetched bytes in `/tmp` or `/var/tmp` is
-treated as inbound remote-read activity, even for paste-style hosts. The risky
-case is the opposite direction: posting, uploading, copying, or sending private
-or local data to paste bins, webhooks, tunnels, or other dropbox-style
-endpoints. Those outbound shapes remain hard-blocked.
+treated as inbound remote-read activity only for public hosts, even for
+paste-style hosts. Loopback, private-network, link-local, cloud metadata, and
+`.local` hosts are not treated as safe public reads. The risky case is the
+opposite direction: posting, uploading, copying, or sending private or local
+data to paste bins, webhooks, tunnels, or other dropbox-style endpoints. Those
+outbound shapes remain hard-blocked.
 
 Fetched public-page text is also source-aware for security-sensitive matching.
 If a public remote-read result contains example text like "verification code
 123456", Hermes Guardian does not suppress it as Kevin's private auth code.
 Private sources such as email, messages, authenticated account pages, and
 sensitive URLs still receive categorical security-sensitive suppression.
+
+Terminal/code/browser-console calls that combine local or browser secret reads
+with network sinks in the same call are blocked even before session taint is
+recorded. Guardian should still be paired with Hermes sandboxing and network
+egress controls for those runtimes.
 
 ## LLM Privacy Mode
 
@@ -461,7 +571,9 @@ process.
 
 Approval scopes:
 
-- `once`: create a matching privacy allow rule with `remaining_invocations=1`.
+- `once`: create a matching privacy allow rule with `remaining_invocations=1`,
+  bound to an HMAC of the exact tool arguments. Changing the payload requires a
+  new approval.
 - `session`: create a session-scoped volatile privacy allow rule that lasts for
   the active plugin process/session state.
 - `always`: persist a narrow privacy allow rule with
@@ -544,6 +656,11 @@ POST /api/plugins/hermes-guardian/approvals/{approval_id}/dismiss
 The `/activity/datatables` endpoint provides paginated and filterable SQLite
 activity rows for the History tab.
 
+HTTP mutation routes can be disabled with
+`HERMES_GUARDIAN_DASHBOARD_MUTATIONS=0`. If
+`HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN` is set, mutation requests must include
+that value in `x-hermes-guardian-token`.
+
 The dashboard shows sanitized metadata only:
 
 - Timestamp.
@@ -614,6 +731,8 @@ Persistent state:
 
 - `guardian-rules.json`: privacy mode and persistent privacy allow/deny rules.
 - `activity.sqlite3`: sanitized activity history and pending approvals.
+- `.guardian-hmac-key`: local key used to bind exact-argument one-time
+  approvals.
 
 Persistent state stores metadata only. It should not contain raw private
 messages, email bodies, typed form values, file contents, tokenized URLs, or
@@ -639,6 +758,28 @@ It also registers the gateway slash command:
 ```text
 /guardian
 ```
+
+## Recommended Hermes Security Baseline
+
+Guardian is strongest when Hermes supplies the lower-level boundary. For a
+personal agent that reads private data, use a baseline like this:
+
+```text
+Use whole-process isolation when feasible.
+Use Docker, Modal, Daytona, SSH, Singularity, or another sandboxed terminal backend instead of host-local execution.
+Mount only the directories the task requires.
+Do not mount $HOME wholesale.
+Do not pass API keys, OAuth tokens, SSH keys, browser profiles, or `.env` files unless the workflow requires them.
+Keep Hermes dangerous-command approvals enabled; avoid YOLO outside disposable sandboxes.
+Keep private URL / SSRF protections enabled unless you intentionally trust LAN/Tailscale/internal targets.
+Use gateway allowlists and DM pairing; do not expose a public unauthenticated gateway.
+Constrain MCP server env vars to the minimum credentials each server needs.
+Use Guardian `strict` for high-sensitivity sessions and `llm` only when you accept sanitized LLM judgment for low-risk actions.
+Expose the Guardian dashboard only behind authenticated local/admin access.
+```
+
+Guardian can help surface policy mistakes, but it cannot make an unsafe Hermes
+runtime safe by itself.
 
 ## Recommended Setup
 
@@ -753,13 +894,42 @@ GitHub Actions is configured to run the test suite on Python 3.11.
 
 ## Limitations
 
-- Hermes Guardian does not pause and resume blocked tool calls. The agent must
-  retry after approval.
-- The plugin cannot protect data that bypasses Hermes tools entirely.
-- Deterministic checks intentionally favor false positives over silent
-  exfiltration.
+- Hermes Guardian is not a sandbox. It should be paired with Hermes
+  whole-process isolation, terminal-backend isolation, and/or OS/network
+  controls when handling untrusted input.
+- The plugin protects Hermes-mediated tool calls and selected tool/model output
+  surfaces. It cannot protect data that bypasses Hermes hooks entirely.
+- Guardian does not pause and resume blocked tool calls. The agent must retry
+  after approval.
+- Session-level taint is intentionally coarse. It is safer than regex-only
+  detection, but it is not precise object-level provenance.
+- Tool classification is heuristic. Unknown MCP tools, new browser actions, or
+  future Hermes tools should be treated conservatively until classified.
+- URL paths, URL queries, search queries, redirects, image loads, DNS, and final
+  responses can all be egress channels. High-sensitivity deployments should add
+  lower-level network egress allowlists/proxies.
+- Terminal, code execution, browser console/CDP, and some MCP servers can act as
+  both a private-data source and an outbound sink in one tool call. Sandbox and
+  network policy are required for hard containment.
 - `llm` mode is only as available as the Hermes plugin LLM facade. If the LLM
   verifier is unavailable or malformed, the plugin falls back to manual
   approval.
-- Persistent privacy allow rules should be narrow. They are powerful and should
-  represent destinations you actually trust.
+- Persistent privacy allow rules should be narrow. They are powerful
+  declassification rules and should represent destinations you actually trust.
+- Deterministic checks intentionally favor false positives over silent
+  exfiltration.
+
+## Further Reading
+
+- [`theory.md`](./theory.md): Guardian's defense theory and comparison against
+  industry and research systems.
+- Hermes security guide: <https://hermes-agent.nousresearch.com/docs/user-guide/security>
+- Hermes security policy: <https://github.com/NousResearch/hermes-agent/blob/main/SECURITY.md>
+- OpenAI, “Designing AI agents to resist prompt injection”: <https://openai.com/index/designing-agents-to-resist-prompt-injection/>
+- OpenAI, “Keeping your data safe when an AI agent clicks a link”: <https://openai.com/index/ai-agent-link-safety/>
+- Anthropic, “making Claude Code more secure and autonomous”: <https://www.anthropic.com/engineering/claude-code-sandboxing>
+- Microsoft Copilot Studio external security provider: <https://learn.microsoft.com/en-us/microsoft-copilot-studio/external-security-provider>
+- CaMeL, “Defeating Prompt Injections by Design”: <https://arxiv.org/abs/2503.18813>
+- RTBAS, “Defending LLM Agents Against Prompt Injection and Privacy Leakage”: <https://arxiv.org/abs/2502.08966>
+- GAAP, “An AI Agent Execution Environment to Safeguard User Data”: <https://arxiv.org/abs/2604.19657>
+- “AI Agents May Always Fall for Prompt Injections”: <https://arxiv.org/abs/2605.17634>

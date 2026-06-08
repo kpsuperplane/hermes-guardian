@@ -74,6 +74,46 @@ def _extract_url(value: Any) -> str:
     return match.group(0) if match else ""
 
 
+def _extract_urls(value: Any) -> list[str]:
+    urls: list[str] = []
+    if isinstance(value, dict):
+        for key in ("url", "href", "current_url", "page_url"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate:
+                urls.append(candidate)
+    text = _stringify_for_scan(value)
+    urls.extend(match.group(0) for match in re.finditer(r"https?://[^\s\"'<>]+", text))
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        if url not in seen:
+            seen.add(url)
+            deduped.append(url)
+    return deduped
+
+
+def _url_sends_remote_text(value: str) -> bool:
+    parsed = urlparse(str(value or ""))
+    if not parsed.scheme or not parsed.netloc:
+        return False
+    path = parsed.path or ""
+    return bool((path and path != "/") or parsed.query or parsed.fragment)
+
+
+def _args_send_remote_text(args: Any) -> bool:
+    if isinstance(args, dict):
+        for key in ("query", "q", "search", "prompt", "text", "body", "input", "message", "content"):
+            value = args.get(key)
+            if isinstance(value, str) and value.strip():
+                return True
+        return any(_url_sends_remote_text(url) for url in _extract_urls(args))
+    if isinstance(args, str):
+        stripped = args.strip()
+        urls = _extract_urls(args)
+        return bool(stripped and (not urls or any(_url_sends_remote_text(url) for url in urls)))
+    return False
+
+
 def _set_browser_host(session_id: str | None, url: str) -> None:
     host = _safe_host_from_url(url)
     if not host:
@@ -103,6 +143,18 @@ def _browser_has_private_input(session_id: str | None) -> bool:
         state = _ensure_session(session_id)
         host = state.get("browser_host") or "unknown"
         return host in state.get("browser_private_hosts", set())
+
+
+def _browser_result_has_private_context(value: Any) -> bool:
+    text = _stringify_for_scan(value)
+    if not text:
+        return False
+    return bool(re.search(
+        r"\b(logged\s+in|sign\s*out|logout|account|profile|csrf|authenticat(?:ed|ion)|"
+        r"prefilled|password|document\.cookie|localStorage|sessionStorage)\b",
+        text,
+        re.I,
+    ) or _EMAIL_ADDRESS_RE.search(text))
 
 
 def _classes_from_tool_name(tool_name: str) -> set[str]:
@@ -155,6 +207,8 @@ def _terminal_command_is_safe_remote_read(command: str) -> bool:
         return False
     if not _REMOTE_READ_URL_RE.search(command) or not _REMOTE_READ_TOOL_RE.search(command):
         return False
+    if any(_is_private_or_metadata_host(_safe_host_from_url(url)) for url in _extract_urls(command)):
+        return False
     if _REMOTE_READ_OUTBOUND_RE.search(command):
         return False
     if _REMOTE_READ_EXECUTION_RE.search(command):
@@ -166,6 +220,25 @@ def _terminal_command_is_safe_remote_read(command: str) -> bool:
     if re.search(r"\b(?:write_bytes|write_text|open)\b", command) and not _REMOTE_READ_TMP_WRITE_RE.search(command):
         return False
     return True
+
+
+def _is_private_or_metadata_host(host: str) -> bool:
+    host_l = str(host or "").lower().strip("[]").rstrip(".")
+    if not host_l:
+        return False
+    if host_l in {"localhost", "metadata.google.internal"} or host_l.endswith(".local"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host_l)
+        return (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+        )
+    except ValueError:
+        return False
 
 
 def _local_system_result_taint_classes(tool_name: str, args: Any) -> set[str]:
@@ -297,6 +370,60 @@ def _is_mcp_write_tool(tool_name: str) -> bool:
     return tool_name.startswith("mcp_") and bool(_MCP_WRITE_RE.search(tool_name))
 
 
+def _is_mcp_read_tool(tool_name: str) -> bool:
+    return tool_name.startswith("mcp_") and bool(_MCP_READ_RE.search(tool_name))
+
+
+def _mcp_read_sends_query(args: Any) -> bool:
+    if not isinstance(args, dict):
+        return _args_send_remote_text(args)
+    for key in ("query", "q", "search", "prompt", "text", "body", "input", "message", "content", "filter"):
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, (list, dict)) and _stringify_for_scan(value).strip():
+            return True
+    return any(_url_sends_remote_text(url) for url in _extract_urls(args))
+
+
+def _mcp_tool_action(lower: str, args: Any, session_id: str | None) -> ToolAction | None:
+    if not lower.startswith("mcp_"):
+        return None
+    if _is_mcp_write_tool(lower):
+        return ToolAction("mcp_write", _mcp_destination(lower))
+    if _is_mcp_read_tool(lower):
+        if _session_taint(session_id) and _mcp_read_sends_query(args):
+            return ToolAction("mcp_read_query", _mcp_destination(lower))
+        return None
+    if _session_taint(session_id):
+        return ToolAction("mcp_unknown", _mcp_destination(lower))
+    return None
+
+
+def _intrinsic_risk_for_tool(tool_name: str, args: Any) -> dict[str, Any] | None:
+    lower = str(tool_name or "").lower()
+    text = _stringify_for_scan(args)
+    if not text:
+        return None
+    if lower in {"terminal", "execute_code", "code_execution", "shell"}:
+        if _LOCAL_SECRET_READ_RE.search(text) and _NETWORK_SINK_RE.search(text):
+            return {
+                "action_family": "terminal_exec",
+                "destination": "network",
+                "data_classes": {"local_system"},
+                "reason": "same-call local secret read plus network egress",
+            }
+    if lower in {"browser_console", "browser_cdp"}:
+        if _BROWSER_SECRET_READ_RE.search(text) and _NETWORK_SINK_RE.search(text):
+            return {
+                "action_family": lower,
+                "destination": "browser",
+                "data_classes": {"browser_private_input"},
+                "reason": "same-call browser state read plus network egress",
+            }
+    return None
+
+
 def _arg_action(args: Any, default: str = "") -> str:
     if isinstance(args, dict):
         return str(args.get("action") or default).strip().lower()
@@ -352,10 +479,17 @@ def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> To
         action_family, destination = _read_activity_for_tool(lower, args, session_id) or ("web_read", lower)
         return ToolAction(action_family, destination)
 
+    if lower.startswith("mcp_"):
+        return _mcp_tool_action(lower, args, session_id)
+
     rules = (
         (
             lower == "send_message" and _arg_action(args, "send") == "list" and bool(_read_arg_classes(args)),
             lambda: ToolAction("message_list", "messaging"),
+        ),
+        (
+            bool(_WEB_READ_TOOL_RE.match(lower)) and bool(_session_taint(session_id)) and _args_send_remote_text(args),
+            read_private_action,
         ),
         (
             bool(_WEB_READ_TOOL_RE.match(lower)) and bool(_read_arg_classes(args)),
@@ -391,8 +525,6 @@ def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> To
             lambda: ToolAction("message_send", _safe_destination_from_args(args, default="messaging")),
         ),
         (lower == "send_message", lambda: None),
-        (_is_mcp_write_tool(lower), lambda: ToolAction("mcp_write", _mcp_destination(lower))),
-        (lower.startswith("mcp_"), lambda: None),
         (
             bool(_WEB_EGRESS_TOOL_RE.search(lower)),
             lambda: ToolAction("web_api", _safe_destination_from_args(args, default=lower)),

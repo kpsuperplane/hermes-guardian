@@ -12,6 +12,8 @@ def clear_guardian_env(monkeypatch):
     monkeypatch.delenv("HERMES_GUARDIAN_UNSAFE_DIAGNOSTICS", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_CRON_NOTIFY_TO", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_HERMES_CLI", raising=False)
+    monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", raising=False)
+    monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_ALLOWED_USERS", raising=False)
     monkeypatch.delenv("TELEGRAM_GROUP_ALLOWED_USERS", raising=False)
     monkeypatch.delenv("DISCORD_ALLOWED_USERS", raising=False)

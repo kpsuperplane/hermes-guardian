@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .coverage
 .unsafe-diagnostics
+.guardian-hmac-key
 privacy-rules.json
 privacy-rules.json.tmp
 guardian-rules.json

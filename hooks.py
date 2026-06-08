@@ -3,18 +3,64 @@
 from __future__ import annotations
 
 
-def _on_pre_llm_call(
+def _emit_fail_closed_activity(
+    decision: str,
+    *,
+    session_id: str | None = "",
+    tool_name: str = "",
+    reason: str = "",
+    args: Any = None,
+) -> None:
+    try:
+        _emit_activity(
+            decision,
+            session_id=session_id,
+            tool_name=tool_name,
+            reason=reason,
+            action_detail=_activity_action_detail(tool_name, args),
+        )
+    except Exception:
+        pass
+
+
+def _fail_closed_tool_result(reason: str) -> str:
+    return json.dumps(_safe_stub(reason=reason), ensure_ascii=False)
+
+
+def _on_pre_llm_call_impl(
     session_id: str = "",
     platform: str = "",
     sender_id: str = "",
     **_: Any,
 ) -> None:
     owner_hash = _hash_identity(platform or "cli", sender_id or "")
-    _ensure_session(session_id, owner_hash)
+    state = _ensure_session(session_id, owner_hash)
+    state["platform"] = str(platform or "")
+    state["sender_id"] = str(sender_id or "")
     return None
 
 
-def _on_pre_tool_call(
+def _on_pre_llm_call(
+    session_id: str = "",
+    platform: str = "",
+    sender_id: str = "",
+    **kwargs: Any,
+) -> None:
+    try:
+        return _on_pre_llm_call_impl(
+            session_id=session_id,
+            platform=platform,
+            sender_id=sender_id,
+            **kwargs,
+        )
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:
+        logger.exception("%s: pre_llm_call error", _PLUGIN_NAME)
+        return None
+
+
+def _on_pre_tool_call_impl(
     tool_name: str = "",
     args: Any = None,
     session_id: str = "",
@@ -26,7 +72,38 @@ def _on_pre_tool_call(
     return _privacy_pre_tool_call(tool_name, args, session_id)
 
 
-def _on_transform_tool_result(
+def _on_pre_tool_call(
+    tool_name: str = "",
+    args: Any = None,
+    session_id: str = "",
+    **kwargs: Any,
+) -> dict[str, str] | None:
+    try:
+        return _on_pre_tool_call_impl(
+            tool_name=tool_name,
+            args=args,
+            session_id=session_id,
+            **kwargs,
+        )
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:
+        logger.exception("%s: fail-closed pre_tool_call error", _PLUGIN_NAME)
+        reason = "guardian internal error; blocked fail-closed"
+        _emit_fail_closed_activity(
+            "security_blocked",
+            session_id=session_id,
+            tool_name=tool_name,
+            reason=reason,
+            args=args,
+        )
+        return {
+            "action": "block",
+            "message": "Hermes Guardian had an internal policy error, so this tool call was blocked fail-closed.",
+        }
+
+
+def _on_transform_tool_result_impl(
     tool_name: str = "",
     result: Any = None,
     session_id: str = "",
@@ -52,7 +129,35 @@ def _on_transform_tool_result(
     )
 
 
-def _on_pre_gateway_dispatch(event: Any = None, **_: Any) -> dict[str, Any] | None:
+def _on_transform_tool_result(
+    tool_name: str = "",
+    result: Any = None,
+    session_id: str = "",
+    status: str = "",
+    **kwargs: Any,
+) -> str | None:
+    try:
+        return _on_transform_tool_result_impl(
+            tool_name=tool_name,
+            result=result,
+            session_id=session_id,
+            status=status,
+            **kwargs,
+        )
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:
+        logger.exception("%s: fail-closed transform_tool_result error", _PLUGIN_NAME)
+        _emit_fail_closed_activity(
+            "security_suppressed",
+            session_id=session_id,
+            tool_name=tool_name,
+            reason="guardian internal error; suppressed fail-closed",
+        )
+        return _fail_closed_tool_result("guardian internal error; suppressed fail-closed")
+
+
+def _on_pre_gateway_dispatch_impl(event: Any = None, **_: Any) -> dict[str, Any] | None:
     text = getattr(event, "text", "")
     if isinstance(text, str) and text.strip().lower().startswith("/guardian"):
         raw_args = text.strip()[len("/guardian"):].strip()
@@ -61,5 +166,47 @@ def _on_pre_gateway_dispatch(event: Any = None, **_: Any) -> dict[str, Any] | No
     return _security_pre_gateway_dispatch(event)
 
 
-def _on_transform_llm_output(response_text: str = "", **_: Any) -> str | None:
-    return _security_transform_llm_output(response_text)
+def _on_pre_gateway_dispatch(event: Any = None, **kwargs: Any) -> dict[str, Any] | None:
+    try:
+        return _on_pre_gateway_dispatch_impl(event=event, **kwargs)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:
+        logger.exception("%s: pre_gateway_dispatch error", _PLUGIN_NAME)
+        text = getattr(event, "text", "")
+        reason = _sensitive_reason(text) if isinstance(text, str) else None
+        if reason:
+            _emit_fail_closed_activity(
+                "security_blocked",
+                tool_name="gateway_message",
+                reason=f"{reason}; guardian internal error",
+            )
+            return {"action": "skip", "reason": "security-sensitive content suppressed before model dispatch"}
+        return None
+
+
+def _on_transform_llm_output_impl(response_text: str = "", **kwargs: Any) -> str | None:
+    security_output = _security_transform_llm_output(response_text)
+    if security_output is not None:
+        return security_output
+    return _privacy_transform_llm_output(response_text=response_text, **kwargs)
+
+
+def _on_transform_llm_output(response_text: str = "", **kwargs: Any) -> str | None:
+    try:
+        return _on_transform_llm_output_impl(response_text=response_text, **kwargs)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception:
+        logger.exception("%s: fail-closed transform_llm_output error", _PLUGIN_NAME)
+        session_id = str(kwargs.get("session_id") or "")
+        reason = "guardian internal error; final response suppressed fail-closed"
+        if _session_taint(session_id) or _sensitive_reason(response_text):
+            _emit_fail_closed_activity(
+                "security_suppressed",
+                session_id=session_id,
+                tool_name="llm_output",
+                reason=reason,
+            )
+            return "[hermes-guardian suppressed a final response after an internal policy error.]"
+        return None

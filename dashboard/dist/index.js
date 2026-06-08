@@ -9,7 +9,7 @@
   const h = React.createElement;
   const API = "/api/plugins/hermes-guardian";
 
-  const ACTIONS = ["*", "browser_console", "browser_read", "browser_type", "cron_write", "local_write", "mcp_write", "message_send", "terminal_exec", "web_api", "web_read"];
+  const ACTIONS = ["*", "browser_console", "browser_read", "browser_type", "cron_write", "final_response", "local_write", "mcp_read_query", "mcp_unknown", "mcp_write", "message_send", "terminal_exec", "web_api", "web_read"];
   const HISTORY_PAGE_SIZES = [25, 50, 100];
   const DEFAULT_FORM = {
     id: "",
@@ -125,6 +125,16 @@
       },
       remaining_invocations: remaining,
     };
+  }
+
+  function payloadIsWildcardAllow(payload) {
+    const match = payload && payload.match ? payload.match : {};
+    const classes = Array.isArray(match.data_classes) ? match.data_classes : [];
+    return payload.effect === "allow"
+      && text(match.tool_name, "*") === "*"
+      && text(match.action_family, "*") === "*"
+      && text(match.destination, "*") === "*"
+      && classes.indexOf("*") >= 0;
   }
 
   function Field(props) {
@@ -394,8 +404,13 @@
     }, [tab, historyPage, historyPageSize]);
 
     function saveMode() {
+      const body = { mode: privacyMode };
+      if (privacyMode === "off") {
+        if (!window.confirm("Turn Guardian privacy egress checks off? Security-sensitive blocking remains active.")) return;
+        body.confirm = "privacy-off";
+      }
       setModeSaving(true);
-      api("/privacy/mode", { method: "POST", body: JSON.stringify({ mode: privacyMode }) })
+      api("/privacy/mode", { method: "POST", body: JSON.stringify(body) })
         .then(function (payload) {
           showToast(payload.message || "Saved.");
           return load();
@@ -423,6 +438,10 @@
         return;
       }
       const payload = formToPayload(form);
+      if (payloadIsWildcardAllow(payload)) {
+        if (!window.confirm("Create a wildcard allow rule for all tools, destinations, and data classes?")) return;
+        payload.confirm = "wildcard-allow";
+      }
       const request = form.id
         ? api("/rules/" + encodeURIComponent(form.id), { method: "PATCH", body: JSON.stringify(payload) })
         : api("/rules", { method: "POST", body: JSON.stringify(Object.assign({ enabled: true }, payload)) });

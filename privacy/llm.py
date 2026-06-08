@@ -2,6 +2,33 @@
 
 from __future__ import annotations
 
+def _guardian_hmac_key() -> bytes:
+    try:
+        if not _GUARDIAN_HMAC_KEY_PATH.exists():
+            _GUARDIAN_HMAC_KEY_PATH.write_bytes(secrets.token_bytes(32))
+            try:
+                _GUARDIAN_HMAC_KEY_PATH.chmod(0o600)
+            except Exception:
+                pass
+        key = _GUARDIAN_HMAC_KEY_PATH.read_bytes()
+        if len(key) >= 32:
+            return key
+    except Exception as exc:
+        logger.warning("%s: failed to load approval HMAC key: %s", _PLUGIN_NAME, exc)
+    return hashlib.sha256(str(_GUARDIAN_HMAC_KEY_PATH).encode("utf-8")).digest()
+
+
+def _args_hmac(args: Any) -> str:
+    canonical = json.dumps(
+        args,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    )
+    return hmac.new(_guardian_hmac_key(), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def _approval_fingerprint(
     *,
     tool_name: str,
@@ -17,6 +44,7 @@ def _approval_fingerprint(
         "destination": destination,
         "data_classes": sorted(data_classes),
         "arg_keys": arg_keys,
+        "args_hmac": _args_hmac(args),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

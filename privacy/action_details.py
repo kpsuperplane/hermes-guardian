@@ -82,7 +82,7 @@ def _activity_action_detail(tool_name: str, args: Any, action_family: str = "", 
             if query:
                 return f"search {_redact_action_detail_text(query)}"
             return f"load {destination}"
-        if lower_action == "mcp_write":
+        if lower_action in {"mcp_write", "mcp_unknown", "mcp_read_query"}:
             keys = ",".join(sorted(str(key) for key in args.keys())[:20])
             return f"{tool_name} args={keys}"
         if lower_action == "model_api":
@@ -110,4 +110,3 @@ def _activity_action_detail(tool_name: str, args: Any, action_family: str = "", 
     if isinstance(args, str):
         return _redact_action_detail_text(args)
     return str(action_family or tool_name or "")[:160]
-

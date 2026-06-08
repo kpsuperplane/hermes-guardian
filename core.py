@@ -15,7 +15,9 @@ Hermes gateway internals, approval queues, or platform adapter APIs.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -63,6 +65,7 @@ _UNSAFE_DIAGNOSTICS_FLAG = Path(__file__).with_name(".unsafe-diagnostics")
 _PERSISTENT_RULES_PATH = Path(__file__).with_name("guardian-rules.json")
 _PERSISTENT_RULES_MTIME: float | None = None
 _ACTIVITY_DB_PATH = Path(__file__).with_name("activity.sqlite3")
+_GUARDIAN_HMAC_KEY_PATH = Path(__file__).with_name(".guardian-hmac-key")
 _APPROVAL_TTL_SECONDS = 10 * 60
 _APPROVAL_ID_REUSE_SECONDS = 7 * 24 * 60 * 60
 _RECENT_COMMAND_TTL_SECONDS = 30
@@ -207,8 +210,12 @@ _SOURCE_TAINT_RULES: list[tuple[re.Pattern[str], set[str]]] = [
     (re.compile(r"(^|_)(terminal|execute_code|code_execution|shell|computer_use)(_|$)", re.I), {"local_system"}),
 ]
 
+_MCP_READ_RE = re.compile(
+    r"(?:^|_)(get|read|list|search|fetch|query|retrieve|lookup|find)(?:_|$)",
+    re.I,
+)
 _MCP_WRITE_RE = re.compile(
-    r"(?:^|_)(create|update|delete|send|post|comment|share|invite|append|publish)(?:_|$)",
+    r"(?:^|_)(add|append|archive|batch|complete|create|delete|deliver|edit|insert|merge|modify|move|patch|post|publish|rename|reply|send|set|share|submit|sync|update|upload|upsert|write)(?:_|$)",
     re.I,
 )
 _MESSAGE_TOOL_RE = re.compile(r"(?:^|_)(send_message|message_send|send|reply|dm|post_message)(?:_|$)", re.I)
@@ -238,10 +245,11 @@ _READ_ONLY_AUTO_APPROVE_DENY_RE = re.compile(
     re.I,
 )
 _READ_ONLY_TERMINAL_SAFE_RE = re.compile(
-    r"^\s*(pwd|date|whoami|id|uname|hostname|ls|find|rg|grep|cat|head|tail|wc|stat|du|df|test|true|false)"
+    r"^\s*(pwd|date|whoami|id|uname|hostname|ls|wc|stat|du|df|test|true|false)"
     r"(\s|$)",
     re.I,
 )
+_CONTENT_BEARING_READ_RE = re.compile(r"^\s*(cat|head|tail|grep|rg|find|sed|awk|jq|sqlite3)(\s|$)", re.I)
 _LOCAL_SYSTEM_NO_TAINT_DENY_RE = re.compile(
     r"(\b(curl|wget|scp|sftp|ssh|rsync|nc|netcat|telnet|ftp|openssl|base64|python|python3|node|npm|npx|perl|ruby|php)\b"
     r"|https?://|>>?|<|;|&&|\|\||`|\$\()",
@@ -285,6 +293,22 @@ _REMOTE_READ_TMP_WRITE_RE = re.compile(
 _SENSITIVE_LOCAL_PATH_RE = re.compile(
     r"(/root/\.hermes/(?:\.env|auth\.json|mcp-tokens)\b|~?/\.ssh/(?:id_rsa|id_ed25519|config)\b)",
     re.I,
+)
+_LOCAL_SECRET_READ_RE = re.compile(
+    r"(\.env|\.ssh|auth\.json|mcp-tokens|credentials?|tokens?|cookies?|keychain|"
+    r"AWS_SECRET_ACCESS_KEY|GITHUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|"
+    r"cat\s+[^;&|]*(?:\.env|credentials?|tokens?|\.ssh)|"
+    r"open\s*\([^)]*(?:\.env|credentials?|tokens?|\.ssh))",
+    re.I | re.S,
+)
+_BROWSER_SECRET_READ_RE = re.compile(
+    r"(document\.cookie|localStorage|sessionStorage|indexedDB|chrome\.cookies|browser\s+profile|cookies?)",
+    re.I,
+)
+_NETWORK_SINK_RE = re.compile(
+    r"(https?://|\b(curl|wget|scp|sftp|rsync|nc|netcat)\b|"
+    r"requests\.(post|put|patch)|fetch\s*\(|XMLHttpRequest|sendBeacon|webhook|upload)",
+    re.I | re.S,
 )
 
 _LLM_SECURITY_HARD_DENY_RE = re.compile(

@@ -90,7 +90,7 @@ def test_llm_privacy_hard_block_skips_model_and_pending_approval(monkeypatch):
     )
 
     assert result is not None
-    assert "explicit malicious" in result["message"]
+    assert "local secret read plus network egress" in result["message"]
     assert not fake_llm.calls
     assert not plugin._PENDING_APPROVALS
 
@@ -238,10 +238,9 @@ def test_terminal_action_detail_redacts_obvious_secret_values():
 
     detail = plugin._activity_rows({}, limit=5)[0]["action_detail"]
 
-    assert "API_TOKEN=<redacted>" in detail
+    assert "security-sensitive content redacted" in detail
     assert "abc12345678901234567890" not in detail
     assert "token=secret" not in detail
-    assert "https://example.com/hook" in detail
 
 
 def test_url_sanitizer_strips_userinfo_and_long_path_tokens():

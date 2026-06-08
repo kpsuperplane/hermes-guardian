@@ -51,6 +51,19 @@ _SECURITY_SENSITIVE_PATTERNS = [
     (re.compile(r"https?://[^\s\"'<>]*(reset|recover|verify|confirm|magic|otp|2fa)[^\s\"'<>]*", re.I), "sensitive link"),
 ]
 
+_CREDENTIAL_PATTERNS = [
+    (re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----", re.I), "private key"),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "aws access key id"),
+    (re.compile(r"(?im)^\s*AWS_SECRET_ACCESS_KEY\s*=\s*[A-Za-z0-9/+=]{32,}\s*$"), "aws secret access key"),
+    (re.compile(r"\bghp_[A-Za-z0-9_]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{30,}\b"), "github token"),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{32,}\b"), "api key"),
+    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b"), "slack token"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\b"), "jwt"),
+    (re.compile(r"\b(?:Bearer|Refresh)\s+[A-Za-z0-9._~+/=-]{24,}\b", re.I), "bearer token"),
+    (re.compile(r"(?im)^\s*(?:cookie|session(?:id)?|csrf(?:_token)?)\s*[:=]\s*[^\s#;]{12,}"), "session cookie"),
+    (re.compile(r"(?im)^\s*[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY|API_KEY)[A-Z0-9_]*\s*=\s*[^\s#]{8,}"), "secret assignment"),
+]
+
 _CODE_CONTEXT_RE = re.compile(
     r"\b(?:code|otp|passcode|pin)\b"
     r"(?:\s*(?:is|=|:|-|#)\s*|\s.{0,40}?\s)"
@@ -97,6 +110,14 @@ def _sensitive_finding(value: Any) -> dict[str, str] | None:
     text = _stringify_for_scan(value)
     if not text:
         return None
+    for pattern, reason in _CREDENTIAL_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return {
+                "reason": reason,
+                "match": match.group(0),
+                "context": _context(text, match.start(), match.end()),
+            }
     for pattern, reason in _SECURITY_SENSITIVE_PATTERNS:
         match = pattern.search(text)
         if match:
