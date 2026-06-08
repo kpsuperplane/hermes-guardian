@@ -197,7 +197,11 @@ environment variables.
     "rules": []
   },
   "language_packs": {
-    "enabled": ["en", "es"]
+    "enabled": [
+      "en", "zh", "hi", "es", "fr", "ar", "bn", "pt", "ru", "ur",
+      "id", "de", "ja", "pcm", "mr", "te", "tr", "ta", "vi", "tl",
+      "ko", "fa"
+    ]
   },
   "security": {
     "rules": [
@@ -236,10 +240,30 @@ Settings tab.
 Bundled pack ids:
 
 - `en`: English.
+- `zh`: Chinese.
+- `hi`: Hindi.
 - `es`: Spanish.
+- `fr`: French.
+- `ar`: Arabic.
+- `bn`: Bengali.
+- `pt`: Portuguese.
+- `ru`: Russian.
+- `ur`: Urdu.
+- `id`: Indonesian.
+- `de`: German.
+- `ja`: Japanese.
+- `pcm`: Nigerian Pidgin.
+- `mr`: Marathi.
+- `te`: Telugu.
+- `tr`: Turkish.
+- `ta`: Tamil.
+- `vi`: Vietnamese.
+- `tl`: Tagalog/Filipino.
+- `ko`: Korean.
+- `fa`: Persian.
 
 If `language_packs.enabled` is missing, Guardian falls back to
-`HERMES_GUARDIAN_LANGUAGE_PACKS` and then to the default bundled set.
+`HERMES_GUARDIAN_LANGUAGE_PACKS` and then to the default bundled set above.
 
 ### Security Rules
 
@@ -414,10 +438,10 @@ HERMES_GUARDIAN_LANGUAGE_PACKS=en,es
 
 Hermes Guardian uses declarative language packs for semantic security terms,
 auth-code labels, private-field labels, browser private-context hints, redaction
-markers, and sensitive-link terms. English and Spanish are bundled and enabled
-by default. Use `HERMES_GUARDIAN_LANGUAGE_PACKS=en` to limit semantic detection
-to English, or `HERMES_GUARDIAN_LANGUAGE_PACKS=all` to enable every bundled
-pack.
+markers, and sensitive-link terms. English plus the bundled high-coverage world
+language set are enabled by default. Use `HERMES_GUARDIAN_LANGUAGE_PACKS=en` to
+limit semantic detection to English, or `HERMES_GUARDIAN_LANGUAGE_PACKS=all` to
+enable every bundled pack.
 
 Language packs improve pre-taint semantic detection. Structural protections
 such as source-based taint, tainted URL/search/MCP egress checks, final-response

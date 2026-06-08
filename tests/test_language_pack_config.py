@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from support import *  # noqa: F403
+from language_packs.runtime import _ALL_PACK_IDS
 
 
 def test_language_packs_default_enabled_in_policy_snapshot():
@@ -29,7 +30,7 @@ def test_disabling_spanish_language_pack_updates_scanner_and_json(tmp_path):
     assert plugin._sensitive_reason("Restablecer tu contraseña ahora") is None
     assert plugin._sensitive_reason("Reset your password now") == "password reset"
     data = json.loads((tmp_path / "rules.json").read_text())
-    assert data["language_packs"]["enabled"] == ["en"]
+    assert data["language_packs"]["enabled"] == [pack_id for pack_id in _ALL_PACK_IDS if pack_id != "es"]
 
 
 def test_language_pack_can_be_disabled_by_direct_json_edit(tmp_path):
@@ -67,7 +68,7 @@ def test_privacy_and_security_saves_preserve_language_pack_config(tmp_path):
     data = json.loads((tmp_path / "rules.json").read_text())
 
     assert data["privacy"]["mode"] == "read-only"
-    assert data["language_packs"]["enabled"] == ["en"]
+    assert data["language_packs"]["enabled"] == [pack_id for pack_id in _ALL_PACK_IDS if pack_id != "es"]
 
 
 def test_english_language_pack_cannot_be_disabled():
@@ -77,7 +78,7 @@ def test_english_language_pack_cannot_be_disabled():
 
     assert ok is False
     assert "English language pack is required" in message
-    assert plugin._language_pack_ids() == ["en", "es"]
+    assert plugin._language_pack_ids() == list(_ALL_PACK_IDS)
 
 
 def test_language_pack_slash_command_lists_and_toggles_packs():

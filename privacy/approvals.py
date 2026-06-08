@@ -52,6 +52,29 @@ def _load_pending_approvals_from_store_unlocked() -> None:
             _PENDING_APPROVALS.setdefault(approval["id"], approval)
 
 
+def _pending_approval_from_store_unlocked(approval_id: str) -> dict[str, Any] | None:
+    approval_id = str(approval_id or "").strip()
+    if not re.fullmatch(r"[0-9]{4}", approval_id):
+        return None
+    try:
+        _ensure_activity_db()
+        with _activity_connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, session_id, owner_hash, tool_name, action_family,
+                       destination, data_classes, action_detail, fingerprint,
+                       created_at, expires_at, cron_job_id, cron_job_name, reason
+                FROM pending_approvals
+                WHERE id = ?
+                """,
+                (approval_id,),
+            ).fetchone()
+    except Exception as exc:
+        logger.debug("%s: failed to load stored approval %s: %s", _PLUGIN_NAME, approval_id, exc)
+        return None
+    return _pending_approval_from_row(row) if row else None
+
+
 def _save_pending_approval_to_store_unlocked(approval: dict[str, Any]) -> None:
     try:
         _ensure_activity_db()

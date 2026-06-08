@@ -505,9 +505,13 @@
     }
 
     function approvalAction(block, action) {
+      const actionId = action === "dismiss"
+        ? text(block.dismiss_id || block.approval_id || block.id)
+        : text(block.approval_id || block.id);
+      if (!actionId) return;
       const path = action === "dismiss"
-        ? "/approvals/" + encodeURIComponent(block.id) + "/dismiss"
-        : "/approvals/" + encodeURIComponent(block.id) + "/approve";
+        ? "/approvals/" + encodeURIComponent(actionId) + "/dismiss"
+        : "/approvals/" + encodeURIComponent(actionId) + "/approve";
       const body = action === "approve-always" ? { scope: "always" } : { scope: "once" };
       api(path, { method: "POST", body: JSON.stringify(action === "dismiss" ? {} : body) })
         .then(function (result) {
@@ -525,6 +529,41 @@
       return prefix + ". The matching allow rule already permits this retry, so approving this pending request is not needed.";
     }
 
+    function staleApprovalTitle(block) {
+      const approvalId = text(block.historical_approval_id || block.approval_id);
+      const suffix = approvalId ? " " + approvalId : "";
+      if (block.approval_status === "expired") {
+        const expires = Number(block.expires_at || 0);
+        const when = expires ? " at " + timeText(expires) : "";
+        return "Approval" + suffix + " expired" + when + ". Approve is unavailable; retry the action to create a new approval.";
+      }
+      if (block.approval_status === "dismissed") {
+        return "Approval" + suffix + " was dismissed and is no longer actionable.";
+      }
+      return "Approval" + suffix + " is no longer pending. It may have been approved, dismissed, or expired.";
+    }
+
+    function staleApprovalText(block) {
+      const approvalId = text(block.historical_approval_id || block.approval_id);
+      const label = approvalId ? "Approval " + approvalId : "Approval";
+      if (block.approval_status === "expired") {
+        const expires = Number(block.expires_at || 0);
+        return label + " expired" + (expires ? " " + timeText(expires) : "") + "; approve is unavailable.";
+      }
+      if (block.approval_status === "dismissed") return label + " was dismissed.";
+      return label + " is no longer pending.";
+    }
+
+    function disabledActionButton(key, label, title, variant) {
+      const button = h(Button, {
+        key: key + "-button",
+        variant: variant,
+        disabled: true,
+        title: title,
+      }, label);
+      return h("span", { key: key, className: "hermes-guardian-disabled-action", title: title }, button);
+    }
+
     function approvalButton(block, action, label, disabled, title) {
       const button = h(Button, {
         key: action + "-button",
@@ -533,7 +572,7 @@
         onClick: disabled ? undefined : function () { approvalAction(block, action); },
       }, label);
       if (!disabled) return button;
-      return h("span", { key: action, className: "hermes-guardian-disabled-action", title: title }, button);
+      return disabledActionButton(action, label, title, undefined);
     }
 
     function historyTargetCell(row) {
@@ -669,20 +708,32 @@
         blocks.length ? blocks.map(function (block) {
           const pending = block.pending === true || !!block.approval_id;
           const covered = pending && block.covered_by_rule === true;
+          const staleApproval = !pending && !!block.historical_approval_id;
+          const expiredApproval = staleApproval && block.approval_status === "expired";
+          const staleTitle = staleApproval ? staleApprovalTitle(block) : "";
           const blockId = text(block.approval_id || block.id || block.activity_id);
+          const status = pending ? "pending approval" : (expiredApproval ? "approval expired" : (staleApproval ? "not approvable" : text(block.decision, "blocked")));
           return h("div", { key: block.id, className: "hermes-guardian-card" },
             h("div", { className: "hermes-guardian-block-head" },
               h("div", null,
                 h("div", { className: "hermes-guardian-block-title" }, text(block.action_family) + " -> " + text(block.destination)),
                 h("div", { className: "hermes-guardian-rule-subline" },
                   blockId ? h("span", { className: "hermes-guardian-rule-id" }, blockId) : null,
-                  h("span", { className: "hermes-guardian-pill" }, pending ? "pending approval" : text(block.decision, "blocked")),
+                  h("span", { className: "hermes-guardian-pill", title: staleTitle || undefined }, status),
                 ),
               ),
               pending ? h("div", { className: "hermes-guardian-actions" },
                 approvalButton(block, "approve-once", "Approve once", covered, covered ? coveredRuleTitle(block) : ""),
                 approvalButton(block, "approve-always", "Approve always", covered, covered ? coveredRuleTitle(block) : ""),
                 h(Button, { key: "dismiss", variant: "secondary", onClick: function () { approvalAction(block, "dismiss"); } }, "Dismiss"),
+              ) : expiredApproval ? h("div", { className: "hermes-guardian-actions" },
+                approvalButton(block, "approve-once", "Approve once", true, staleTitle),
+                approvalButton(block, "approve-always", "Approve always", true, staleTitle),
+                h(Button, { key: "dismiss", variant: "secondary", title: staleTitle, onClick: function () { approvalAction(block, "dismiss"); } }, "Dismiss"),
+              ) : staleApproval ? h("div", { className: "hermes-guardian-actions" },
+                approvalButton(block, "approve-once", "Approve once", true, staleTitle),
+                approvalButton(block, "approve-always", "Approve always", true, staleTitle),
+                disabledActionButton("dismiss", "Dismiss", staleTitle, "secondary"),
               ) : null,
             ),
             h("div", { className: "hermes-guardian-block-meta" },
@@ -690,6 +741,7 @@
               block.module ? h("span", null, "Module " + text(block.module)) : null,
               h("span", null, "Taints " + classesText(block.data_classes)),
               h("span", null, "Created " + timeText(block.created_at)),
+              staleApproval ? h("span", { title: staleTitle }, staleApprovalText(block)) : null,
               h("span", null, "Reason " + text(block.reason, "n/a")),
             ),
           );

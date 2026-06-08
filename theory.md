@@ -19,6 +19,7 @@ That property depends on several assumptions:
 - Relevant actions are routed through Hermes hooks.
 - Guardian correctly classifies the action as a sink.
 - Guardian's policy store and hook code execute correctly.
+- Security Module and language-pack configuration reflect the deployment's intended risk tolerance.
 - Tools with their own filesystem or network capabilities are contained by Hermes and the operating system.
 - The deployment does not give an untrusted tool broader access than Guardian can mediate.
 
@@ -80,7 +81,7 @@ The defense model treats these components as trusted for policy enforcement:
 
 - Hermes hook dispatch for mediated actions.
 - Guardian policy code.
-- Guardian local rule, approval, and activity storage.
+- Guardian local privacy-rule, security-rule, language-pack, approval, and activity storage.
 - The user’s explicit approval decisions.
 - Hermes gateway identity and authorization metadata.
 - Hermes runtime isolation and network controls, when configured.
@@ -110,6 +111,12 @@ Guardian assigns private data labels to source categories such as:
 - `browser_private_input`
 
 These labels represent classes of private context that the agent has observed.
+
+### Semantic detectors
+
+Guardian uses deterministic detectors for credentials, sensitive account-security content, private-field hints, browser private-context hints, and sensitive links. Phrase-based semantic detectors are supplied by declarative language packs. English is required; other enabled packs extend recognition for terms such as auth-code labels, reset/recovery language, security alerts, redaction markers, and private-field names.
+
+Language packs improve detection coverage but do not create a universal natural-language guarantee. Structural mechanisms such as source-based taint, credential-format scanning, URL/search/MCP egress classification, and final-response mediation remain separate from phrase coverage.
 
 ### Session taint
 
@@ -163,6 +170,16 @@ Guardian distinguishes ordinary private context from access-sensitive content. C
 
 These are treated differently from ordinary private information. In the Guardian model, they are candidates for categorical blocking or suppression rather than normal approval-based declassification.
 
+The Security Module is configured through high-level rules that are enabled by default. These rules cover semantic account-security content, credential-shaped content, sensitive links, intrinsic same-call exfiltration shapes, and terminal remote-read shortcuts targeting private-network or metadata hosts. When an enabled Security Module rule produces a finding, the action, tool result, or final response is blocked or suppressed without an approval path. Privacy allow rules, privacy mode changes, and approval commands do not declassify Security Module findings.
+
+Security-rule toggles are administrative model changes, not declassification decisions. Disabling a Security Module rule means Guardian no longer categorically blocks that matching content or action shape. The privacy taint-and-egress layer can still gate classified private egress, but it is no substitute for the disabled non-approvable hardening category.
+
+### Metadata and control surfaces
+
+Guardian's operational surfaces are designed to preserve the same policy semantics across slash commands, CLI helpers, and the dashboard. Dashboard mutation routes call the same policy mutation functions used by the command surfaces, and dashboard mutations can be disabled or guarded by an admin token.
+
+The activity and dashboard model is metadata-only. Activity rows, approval records, policy snapshots, dashboard payloads, cron notifications, and LLM-verifier inputs should not contain raw private bodies, typed browser text, document contents, credentials, tokenized URL paths or queries, full command payloads carrying secrets, or other raw content-bearing arguments. Action details are reduced to bounded summaries such as action family, destination host, data classes, sanitized reason, and redaction notes.
+
 ## The mediated-flow property
 
 The most precise statement of Guardian’s current security property is:
@@ -175,6 +192,7 @@ More formally:
 - Let `T(session)` be the set of labels observed in a session.
 - Let `A(tool, args, session)` classify a proposed action as either no egress or an egress tuple `(action_family, destination)`.
 - Let `P(actor, session, action_family, destination, labels, context)` represent allow, deny, and declassification policy.
+- An action, result, or final response with an enabled Security Module finding is blocked or suppressed before ordinary privacy declassification applies.
 - A mediated action is allowed when it is not classified as egress, when no private labels are in scope, or when policy allows the flow.
 - A mediated action is blocked or routed to approval when it is classified as egress, private labels are in scope, and no policy allows the flow.
 
@@ -192,7 +210,7 @@ Hermes and Guardian operate at different layers.
 | Gateway access | Platform allowlists, pairing, and authorization metadata | Actor/session/cron-aware approval and declassification policy |
 | Command safety | Dangerous-command approval and destructive-command blocking | Confidentiality checks for commands that may leak data without being destructive |
 | Prompt-injection hygiene | Scanning of context files, skills, memory-like surfaces, and suspicious patterns | Post-ingestion flow control that assumes malicious content may still enter |
-| Audit and UX | Tool/runtime/dashboard surfaces | Metadata-only approval, rule, and activity trail for private-flow decisions |
+| Audit and UX | Tool/runtime/dashboard surfaces | Metadata-only approval, privacy-rule, security-rule, language-pack, and activity trail for private-flow decisions |
 
 Hermes’ security documentation identifies OS-level isolation as the load-bearing boundary against adversarial model behavior. In-process controls such as approval prompts, scanners, redaction, and allowlists are valuable but not equivalent to a sandbox.
 
@@ -225,15 +243,18 @@ Layer 2: Hermes tool and runtime hygiene
   Website blocklist.
 
 Layer 3: Guardian information-flow policy
+  Non-approvable Security Module findings.
+  Language-pack-backed semantic detectors.
   Source taint.
   Sink classification.
   Private-egress approval.
   Destination/action/data-class rules.
-  Security-sensitive suppression.
+  Metadata-only policy evaluation and activity details.
 
 Layer 4: Guardian declassification UX
   Short-lived approvals.
   Persistent allow and deny rules.
+  Security-rule and language-pack controls.
   Metadata-only audit trail.
   Dashboard and slash-command controls.
 ```
@@ -289,6 +310,12 @@ This creates predictable tradeoffs:
 - Benign outbound actions may require approval because the session has private taint.
 - Encoded or indirect flows can evade policy when the sink is not recognized.
 - Approvals operate over action/destination/data-class context rather than a full proof of dependency.
+
+### Detector and language coverage
+
+Semantic scanning is finite. A language pack can improve coverage for a language or domain, but it cannot enumerate every phrase, euphemism, obfuscation, or future service-specific wording. Missing language coverage can therefore reduce pre-taint detection of account-security content, private-field hints, browser private-context hints, and sensitive links.
+
+For that reason, language packs are not the primary confidentiality boundary. Source-based taint, conservative sink classification, credential-format scanning, Security Module hard blocks, and lower-layer Hermes containment remain load-bearing.
 
 ### Coarse declassification context
 

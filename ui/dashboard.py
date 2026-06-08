@@ -95,10 +95,38 @@ def _dashboard_approval_action(approval_id: str, action: str, scope: str = "") -
     elif action == "dismiss":
         message = _guardian_deny(_CLI_OWNER_HASH, approval_id)
         ok = message.startswith("Dismissed ")
+        if not ok and message.startswith("No pending approval"):
+            ok, message = _dashboard_dismiss_expired_approval(approval_id)
     else:
         return {"ok": False, "message": "Unsupported approval action.", "policy": _policy_snapshot()}, 400
     status = 200 if ok else (404 if message.startswith("No pending approval") else 400)
     return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
+
+
+def _dashboard_dismiss_expired_approval(approval_id: str) -> tuple[bool, str]:
+    with _LOCK:
+        approval = _pending_approval_from_store_unlocked(approval_id)
+        if not approval:
+            return False, f"No pending approval found for {approval_id}."
+        if int(float(approval.get("expires_at") or 0)) > int(_now()):
+            return False, f"No pending approval found for {approval_id}."
+        if not _approval_owner_allowed(_CLI_OWNER_HASH, approval):
+            return False, "Approval denied: this request belongs to a different user/session."
+        _delete_pending_approvals_from_store_unlocked([approval_id])
+
+    _emit_activity(
+        "denied",
+        session_id=approval.get("session_id", ""),
+        owner_hash=approval.get("owner_hash", ""),
+        tool_name=approval.get("tool_name", ""),
+        action_family=approval.get("action_family", ""),
+        destination=approval.get("destination", ""),
+        data_classes=approval.get("data_classes") or [],
+        reason=approval.get("reason") or "expired approval dismissed",
+        approval_id=approval_id,
+        action_detail=approval.get("action_detail", ""),
+    )
+    return True, f"Dismissed expired guardian approval {approval_id}."
 
 
 def _dashboard_rule_delete_action(rule_id: str) -> tuple[dict[str, Any], int]:

@@ -222,6 +222,60 @@ def test_policy_snapshot_does_not_mark_pending_block_covered_by_new_deny_rule(tm
     assert block["covered_rule_id"] == ""
 
 
+def test_policy_snapshot_marks_stored_expired_approval_as_dismissible(monkeypatch):
+    plugin = load_plugin()
+    now = {"value": 1000}
+    monkeypatch.setattr(plugin, "_now", lambda: now["value"])
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
+    approval_id = first_pending_id(plugin)
+    expires_at = int(plugin._PENDING_APPROVALS[approval_id]["expires_at"])
+    plugin._PENDING_APPROVALS.clear()
+    now["value"] = expires_at + 1
+
+    policy = plugin._policy_snapshot()
+    block = policy["recent_blocks"][0]
+
+    assert block["id"].startswith("activity-")
+    assert block["pending"] is False
+    assert block["approval_id"] == ""
+    assert block["historical_approval_id"] == approval_id
+    assert block["approval_status"] == "expired"
+    assert block["dismiss_id"] == approval_id
+    assert block["expires_at"] == expires_at
+
+
+def test_dashboard_dismiss_action_handles_stored_expired_approval(monkeypatch):
+    plugin = load_plugin()
+    now = {"value": 1000}
+    monkeypatch.setattr(plugin, "_now", lambda: now["value"])
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
+    approval_id = first_pending_id(plugin)
+    expires_at = int(plugin._PENDING_APPROVALS[approval_id]["expires_at"])
+    plugin._PENDING_APPROVALS.clear()
+    now["value"] = expires_at + 1
+
+    payload, status = plugin._dashboard_approval_action(approval_id, "dismiss")
+
+    assert status == 200
+    assert payload["ok"] is True
+    assert payload["message"] == f"Dismissed expired guardian approval {approval_id}."
+    assert payload["policy"]["recent_blocks"][0]["decision"] == "denied"
+    assert payload["policy"]["recent_blocks"][0]["approval_status"] == "dismissed"
+    assert payload["policy"]["recent_blocks"][0]["dismiss_id"] == ""
+    with plugin._activity_connect() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM pending_approvals WHERE id = ?",
+            (approval_id,),
+        ).fetchone()[0]
+    assert count == 0
+
+
 def test_policy_snapshot_recent_blocks_includes_hard_blocks_without_pending_approval():
     plugin = load_plugin()
 

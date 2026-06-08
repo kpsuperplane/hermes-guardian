@@ -4,11 +4,35 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import importlib
+import importlib.util
 import os
 import re
 from typing import Any
 
-_DEFAULT_LANGUAGE_PACKS = ("en", "es")
+_KNOWN_LANGUAGE_PACKS = (
+    "en",
+    "zh",
+    "hi",
+    "es",
+    "fr",
+    "ar",
+    "bn",
+    "pt",
+    "ru",
+    "ur",
+    "id",
+    "de",
+    "ja",
+    "pcm",
+    "mr",
+    "te",
+    "tr",
+    "ta",
+    "vi",
+    "tl",
+    "ko",
+    "fa",
+)
 _REQUIRED_PACK_KEYS = {
     "id",
     "name",
@@ -28,7 +52,17 @@ _LIST_KEYS = {
     "redacted_security_terms",
     "security_link_terms",
 }
-_ALL_PACK_IDS = ("en", "es")
+
+
+def _pack_exists(pack_id: str) -> bool:
+    try:
+        return importlib.util.find_spec(f"language_packs.{pack_id}") is not None
+    except Exception:
+        return False
+
+
+_ALL_PACK_IDS = tuple(pack_id for pack_id in _KNOWN_LANGUAGE_PACKS if _pack_exists(pack_id))
+_DEFAULT_LANGUAGE_PACKS = _ALL_PACK_IDS or ("en",)
 
 
 @dataclass(frozen=True)
@@ -62,7 +96,11 @@ def _enabled_pack_ids(raw: str | None = None) -> tuple[str, ...]:
         ids.insert(0, "en")
     deduped: list[str] = []
     for pack_id in ids:
-        if re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", pack_id) and pack_id not in deduped:
+        if (
+            re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", pack_id)
+            and pack_id in _ALL_PACK_IDS
+            and pack_id not in deduped
+        ):
             deduped.append(pack_id)
     return tuple(deduped or _DEFAULT_LANGUAGE_PACKS)
 
@@ -131,7 +169,7 @@ def _literal_phrase_pattern(phrases: list[str]) -> re.Pattern[str]:
         re.escape(phrase).replace(r"\ ", r"\s+")
         for phrase in sorted(phrases, key=len, reverse=True)
     ]
-    return re.compile(r"(?<!\w)(?:" + "|".join(alternatives) + r")(?!\w)", re.I | re.S)
+    return re.compile(r"(?<![A-Za-z0-9_])(?:" + "|".join(alternatives) + r")(?![A-Za-z0-9_])", re.I | re.S)
 
 
 def _terms_pattern(terms: list[str]) -> re.Pattern[str]:
@@ -139,7 +177,7 @@ def _terms_pattern(terms: list[str]) -> re.Pattern[str]:
         re.escape(term).replace(r"\ ", r"\s+")
         for term in sorted(terms, key=len, reverse=True)
     ]
-    return re.compile(r"(?<!\w)(?:" + "|".join(alternatives) + r")(?!\w)", re.I | re.S)
+    return re.compile(r"(?<![A-Za-z0-9_])(?:" + "|".join(alternatives) + r")(?![A-Za-z0-9_])", re.I | re.S)
 
 
 def _compile_language_packs(raw_ids: str | None = None) -> CompiledLanguagePacks:

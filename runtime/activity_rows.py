@@ -117,6 +117,35 @@ def _pending_approval_rule_coverage(approval: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _stored_pending_approval_expirations(approval_ids: set[str]) -> dict[str, int]:
+    ids = sorted(
+        approval_id
+        for approval_id in (str(item or "").strip() for item in approval_ids)
+        if re.fullmatch(r"[0-9]{4}", approval_id)
+    )
+    if not ids:
+        return {}
+    try:
+        _ensure_activity_db()
+        with _activity_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, expires_at
+                FROM pending_approvals
+                WHERE id IN (
+                """ + ",".join("?" for _ in ids) + ")",
+                ids,
+            ).fetchall()
+    except Exception as exc:
+        logger.debug("%s: failed to load stored approval expirations: %s", _PLUGIN_NAME, exc)
+        return {}
+    return {
+        str(row["id"]): int(float(row["expires_at"] or 0))
+        for row in rows
+        if str(row["id"] or "")
+    }
+
+
 def _dashboard_recent_blocks(pending: list[dict[str, Any]], *, limit: int = 5) -> list[dict[str, Any]]:
     pending_by_id = {
         str(item.get("id") or ""): item
@@ -124,12 +153,29 @@ def _dashboard_recent_blocks(pending: list[dict[str, Any]], *, limit: int = 5) -
         if str(item.get("id") or "")
     }
     rows = _activity_rows({"decisions": ",".join(_RECENT_BLOCK_DECISIONS)}, limit=max(limit * 4, limit))
+    stored_expirations = _stored_pending_approval_expirations({
+        str(row.get("approval_id") or "")
+        for row in rows
+        if str(row.get("approval_id") or "")
+    })
     blocks: list[dict[str, Any]] = []
     seen: set[str] = set()
 
     for row in rows:
         approval_id = str(row.get("approval_id") or "")
         pending_approval = pending_by_id.get(approval_id)
+        historical_approval_id = approval_id if approval_id and not pending_approval else ""
+        expires_at = int((pending_approval or {}).get("expires_at") or stored_expirations.get(approval_id, 0) or 0)
+        if pending_approval:
+            approval_status = "pending"
+        elif str(row.get("decision") or "") == "denied":
+            approval_status = "dismissed"
+        elif historical_approval_id and expires_at and expires_at <= int(_now()):
+            approval_status = "expired"
+        elif historical_approval_id:
+            approval_status = "not_pending"
+        else:
+            approval_status = ""
         block_id = approval_id if pending_approval else f"activity-{int(row.get('id') or 0)}"
         if block_id in seen:
             continue
@@ -143,6 +189,9 @@ def _dashboard_recent_blocks(pending: list[dict[str, Any]], *, limit: int = 5) -
             "id": block_id,
             "activity_id": int(row.get("id") or 0),
             "approval_id": approval_id if pending_approval else "",
+            "historical_approval_id": historical_approval_id,
+            "dismiss_id": historical_approval_id if approval_status == "expired" else "",
+            "approval_status": approval_status,
             "pending": bool(pending_approval),
             "decision": str(row.get("decision") or ""),
             "module": str(row.get("module") or ""),
@@ -155,7 +204,7 @@ def _dashboard_recent_blocks(pending: list[dict[str, Any]], *, limit: int = 5) -
             "action_detail": str(row.get("action_detail") or (pending_approval or {}).get("action_detail") or ""),
             "reason": str(row.get("reason") or (pending_approval or {}).get("reason") or ""),
             "created_at": int(row.get("ts") or (pending_approval or {}).get("created_at") or 0),
-            "expires_at": int((pending_approval or {}).get("expires_at") or 0),
+            "expires_at": expires_at,
             "cron_job_id": str((pending_approval or {}).get("cron_job_id") or ""),
             "cron_job_name": str((pending_approval or {}).get("cron_job_name") or ""),
             "scope": str((pending_approval or {}).get("scope") or ""),
