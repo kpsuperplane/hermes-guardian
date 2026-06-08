@@ -20,8 +20,6 @@ Guardian adds two policy layers:
 - **Privacy Module**: session taint, egress classification, narrow approval
   rules, and metadata-only activity history for private data flows.
 
-<img width="2434" height="1892" alt="Hermes Guardian dashboard" src="https://github.com/user-attachments/assets/fafaa94a-dc19-4211-9240-aa5dcda01d78" />
-
 ## Quickstart
 
 Clone the plugin into the Hermes user plugin directory:
