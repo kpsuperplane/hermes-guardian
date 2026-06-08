@@ -17,8 +17,9 @@ Guardian adds two policy layers:
 - **Security Module**: non-approvable blocking and suppression for credentials,
   OTPs, magic links, password resets, security alerts, sensitive account links,
   and similar access-sensitive content.
-- **Privacy Module**: session taint, egress classification, narrow approval
-  rules, and metadata-only activity history for private data flows.
+- **Privacy Module**: session taint, egress classification, privacy modes,
+  optional declassification rules, and metadata-only activity history for
+  private data flows.
 
 ## Features
 
@@ -30,7 +31,10 @@ Guardian adds two policy layers:
 - Classifies common Hermes egress families such as messaging, MCP writes,
   browser typing/submission, terminal execution, local writes, cron writes,
   web/API calls, model APIs, delegated tasks, and final responses.
-- Supports `strict`, `read-only`, `llm`, and `off` privacy modes.
+- Uses `strict`, `read-only`, and `llm` privacy modes as the core egress policy
+  engine, with `llm` as the default.
+- Supports optional allow/deny rules for explicit user customization and
+  declassification.
 - Stores sanitized activity rows and pending approvals in local SQLite.
 - Binds one-time approvals to an HMAC fingerprint of the exact tool arguments.
 - Provides slash commands, CLI maintenance commands, and a Hermes dashboard tab.
@@ -82,14 +86,16 @@ surfaces: messages, MCP writes, browser forms, URLs, search queries, terminal
 commands, code execution, model APIs, cron jobs, and final responses.
 
 Guardian treats those surfaces as egress. Once a session has observed private
-data, classified outbound actions need a matching rule or an explicit approval
-before they run. Security-sensitive content is stricter: it is blocked or
-suppressed outright, even if privacy mode is off.
+data, the active privacy mode evaluates classified outbound actions before they
+run. Some actions are auto-approved, some are blocked immediately, and some
+fall back to manual approval. Security-sensitive content is stricter: it is
+blocked or suppressed outright, even if privacy mode is off.
 
 Use Guardian when you want:
 
 - Private data available for reasoning, not blindly stripped from context.
-- Narrow declassification rules by action family, destination, data class,
+- Strong default egress behavior without needing to write custom rules first.
+- Optional declassification rules by action family, destination, data class,
   owner, session, and cron scope.
 - Mobile-friendly approvals for blocked actions.
 - Fail-closed behavior when private data could leak.
@@ -103,9 +109,9 @@ scoping, SSRF protection, gateway authorization, and dangerous-command controls.
 
 Guardian's core policy is intentionally small:
 
-> For Hermes-mediated tool calls that Guardian classifies as outbound egress,
-> if the current session has observed private data and no matching allow rule or
-> approval exists, Guardian blocks the tool call before execution.
+> For Hermes-mediated actions that Guardian classifies as outbound egress, if
+> the current session has observed private data, the active privacy mode decides
+> whether the action can run, needs approval, or must be blocked.
 
 The flow looks like this:
 
@@ -119,26 +125,33 @@ Session tainted with data classes
 Outbound tool call or final response classified
         |
         v
-Allow rule found? ---- yes ----> allow and log metadata
+Security-sensitive? ---- yes ----> block or suppress
         |
         no
         |
         v
-Block, create approval ID, log sanitized metadata
+Privacy mode engine evaluates action
+        |
+        |  optional user rules can narrow or override known routes
+        v
+Auto-allow, hard-block, or request approval
 ```
 
 Security checks run before privacy checks. Privacy allow rules and approval
-commands cannot bypass Security Module blocks.
+commands cannot bypass Security Module blocks. Privacy rules are customization
+hooks on top of the mode engine, not a requirement for Guardian to protect a
+session.
 
 ## Privacy Modes
 
-Privacy mode controls private-context egress when no privacy rule matches:
+Privacy mode is the foundation of the Privacy Module. It controls how
+private-context egress is handled by default:
 
 | Mode | Behavior |
 | --- | --- |
-| `strict` | Require manual approval unless an allow rule matches. |
-| `read-only` | Auto-approve only metadata-verified low-risk reads; ask for approval otherwise. |
-| `llm` | Run deterministic hard blocks first, then ask a sanitized LLM verifier for low-risk judgment. |
+| `strict` | Require manual approval for tainted egress by default. Optional allow rules can preapprove known routes. |
+| `read-only` | Auto-approve only metadata-verified low-risk reads; ask for approval otherwise. Optional rules can further narrow or preapprove routes. |
+| `llm` | Run deterministic hard blocks first, then ask a sanitized LLM verifier for low-risk judgment. Optional rules can override known routes. |
 | `off` | Disable private-egress approval checks. Security-sensitive content is still blocked. |
 
 The default mode is `llm`.
@@ -207,9 +220,12 @@ There is no global "allow everything" approval.
 
 ## Privacy Rules
 
-Privacy rules are ordered allow/deny rules evaluated before the default privacy
-mode. They match egress by tool, action family, destination, data class, owner,
-session, and cron scope.
+Privacy rules are optional custom policy. Use them when the default privacy
+mode is too broad or too conservative for a known workflow.
+
+Rules are ordered allow/deny overrides evaluated before the mode fallback for a
+matching action. They match egress by tool, action family, destination, data
+class, owner, session, and cron scope.
 
 Example persistent allow rule:
 
