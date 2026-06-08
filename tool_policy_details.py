@@ -1,4 +1,4 @@
-"""Modularized guardian runtime detail module."""
+"""Sanitized action-detail rendering for activity, approvals, and prompts."""
 
 from __future__ import annotations
 
@@ -110,5 +110,4 @@ def _activity_action_detail(tool_name: str, args: Any, action_family: str = "", 
     if isinstance(args, str):
         return _redact_action_detail_text(args)
     return str(action_family or tool_name or "")[:160]
-
 

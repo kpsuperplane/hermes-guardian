@@ -57,8 +57,8 @@ _CODE_CONTEXT_RE = re.compile(
     r"\b(?:\d[\d -]{4,15}|[A-Z0-9]*\d[A-Z0-9 -]{4,15})\b",
     re.I | re.S,
 )
-_NUMBERED_RECORD_START_RE = re.compile(r"(?m)(?=^\s*\d+[\.)]\s+)")
-_HEADER_RECORD_START_RE = re.compile(r"(?m)(?=^\s*(?:\d+[\.)]\s*)?(?:From|Sender):\s)")
+_NUMBERED_RECORD_START_RE = re.compile(r"(?m)(?=^[^\S\r\n]*\d+[\.)][^\S\r\n]+)")
+_HEADER_RECORD_START_RE = re.compile(r"(?m)(?=^[^\S\r\n]*(?:\d+[\.)][^\S\r\n]*)?(?:From|Sender):[^\S\r\n])")
 _EMAIL_SHAPED_TEXT_RE = re.compile(
     r"(?im)^\s*(?:\d+[\.)]\s*)?(?:From|Sender|Subject|Unread|Labels|ID|Message ID):\s"
 )
@@ -189,8 +189,10 @@ def _scrub_text_records(
             continue
         cleaned.append(record)
 
-    if not suppressed or not cleaned:
+    if not suppressed:
         return text, suppressed, first_reason
+    if not cleaned:
+        return "", suppressed, first_reason
     if numbered_records:
         item_index = 0
         renumbered = []

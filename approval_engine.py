@@ -1,4 +1,4 @@
-"""Modularized guardian runtime module."""
+"""Approval matching, pending approval creation, and LLM verdict helpers."""
 
 from __future__ import annotations
 
@@ -57,10 +57,12 @@ def _classes_are_covered(current: set[str], approved: list[str] | set[str]) -> b
 def _rule_matches(rule: dict[str, Any], shape: dict[str, Any]) -> bool:
     rule_action = rule.get("action_family")
     rule_destination = rule.get("destination")
+    rule_cron_job_id = str(rule.get("cron_job_id") or "").strip()
     return (
         (rule.get("owner_hash") == "*" or rule.get("owner_hash") == shape.get("owner_hash"))
         and (rule_action == "*" or rule_action == shape.get("action_family"))
         and (rule_destination == "*" or rule_destination == shape.get("destination"))
+        and (not rule_cron_job_id or rule_cron_job_id == _cron_job_id_from_session(shape.get("session_id")))
         and _classes_are_covered(set(shape.get("data_classes") or []), rule.get("data_classes") or [])
     )
 
@@ -129,34 +131,48 @@ def _configured_allow_rules() -> list[dict[str, Any]]:
 
 
 def _load_persistent_rules() -> dict[str, Any]:
-    global _PERSISTENT_RULES_CACHE, _PERSISTENT_RULES_ERROR
+    global _PERSISTENT_RULES_CACHE, _PERSISTENT_RULES_ERROR, _PERSISTENT_RULES_MTIME
     with _LOCK:
+        try:
+            current_mtime = _PERSISTENT_RULES_PATH.stat().st_mtime if _PERSISTENT_RULES_PATH.exists() else None
+        except Exception:
+            current_mtime = None
         if _PERSISTENT_RULES_CACHE is not None:
-            return _PERSISTENT_RULES_CACHE
+            if _PERSISTENT_RULES_MTIME == current_mtime:
+                return _PERSISTENT_RULES_CACHE
+            if _PERSISTENT_RULES_MTIME is None and current_mtime is None:
+                return _PERSISTENT_RULES_CACHE
         try:
             if not _PERSISTENT_RULES_PATH.exists():
                 _PERSISTENT_RULES_CACHE = {"rules": []}
+                _PERSISTENT_RULES_MTIME = None
             else:
                 parsed = json.loads(_PERSISTENT_RULES_PATH.read_text())
                 if not isinstance(parsed, dict) or not isinstance(parsed.get("rules"), list):
                     raise ValueError("invalid persistent rule file")
                 _PERSISTENT_RULES_CACHE = parsed
+                _PERSISTENT_RULES_MTIME = current_mtime
             _PERSISTENT_RULES_ERROR = False
         except Exception as exc:
             logger.warning("%s: failed to load persistent allow rules: %s", _PLUGIN_NAME, exc)
             _PERSISTENT_RULES_CACHE = {"rules": []}
+            _PERSISTENT_RULES_MTIME = None
             _PERSISTENT_RULES_ERROR = True
         return _PERSISTENT_RULES_CACHE
 
 
 def _save_persistent_rules(data: dict[str, Any]) -> bool:
-    global _PERSISTENT_RULES_CACHE, _PERSISTENT_RULES_ERROR
+    global _PERSISTENT_RULES_CACHE, _PERSISTENT_RULES_ERROR, _PERSISTENT_RULES_MTIME
     with _LOCK:
         try:
             tmp = _PERSISTENT_RULES_PATH.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
             tmp.replace(_PERSISTENT_RULES_PATH)
             _PERSISTENT_RULES_CACHE = data
+            try:
+                _PERSISTENT_RULES_MTIME = _PERSISTENT_RULES_PATH.stat().st_mtime
+            except Exception:
+                _PERSISTENT_RULES_MTIME = None
             _PERSISTENT_RULES_ERROR = False
             return True
         except Exception as exc:
@@ -168,6 +184,7 @@ def _save_persistent_rules(data: dict[str, Any]) -> bool:
 def _prune_expired() -> None:
     cutoff = _now() - _RECENT_COMMAND_TTL_SECONDS
     with _LOCK:
+        _load_pending_approvals_from_store_unlocked()
         expired = [
             approval_id
             for approval_id, approval in _PENDING_APPROVALS.items()
@@ -175,6 +192,8 @@ def _prune_expired() -> None:
         ]
         for approval_id in expired:
             _PENDING_APPROVALS.pop(approval_id, None)
+        if expired:
+            _delete_pending_approvals_from_store_unlocked(expired)
         for key, entries in list(_RECENT_COMMAND_OWNERS.items()):
             fresh = [(ts, owner) for ts, owner in entries if ts >= cutoff]
             if fresh:
@@ -236,12 +255,24 @@ def _read_only_auto_approves(shape: dict[str, Any], args: Any) -> bool:
 
 def _sanitize_url_for_llm(value: str) -> str:
     parsed = urlparse(value)
-    if not parsed.scheme or not parsed.netloc:
+    if not parsed.scheme or not parsed.hostname:
         return value[:160]
+    netloc = parsed.hostname.lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if port is not None:
+        netloc = f"{netloc}:{port}"
     path = parsed.path or ""
+    if path:
+        path = "/".join(
+            "<token-like>" if re.fullmatch(r"[A-Za-z0-9._~+=-]{24,}", segment) else segment
+            for segment in path.split("/")
+        )
     if len(path) > 80:
         path = path[:77] + "..."
-    return f"{parsed.scheme}://{parsed.netloc.lower()}{path}"
+    return f"{parsed.scheme}://{netloc}{path}"
 
 
 def _redact_command_for_llm(command: str) -> str:
@@ -366,85 +397,3 @@ def _llm_security_verdict(shape: dict[str, Any], args: Any) -> dict[str, str]:
             "authorization_level": "unknown",
             "rationale": "LLM verifier failed closed",
         }
-
-
-def _approval_code_input(shape: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "tool_name": str(shape.get("tool_name") or "")[:80],
-        "action_family": str(shape.get("action_family") or "")[:80],
-        "destination": str(shape.get("destination") or "")[:120],
-        "data_classes": sorted(shape.get("data_classes") or []),
-        "action_detail": _redact_action_detail_text(str(shape.get("action_detail") or ""))[:240],
-    }
-
-
-def _approval_code_slug(value: str) -> str:
-    value = str(value or "").lower()
-    value = re.sub(r"[^a-z0-9]+", "-", value).strip("-")
-    parts = [part for part in value.split("-") if part][:3]
-    value = "-".join(parts)[:24].strip("-")
-    if re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+){0,2}", value or ""):
-        return value
-    return ""
-
-
-def _local_approval_slug(shape: dict[str, Any]) -> str:
-    action_family = str(shape.get("action_family") or "approval").lower()
-    destination = str(shape.get("destination") or "").lower()
-    tool_name = str(shape.get("tool_name") or "").lower()
-
-    if action_family == "mcp_write" and destination.startswith("mcp:"):
-        service = destination.split(":", 1)[1].split(".", 1)[0]
-        return _approval_code_slug(f"{service}-write")
-    if action_family == "terminal_exec":
-        detail = str(shape.get("action_detail") or "").lower()
-        if "curl" in detail:
-            host = ""
-            match = re.search(r"https?://([^/\s\"']+)", detail)
-            if match:
-                host_parts = match.group(1).split(":")[0].split(".")
-                host = host_parts[-2] if len(host_parts) > 1 else host_parts[0]
-            return _approval_code_slug(f"{host}-curl" if host else "terminal-curl")
-        return "terminal-run"
-    if action_family.startswith("browser_"):
-        return _approval_code_slug(action_family.replace("_", "-"))
-    if action_family == "message_send":
-        return "message-send"
-    if action_family == "web_api":
-        return "web-request"
-    if action_family == "model_api":
-        return "model-call"
-    if action_family:
-        return _approval_code_slug(action_family.replace("_", "-"))
-    return _approval_code_slug(tool_name.replace("_", "-")) or "approval"
-
-
-def _llm_approval_slug(shape: dict[str, Any]) -> str:
-    llm = _PLUGIN_LLM
-    if llm is None or not hasattr(llm, "complete_structured"):
-        return ""
-    try:
-        result = llm.complete_structured(
-            instructions=_LLM_APPROVAL_CODE_INSTRUCTIONS,
-            input=[{
-                "type": "text",
-                "text": json.dumps(_approval_code_input(shape), sort_keys=True),
-            }],
-            json_schema=_LLM_APPROVAL_CODE_SCHEMA,
-            temperature=0,
-            max_tokens=80,
-            timeout=10,
-            purpose="hermes-guardian.approval_code",
-            schema_name="hermes_guardian_approval_code",
-        )
-        parsed = getattr(result, "parsed", None)
-        if parsed is None and getattr(result, "text", ""):
-            parsed = json.loads(str(result.text))
-        if not isinstance(parsed, dict):
-            return ""
-        return _approval_code_slug(str(parsed.get("code") or ""))
-    except Exception as exc:
-        logger.warning("%s: LLM approval code generation fell back: %s", _PLUGIN_NAME, exc)
-        return ""
-
-

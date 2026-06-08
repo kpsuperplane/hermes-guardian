@@ -1,4 +1,4 @@
-"""Modularized guardian runtime module."""
+"""SQLite activity persistence and retention management."""
 
 from __future__ import annotations
 
@@ -77,6 +77,40 @@ def _ensure_activity_db() -> None:
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_decision_idx ON activity(decision)")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_action_idx ON activity(action_family)")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_destination_idx ON activity(destination)")
+                conn.execute("CREATE INDEX IF NOT EXISTS activity_approval_idx ON activity(approval_id)")
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS pending_approvals (
+                        id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        owner_hash TEXT NOT NULL,
+                        tool_name TEXT NOT NULL,
+                        action_family TEXT NOT NULL,
+                        destination TEXT NOT NULL,
+                        data_classes TEXT NOT NULL,
+                        action_detail TEXT NOT NULL,
+                        fingerprint TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        expires_at INTEGER NOT NULL,
+                        cron_job_id TEXT NOT NULL DEFAULT '',
+                        cron_job_name TEXT NOT NULL DEFAULT '',
+                        reason TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+                )
+                pending_columns = {
+                    str(row["name"])
+                    for row in conn.execute("PRAGMA table_info(pending_approvals)").fetchall()
+                }
+                if "cron_job_id" not in pending_columns:
+                    conn.execute("ALTER TABLE pending_approvals ADD COLUMN cron_job_id TEXT NOT NULL DEFAULT ''")
+                if "cron_job_name" not in pending_columns:
+                    conn.execute("ALTER TABLE pending_approvals ADD COLUMN cron_job_name TEXT NOT NULL DEFAULT ''")
+                if "reason" not in pending_columns:
+                    conn.execute("ALTER TABLE pending_approvals ADD COLUMN reason TEXT NOT NULL DEFAULT ''")
+                conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_session_idx ON pending_approvals(session_id)")
+                conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_expires_idx ON pending_approvals(expires_at)")
+                conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_cron_job_idx ON pending_approvals(cron_job_id)")
             _ACTIVITY_DB_INITIALIZED = True
         except Exception as exc:
             logger.debug("%s: failed to initialize activity db: %s", _PLUGIN_NAME, exc)
@@ -176,5 +210,3 @@ def _prune_activity_db(*, force: bool = False) -> dict[str, int]:
     except Exception as exc:
         logger.debug("%s: failed to prune activity db: %s", _PLUGIN_NAME, exc)
     return {"deleted": int(deleted or 0), "remaining": remaining}
-
-

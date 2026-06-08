@@ -1,25 +1,10 @@
-"""Modularized guardian runtime module."""
+"""Activity query, filtering, grouping, and DataTables row shaping."""
 
 from __future__ import annotations
 
 def _activity_rows(filters: dict[str, str], *, limit: int = 200) -> list[dict[str, Any]]:
     _ensure_activity_db()
-    clauses: list[str] = []
-    params: list[Any] = []
-    for key in ("decision", "action_family", "destination", "tool_name", "mode", "session_hash"):
-        value = str(filters.get(key) or "").strip()
-        if not value:
-            continue
-        if key in {"destination", "tool_name"}:
-            clauses.append(f"{key} LIKE ?")
-            params.append(f"%{value}%")
-        else:
-            clauses.append(f"{key} = ?")
-            params.append(value)
-    data_class = str(filters.get("data_class") or "").strip()
-    if data_class:
-        clauses.append("data_classes LIKE ?")
-        params.append(f"%{data_class}%")
+    clauses, params = _activity_filter_clauses(filters)
     sql = "SELECT * FROM activity"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
@@ -30,28 +15,7 @@ def _activity_rows(filters: dict[str, str], *, limit: int = 200) -> list[dict[st
             rows = conn.execute(sql, params).fetchall()
     except Exception:
         return []
-    return [
-        {
-            "id": row["id"],
-            "ts": row["ts"],
-            "decision": row["decision"],
-            "mode": row["mode"],
-            "privacy_policy": row["mode"],
-            "session_label": row["session_label"],
-            "session_hash": row["session_hash"],
-            "owner_hash": row["owner_hash"],
-            "tool_name": row["tool_name"],
-            "action_family": row["action_family"],
-            "destination": row["destination"],
-            "data_classes": row["data_classes"],
-            "reason": row["reason"],
-            "approval_id": row["approval_id"],
-            "rule_id": row["rule_id"],
-            "rule_source": row["rule_source"],
-            "action_detail": row["action_detail"],
-        }
-        for row in rows
-    ]
+    return [_activity_row_from_sql(row) for row in rows]
 
 
 _DATATABLES_SORT_COLUMNS = {
@@ -96,6 +60,14 @@ def _activity_filter_clauses(filters: dict[str, str]) -> tuple[list[str], list[A
         else:
             clauses.append(f"{key} = ?")
             params.append(value)
+    decisions = [
+        decision.strip()
+        for decision in str(filters.get("decisions") or "").split(",")
+        if decision.strip() in _ACTIVITY_DECISIONS
+    ]
+    if decisions:
+        clauses.append("decision IN (" + ",".join("?" for _ in decisions) + ")")
+        params.extend(decisions)
     data_class = str(filters.get("data_class") or "").strip()
     if data_class:
         clauses.append("data_classes LIKE ?")
@@ -326,17 +298,36 @@ def _policy_snapshot() -> dict[str, Any]:
             }
             for sid, state in _SESSIONS.items()
         ]
-        pending = [
-            {
-                "id": approval.get("id"),
-                "session_label": _safe_session_label(approval.get("session_id")),
-                "action_family": approval.get("action_family"),
-                "destination": approval.get("destination"),
-                "data_classes": sorted(approval.get("data_classes") or []),
-                "expires_at": approval.get("expires_at"),
-            }
-            for approval in _PENDING_APPROVALS.values()
-        ]
+        pending = sorted(
+            [
+                {
+                    "id": approval.get("id"),
+                    "session_label": _safe_session_label(approval.get("session_id")),
+                    "session_hash": _short_hash(approval.get("session_id")),
+                    "tool_name": approval.get("tool_name"),
+                    "action_family": approval.get("action_family"),
+                    "destination": approval.get("destination"),
+                    "data_classes": sorted(approval.get("data_classes") or []),
+                    "action_detail": approval.get("action_detail", ""),
+                    "reason": approval.get("reason", ""),
+                    "created_at": int(float(approval.get("created_at") or 0)),
+                    "expires_at": int(float(approval.get("expires_at") or 0)),
+                    "cron_job_id": str(approval.get("cron_job_id") or ""),
+                    "cron_job_name": str(approval.get("cron_job_name") or ""),
+                    "scope": _rule_scope_label(
+                        {
+                            "cron_job_id": str(approval.get("cron_job_id") or ""),
+                            "cron_job_name": str(approval.get("cron_job_name") or ""),
+                        }
+                    )
+                    if str(approval.get("cron_job_id") or "")
+                    else "",
+                }
+                for approval in _PENDING_APPROVALS.values()
+            ],
+            key=lambda item: int(item.get("created_at") or 0),
+            reverse=True,
+        )
         rules = _configured_allow_rules() + _load_persistent_rules().get("rules", [])
     return {
         "privacy_policy": _privacy_policy(),
@@ -347,6 +338,7 @@ def _policy_snapshot() -> dict[str, Any]:
         "activity_group_seconds": _activity_group_seconds(),
         "sessions": sessions,
         "pending": pending,
+        "recent_blocks": pending[:5],
         "rules": [
             {
                 "rule_id": rule.get("rule_id", ""),
@@ -354,6 +346,9 @@ def _policy_snapshot() -> dict[str, Any]:
                 "action_family": rule.get("action_family", ""),
                 "destination": rule.get("destination", ""),
                 "data_classes": sorted(rule.get("data_classes") or []),
+                "scope": _rule_scope_label(rule),
+                "cron_job_id": str(rule.get("cron_job_id") or ""),
+                "cron_job_name": str(rule.get("cron_job_name") or ""),
             }
             for rule in rules
         ],

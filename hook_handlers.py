@@ -1,4 +1,4 @@
-"""Modularized guardian runtime module."""
+"""Hermes hook implementations for security filtering and egress policy."""
 
 from __future__ import annotations
 
@@ -25,6 +25,12 @@ def _security_block_for_tool_call(tool_name: str, args: Any, session_id: str | N
         tool_name=tool_name,
         reason=reason,
         action_detail=_activity_action_detail(tool_name, args),
+    )
+    _notify_cron_failure_if_needed(
+        session_id=session_id,
+        tool_name=tool_name,
+        decision="security_blocked",
+        reason=reason,
     )
     return {"action": "block", "message": _block_message(reason)}
 
@@ -200,6 +206,15 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
             reason=hard_reason,
             action_detail=shape.get("action_detail", ""),
         )
+        _notify_cron_failure_if_needed(
+            session_id=shape.get("session_id", ""),
+            tool_name=tool_name,
+            decision="security_blocked",
+            action_family=shape.get("action_family", ""),
+            destination=shape.get("destination", ""),
+            data_classes=set(shape.get("data_classes") or []),
+            reason=hard_reason,
+        )
         return {"action": "block", "message": _block_message(hard_reason)}, None
 
     verdict = _llm_security_verdict(shape, args)
@@ -245,6 +260,8 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
 
 def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_reason: str) -> dict[str, str]:
     approval = _create_pending_approval(shape)
+    approval["reason"] = blocked_reason
+    _save_pending_approval_to_store_unlocked(approval)
     logger.info(
         "%s: blocked Hermes Guardian %s to %s for session %s",
         _PLUGIN_NAME,
@@ -263,6 +280,16 @@ def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_r
         reason=blocked_reason,
         approval_id=approval.get("id", ""),
         action_detail=shape.get("action_detail", ""),
+    )
+    _notify_cron_failure_if_needed(
+        session_id=shape.get("session_id", ""),
+        tool_name=tool_name,
+        decision="blocked",
+        action_family=shape.get("action_family", ""),
+        destination=shape.get("destination", ""),
+        data_classes=set(shape.get("data_classes") or []),
+        reason=blocked_reason,
+        approval_id=approval.get("id", ""),
     )
     return {"action": "block", "message": _guardian_block_message(approval)}
 
@@ -463,17 +490,21 @@ def _on_transform_llm_output(response_text: str = "", **_: Any) -> str | None:
         response_text,
         hide_subjectless_email_records=hide_subjectless,
     )
-    if not suppressed or not scrubbed_text.strip() or scrubbed_text == response_text:
+    if not suppressed or scrubbed_text == response_text:
         return None
 
     _log_unsafe_diagnostic("transform_llm_output", response_text)
     logger.info("%s: suppressed %d sensitive final response record(s)", _PLUGIN_NAME, suppressed)
     _emit_activity("security_suppressed", tool_name="llm_output", reason=reason or "security-sensitive response")
+    if not scrubbed_text.strip():
+        return (
+            "[hermes-guardian omitted "
+            + str(suppressed)
+            + " security-sensitive email record(s).]"
+        )
     return (
         scrubbed_text.rstrip()
         + "\n\n[hermes-guardian omitted "
         + str(suppressed)
         + " security-sensitive email record(s).]"
     )
-
-

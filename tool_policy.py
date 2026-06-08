@@ -1,4 +1,4 @@
-"""Modularized guardian runtime module."""
+"""Session taint tracking and deterministic tool action classification."""
 
 from __future__ import annotations
 
@@ -428,5 +428,4 @@ def _safe_destination_from_args(args: Any, *, default: str) -> str:
                 normalized = re.sub(r"[^A-Za-z0-9_.:@-]+", "_", value.strip())[:80]
                 return normalized or default
     return default
-
 

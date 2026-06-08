@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import html
 import json
 import logging
 import re
+import sqlite3
+import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +22,11 @@ def clear_guardian_env(monkeypatch):
     monkeypatch.delenv("HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_HISTORY_TIMEZONE", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_UNSAFE_DIAGNOSTICS", raising=False)
+    monkeypatch.delenv("HERMES_GUARDIAN_CRON_NOTIFY_TO", raising=False)
+    monkeypatch.delenv("HERMES_GUARDIAN_HERMES_CLI", raising=False)
+    monkeypatch.delenv("TELEGRAM_ALLOWED_USERS", raising=False)
+    monkeypatch.delenv("TELEGRAM_GROUP_ALLOWED_USERS", raising=False)
+    monkeypatch.delenv("DISCORD_ALLOWED_USERS", raising=False)
 
 
 def load_plugin():
@@ -27,7 +36,9 @@ def load_plugin():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     module._PERSISTENT_RULES_PATH = Path("/tmp/hermes-guardian-test-rules.json")
+    module._PERSISTENT_RULES_PATH.unlink(missing_ok=True)
     module._PERSISTENT_RULES_CACHE = {"rules": []}
+    module._PERSISTENT_RULES_MTIME = None
     module._PERSISTENT_RULES_ERROR = False
     module._ACTIVITY_DB_PATH = Path(f"/tmp/hermes-guardian-test-activity-{id(module)}.sqlite3")
     for path in [module._ACTIVITY_DB_PATH, module._ACTIVITY_DB_PATH.with_suffix(".sqlite3-wal"), module._ACTIVITY_DB_PATH.with_suffix(".sqlite3-shm")]:
@@ -68,6 +79,15 @@ class FakeSecurityLlm:
 def first_pending_id(plugin):
     assert plugin._PENDING_APPROVALS
     return next(iter(plugin._PENDING_APPROVALS))
+
+
+def wait_for(predicate, *, timeout: float = 1.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
 
 
 def test_sensitive_reason_detects_core_security_flows():
@@ -225,6 +245,27 @@ def test_transform_tool_result_removes_sensitive_plain_text_records():
     assert parsed["result"] == "From: Kevin Pei\nSubject: Hello\nBody: How are you?"
     assert parsed["hermes_guardian"]["suppressed_count"] == 2
     assert parsed["hermes_guardian"]["reason"] == "security key change"
+
+
+def test_transform_tool_result_does_not_leak_when_all_plain_text_records_are_sensitive():
+    plugin = load_plugin()
+
+    transformed = plugin._on_transform_tool_result(
+        tool_name="gmail",
+        result=(
+            "From: GitHub\n"
+            "Subject: A new public key was added\n\n"
+            "From: Example\n"
+            "Subject: Your verification code is 123456\n"
+        ),
+    )
+
+    parsed = parse_json(transformed)
+    encoded = json.dumps(parsed)
+    assert parsed["result"] == "[suppressed by hermes-guardian]"
+    assert parsed["hermes_guardian"]["suppressed"] is True
+    assert "public key was added" not in encoded
+    assert "123456" not in encoded
 
 
 def test_transform_tool_result_removes_sensitive_list_items_entirely():
@@ -912,7 +953,7 @@ def test_llm_privacy_denial_falls_back_to_manual_approval(monkeypatch):
     assert result is not None
     assert "Approval ID:" in result["message"]
     assert [call["purpose"] for call in fake_llm.calls].count("hermes-guardian.security_llm") == 1
-    assert [call["purpose"] for call in fake_llm.calls].count("hermes-guardian.approval_code") == 1
+    assert [call["purpose"] for call in fake_llm.calls].count("hermes-guardian.approval_code") == 0
     rows = plugin._activity_rows({}, limit=5)
     assert any("llm high" in row["reason"] for row in rows)
 
@@ -1089,6 +1130,28 @@ def test_terminal_action_detail_redacts_obvious_secret_values():
     assert "abc12345678901234567890" not in detail
     assert "token=secret" not in detail
     assert "https://example.com/hook" in detail
+
+
+def test_url_sanitizer_strips_userinfo_and_long_path_tokens():
+    plugin = load_plugin()
+
+    sanitized = plugin._sanitize_url_for_llm(
+        "https://user:password@example.com/reset/abcdefghijklmnopqrstuvwxyz123456?token=secret"
+    )
+    detail = plugin._activity_action_detail(
+        "webhook_post",
+        {
+            "url": "https://user:password@example.com/reset/abcdefghijklmnopqrstuvwxyz123456?token=secret",
+        },
+        "web_api",
+        "example.com",
+    )
+
+    assert sanitized == "https://example.com/reset/<token-like>"
+    assert detail == "request https://example.com/reset/<token-like>"
+    assert "user:password" not in sanitized
+    assert "abcdefghijklmnopqrstuvwxyz123456" not in detail
+    assert "token=secret" not in detail
 
 
 def test_web_api_with_personal_args_blocks_even_without_prior_taint():
@@ -1407,6 +1470,7 @@ def test_dashboard_html_uses_datatables_activity_table(monkeypatch):
     assert "textContent" in html
     assert "activity-card allowed" not in html
     assert "mcp_notion_update_page" not in html
+    assert "Tracked Sessions" not in html
     assert "Time UTC" not in html
 
 
@@ -1421,6 +1485,162 @@ def test_dashboard_html_compacts_all_class_allowlist(monkeypatch):
     assert "all data classes" in dashboard_html
     assert "env_4169deb2" not in dashboard_html
     assert "browser_private_input,calendar,contacts,documents,email,local_system,memory" not in dashboard_html
+
+
+def test_dashboard_html_shows_cron_rule_scope(tmp_path):
+    plugin = load_plugin()
+    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin._PERSISTENT_RULES_CACHE = None
+    plugin._CORE._cron_job_name = lambda job_id: "Ritz-Carlton AX 2026 availability check" if job_id == "41c2974734f8" else ""
+    plugin._save_persistent_rules({
+        "rules": [
+            {
+                "rule_id": "rule_test",
+                "owner_hash": "*",
+                "action_family": "browser_type",
+                "destination": "www.google.com",
+                "data_classes": ["email"],
+                "cron_job_id": "41c2974734f8",
+                "cron_job_name": "Ritz-Carlton AX 2026 availability check",
+                "created_at": 0,
+            }
+        ]
+    })
+
+    dashboard_html = plugin._dashboard_html()
+
+    assert "browser_type -> www.google.com" in dashboard_html
+    assert "cron job Ritz-Carlton AX 2026 availability check (41c2974734f8)" in dashboard_html
+
+
+def test_dashboard_html_shows_delete_button_for_persistent_rules(tmp_path):
+    plugin = load_plugin()
+    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin._PERSISTENT_RULES_CACHE = None
+    plugin._save_persistent_rules({
+        "rules": [
+            {
+                "rule_id": "rule_delete_me",
+                "owner_hash": "cli",
+                "action_family": "message_send",
+                "destination": "friend",
+                "data_classes": ["email"],
+                "created_at": 0,
+            }
+        ]
+    })
+
+    dashboard_html = plugin._dashboard_html()
+
+    assert 'id="rules-list"' in dashboard_html
+    assert 'data-rule-delete' in dashboard_html
+    assert 'data-rule-id="rule_delete_me"' in dashboard_html
+    assert "/api/rules/" in dashboard_html
+
+
+def test_dashboard_rule_delete_action_removes_persistent_rule(tmp_path):
+    plugin = load_plugin()
+    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin._PERSISTENT_RULES_CACHE = None
+    plugin._save_persistent_rules({
+        "rules": [
+            {
+                "rule_id": "rule_delete_me",
+                "owner_hash": "cli",
+                "action_family": "message_send",
+                "destination": "friend",
+                "data_classes": ["email"],
+                "created_at": 0,
+            },
+            {
+                "rule_id": "rule_keep",
+                "owner_hash": "cli",
+                "action_family": "browser_type",
+                "destination": "www.google.com",
+                "data_classes": ["email"],
+                "created_at": 0,
+            },
+        ]
+    })
+
+    payload, status = plugin._dashboard_rule_delete_action("rule_delete_me")
+
+    assert status == 200
+    assert payload["ok"] is True
+    assert "Deleted persistent guardian rule rule_delete_me" in payload["message"]
+    data = json.loads((tmp_path / "rules.json").read_text())
+    assert [rule["rule_id"] for rule in data["rules"]] == ["rule_keep"]
+    assert [rule["rule_id"] for rule in payload["policy"]["rules"]] == ["rule_keep"]
+
+
+def test_policy_snapshot_includes_five_recent_unresolved_blocks(monkeypatch):
+    plugin = load_plugin()
+    now = {"value": 1000}
+    monkeypatch.setattr(plugin, "_now", lambda: now["value"])
+    approval_ids = []
+
+    for index in range(6):
+        session_id = f"s{index}"
+        bind_owner(plugin, session_id=session_id)
+        plugin._taint_session(session_id, {"email"})
+        before = set(plugin._PENDING_APPROVALS)
+        now["value"] = 1000 + index
+        plugin._on_pre_tool_call("send_message", {"to": f"friend-{index}", "text": "hello"}, session_id=session_id)
+        new_ids = set(plugin._PENDING_APPROVALS) - before
+        assert len(new_ids) == 1
+        approval_ids.append(new_ids.pop())
+
+    policy = plugin._policy_snapshot()
+
+    assert len(policy["recent_blocks"]) == 5
+    assert [block["id"] for block in policy["recent_blocks"]] == list(reversed(approval_ids[1:]))
+    assert policy["recent_blocks"][0]["reason"].startswith("requires approval")
+    assert policy["recent_blocks"][0]["action_family"] == "message_send"
+
+
+def test_dashboard_html_shows_recent_pending_blocks_with_actions():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
+    approval_id = first_pending_id(plugin)
+    dashboard_html = plugin._dashboard_html()
+
+    assert "Recent Blocks" in dashboard_html
+    assert f"<code>{approval_id}</code>" in dashboard_html
+    assert "message_send -&gt; friend" in dashboard_html
+    assert "requires approval" in dashboard_html
+    assert 'data-approval-action="approve-once"' in dashboard_html
+    assert 'data-approval-action="approve-always"' in dashboard_html
+    assert 'data-approval-action="dismiss"' in dashboard_html
+
+
+def test_dashboard_approval_actions_remove_pending_blocks():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
+    approval_id = first_pending_id(plugin)
+
+    payload, status = plugin._dashboard_approval_action(approval_id, "approve", "once")
+
+    assert status == 200
+    assert payload["ok"] is True
+    assert approval_id not in plugin._PENDING_APPROVALS
+    assert payload["policy"]["recent_blocks"] == []
+
+    bind_owner(plugin, session_id="s2")
+    plugin._taint_session("s2", {"email"})
+    plugin._on_pre_tool_call("send_message", {"to": "other-friend", "text": "hello"}, session_id="s2")
+    approval_id = first_pending_id(plugin)
+
+    payload, status = plugin._dashboard_approval_action(approval_id, "dismiss")
+
+    assert status == 200
+    assert payload["ok"] is True
+    assert approval_id not in plugin._PENDING_APPROVALS
+    assert payload["policy"]["recent_blocks"] == []
 
 
 def test_datatables_payload_labels_terminal_taint_as_result():
@@ -1761,6 +1981,147 @@ def test_guardian_history_command_empty_and_limit_handling():
     assert response.count("\nBlocked: test") == 25
 
 
+def test_guardian_dashboard_is_not_a_chat_command():
+    plugin = load_plugin()
+
+    help_text = plugin._handle_guardian_command("help")
+    assert "dashboard" not in help_text
+    assert plugin._handle_guardian_command("dashboard status") == "Invalid /guardian command. Try /guardian help."
+
+
+def test_guardian_cli_dashboard_command_routes_to_dashboard_action(monkeypatch, capsys):
+    plugin = load_plugin()
+    monkeypatch.setattr(plugin._CORE, "_dashboard_status", lambda: "dashboard status ok")
+    parser = argparse.ArgumentParser(prog="hermes guardian")
+
+    plugin._guardian_cli_setup(parser)
+    args = parser.parse_args(["dashboard", "status"])
+    args.func(args)
+
+    assert capsys.readouterr().out.strip() == "dashboard status ok"
+
+
+def test_guardian_rule_delete_slash_alias_removes_persistent_rule(tmp_path):
+    plugin = load_plugin()
+    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin._PERSISTENT_RULES_CACHE = None
+    plugin._save_persistent_rules({
+        "rules": [
+            {
+                "rule_id": "rule_delete_me",
+                "owner_hash": "cli",
+                "action_family": "message_send",
+                "destination": "friend",
+                "data_classes": ["email"],
+                "created_at": 0,
+            },
+            {
+                "rule_id": "rule_keep",
+                "owner_hash": "cli",
+                "action_family": "browser_type",
+                "destination": "www.google.com",
+                "data_classes": ["email"],
+                "created_at": 0,
+            },
+        ]
+    })
+
+    response = plugin._handle_guardian_command("rule delete rule_delete_me")
+
+    assert response == "Deleted persistent guardian rule rule_delete_me."
+    data = json.loads((tmp_path / "rules.json").read_text())
+    assert [rule["rule_id"] for rule in data["rules"]] == ["rule_keep"]
+
+
+def test_guardian_failures_command_lists_only_failed_command_activity():
+    plugin = load_plugin()
+
+    plugin._emit_activity(
+        "allowed",
+        session_id="s1",
+        tool_name="terminal",
+        action_family="terminal_exec",
+        destination="terminal",
+        reason="no private data in scope",
+    )
+    plugin._emit_activity(
+        "blocked",
+        session_id="s1",
+        tool_name="send_message",
+        action_family="message_send",
+        destination="friend",
+        data_classes={"email"},
+        reason="requires approval",
+        approval_id="peg_test",
+    )
+    plugin._emit_activity(
+        "security_suppressed",
+        session_id="s1",
+        tool_name="gmail",
+        reason="security-sensitive content",
+    )
+    plugin._emit_activity(
+        "denied",
+        session_id="s1",
+        tool_name="browser_type",
+        action_family="browser_type",
+        destination="example.com",
+        data_classes={"contacts"},
+        reason="manual denial",
+    )
+    plugin._emit_activity(
+        "security_blocked",
+        session_id="s1",
+        tool_name="terminal",
+        action_family="terminal_exec",
+        destination="terminal",
+        reason="auth code",
+    )
+
+    response = plugin._handle_guardian_command("failures")
+
+    assert "🛡️ **Guardian failures** · newest first · 3 shown" in response
+    assert "❌ **`terminal`**" in response
+    assert "Blocked: auth code" in response
+    assert "❌ **`browser_type`**" in response
+    assert "Denied: manual denial" in response
+    assert "❌ **`send_message`**" in response
+    assert "Blocked: requires approval (`peg_test`)" in response
+    assert "✅ **`terminal`**" not in response
+    assert "gmail" not in response
+
+
+def test_guardian_failures_command_alias_empty_and_limit_handling():
+    plugin = load_plugin()
+
+    assert plugin._handle_guardian_command("failures") == "No guardian failure history yet."
+    assert plugin._handle_guardian_command("failed nope") == "Usage: /guardian failed [limit]"
+
+    plugin._emit_activity(
+        "blocked",
+        session_id="s1",
+        tool_name="send_message",
+        action_family="message_send",
+        destination="friend",
+        data_classes={"email"},
+        reason="requires approval",
+    )
+    plugin._emit_activity(
+        "blocked",
+        session_id="s2",
+        tool_name="browser_type",
+        action_family="browser_type",
+        destination="example.com",
+        data_classes={"contacts"},
+        reason="requires approval",
+    )
+
+    response = plugin._handle_guardian_command("failed 1")
+
+    assert "🛡️ **Guardian failures** · newest first · 1 shown" in response
+    assert response.count("\n❌ **`") == 1
+
+
 def test_guardian_history_command_clarifies_legacy_private_source_reason():
     plugin = load_plugin()
 
@@ -1846,14 +2207,230 @@ def test_pending_approval_id_is_contextual_without_llm():
     assert blocked is not None
     approval_id = first_pending_id(plugin)
 
-    assert re.fullmatch(r"message-send-\d{4}", approval_id)
+    assert re.fullmatch(r"\d{4}", approval_id)
     assert f"Approval ID: {approval_id}" in blocked["message"]
     assert f"/guardian approve {approval_id} once" in blocked["message"]
 
 
-def test_pending_approval_id_uses_llm_relevant_slug():
+def test_cron_block_sends_one_sanitized_home_channel_notification(monkeypatch):
     plugin = load_plugin()
-    plugin._PLUGIN_LLM = FakeSecurityLlm({"code": "cloudflare-curl"})
+    sent = []
+    cron_session = "cron_41c2974734f8_20260607_030107"
+
+    monkeypatch.setenv("HERMES_GUARDIAN_CRON_NOTIFY_TO", "telegram")
+    monkeypatch.setattr(plugin._CORE, "_cron_job_name", lambda _job_id: "Ritz-Carlton AX 2026 availability check")
+    monkeypatch.setattr(
+        plugin._CORE,
+        "_send_cron_notification_message",
+        lambda message, target: sent.append((message, target)),
+    )
+    bind_owner(plugin, session_id=cron_session)
+    plugin._taint_session(cron_session, {"email"})
+
+    first = plugin._on_pre_tool_call(
+        "send_message",
+        {"to": "friend", "text": "raw private sentence must not appear"},
+        session_id=cron_session,
+    )
+    second = plugin._on_pre_tool_call(
+        "browser_type",
+        {"text": "another raw private sentence"},
+        session_id=cron_session,
+    )
+
+    assert first is not None
+    assert second is not None
+    assert wait_for(lambda: len(sent) == 1)
+    message, target = sent[0]
+    assert target == "telegram"
+    assert "Hermes Guardian blocked a cron job action." in message
+    assert "Job: Ritz-Carlton AX 2026 availability check" in message
+    assert "Job ID: 41c2974734f8" in message
+    assert "Action: message_send" in message
+    assert "Destination: friend" in message
+    assert "Data classes: email" in message
+    assert "Approval ID:" not in message
+    assert "Decision:" not in message
+    assert "Approve future runs:" not in message
+    assert "Approve only this run:" not in message
+    assert re.search(r"(?m)^/guardian approve \d{4} always$", message)
+    assert " always" in message
+    assert " once" not in message
+    assert "Review: /guardian failures" not in message
+    assert "raw private sentence" not in message
+
+
+def test_cron_notification_defaults_to_job_delivery_targets(monkeypatch):
+    plugin = load_plugin()
+    sent = []
+    cron_session = "cron_41c2974734f8_20260607_030107"
+
+    monkeypatch.setattr(
+        plugin._CORE,
+        "_cron_job_record",
+        lambda _job_id: {
+            "id": "41c2974734f8",
+            "name": "Ritz-Carlton AX 2026 availability check",
+            "deliver": ["telegram:-1003947695146:75", "local"],
+        },
+    )
+    monkeypatch.setattr(
+        plugin._CORE,
+        "_send_cron_notification_message",
+        lambda message, target: sent.append((message, target)),
+    )
+    bind_owner(plugin, session_id=cron_session)
+    plugin._taint_session(cron_session, {"email"})
+
+    result = plugin._on_pre_tool_call(
+        "send_message",
+        {"to": "friend", "text": "hello"},
+        session_id=cron_session,
+    )
+
+    assert result is not None
+    assert wait_for(lambda: len(sent) == 1)
+    message, target = sent[0]
+    assert target == "telegram:-1003947695146:75"
+    assert "Job: Ritz-Carlton AX 2026 availability check" in message
+
+
+def test_cron_notification_uses_telegram_copy_button_sender(monkeypatch):
+    plugin = load_plugin()
+    sent = []
+
+    monkeypatch.setattr(
+        plugin._CORE,
+        "_send_telegram_cron_notification_message",
+        lambda message, target, approval_id: sent.append((message, target, approval_id)) or True,
+    )
+    monkeypatch.setattr(
+        plugin._CORE.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("telegram copy-button sender should avoid CLI fallback"),
+    )
+
+    plugin._send_cron_notification_message(
+        "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 always\n",
+        "telegram:-1003947695146:75",
+    )
+
+    assert sent == [(
+        "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 always\n",
+        "telegram:-1003947695146:75",
+        "/guardian approve 1234 always",
+    )]
+
+
+def test_cron_notification_telegram_copy_markup_has_one_approval_button(monkeypatch):
+    plugin = load_plugin()
+
+    class FakeCopyTextButton:
+        def __init__(self, text):
+            self.text = text
+
+    class FakeInlineKeyboardButton:
+        def __init__(self, text, copy_text=None):
+            self.text = text
+            self.copy_text = copy_text
+
+    class FakeInlineKeyboardMarkup:
+        def __init__(self, rows):
+            self.rows = rows
+
+    monkeypatch.setitem(
+        sys.modules,
+        "telegram",
+        SimpleNamespace(
+            CopyTextButton=FakeCopyTextButton,
+            InlineKeyboardButton=FakeInlineKeyboardButton,
+            InlineKeyboardMarkup=FakeInlineKeyboardMarkup,
+        ),
+    )
+
+    markup = plugin._telegram_copy_reply_markup("/guardian approve 1234 always")
+
+    assert len(markup.rows) == 1
+    assert len(markup.rows[0]) == 1
+    button = markup.rows[0][0]
+    assert button.text == "Copy approval"
+    assert button.copy_text.text == "/guardian approve 1234 always"
+
+
+def test_cron_notification_falls_back_to_cli_when_telegram_copy_sender_fails(monkeypatch):
+    plugin = load_plugin()
+    calls = []
+
+    monkeypatch.setattr(plugin._CORE, "_send_telegram_cron_notification_message", lambda *_args: False)
+    monkeypatch.setattr(
+        plugin._CORE.subprocess,
+        "run",
+        lambda command, **kwargs: calls.append((command, kwargs)),
+    )
+
+    plugin._send_cron_notification_message(
+        "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 always\n",
+        "telegram:-1003947695146:75",
+    )
+
+    assert calls
+    command, kwargs = calls[0]
+    assert command == [plugin._hermes_cli_path(), "send", "--to", "telegram:-1003947695146:75", "--quiet", "--file", "-"]
+    assert kwargs["input"] == "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 always\n"
+
+
+def test_cron_notification_can_be_disabled(monkeypatch):
+    plugin = load_plugin()
+    sent = []
+    cron_session = "cron_41c2974734f8_20260607_030107"
+
+    monkeypatch.setenv("HERMES_GUARDIAN_CRON_NOTIFY_TO", "off")
+    monkeypatch.setattr(
+        plugin._CORE,
+        "_send_cron_notification_message",
+        lambda message, target: sent.append((message, target)),
+    )
+    bind_owner(plugin, session_id=cron_session)
+    plugin._taint_session(cron_session, {"email"})
+
+    result = plugin._on_pre_tool_call(
+        "send_message",
+        {"to": "friend", "text": "hello"},
+        session_id=cron_session,
+    )
+
+    assert result is not None
+    time.sleep(0.05)
+    assert sent == []
+
+
+def test_non_cron_block_does_not_send_cron_notification(monkeypatch):
+    plugin = load_plugin()
+    sent = []
+
+    monkeypatch.setenv("HERMES_GUARDIAN_CRON_NOTIFY_TO", "telegram")
+    monkeypatch.setattr(
+        plugin._CORE,
+        "_send_cron_notification_message",
+        lambda message, target: sent.append((message, target)),
+    )
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+
+    result = plugin._on_pre_tool_call(
+        "send_message",
+        {"to": "friend", "text": "hello"},
+        session_id="s1",
+    )
+
+    assert result is not None
+    time.sleep(0.05)
+    assert sent == []
+
+
+def test_pending_approval_id_is_four_digit_even_with_llm_available():
+    plugin = load_plugin()
+    plugin._PLUGIN_LLM = FakeSecurityLlm({"code": "unused"})
     bind_owner(plugin)
     plugin._taint_session("s1", {"local_system"})
 
@@ -1865,13 +2442,13 @@ def test_pending_approval_id_uses_llm_relevant_slug():
     assert blocked is not None
     approval_id = first_pending_id(plugin)
 
-    assert re.fullmatch(r"cloudflare-curl-\d{4}", approval_id)
-    assert plugin._PLUGIN_LLM.calls[0]["purpose"] == "hermes-guardian.approval_code"
+    assert re.fullmatch(r"\d{4}", approval_id)
+    assert plugin._PLUGIN_LLM.calls == []
 
 
-def test_approval_code_llm_prompt_uses_sanitized_metadata():
+def test_approval_id_generation_does_not_call_llm_with_tool_metadata():
     plugin = load_plugin()
-    plugin._PLUGIN_LLM = FakeSecurityLlm({"code": "message-send"})
+    plugin._PLUGIN_LLM = FakeSecurityLlm({"code": "unused"})
     bind_owner(plugin)
     plugin._taint_session("s1", {"email"})
 
@@ -1881,12 +2458,10 @@ def test_approval_code_llm_prompt_uses_sanitized_metadata():
         session_id="s1",
     )
 
-    payload = json.dumps(plugin._PLUGIN_LLM.calls[0], sort_keys=True)
-    assert "personal body should not be sent" not in payload
-    assert "<message redacted>" in payload
+    assert plugin._PLUGIN_LLM.calls == []
 
 
-def test_approval_accepts_hyphenless_friendly_id():
+def test_approval_accepts_four_digit_id():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"email"})
@@ -1900,6 +2475,51 @@ def test_approval_accepts_hyphenless_friendly_id():
 
     assert "Approved message_send" in response
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
+
+
+def test_approval_id_generation_avoids_recent_four_digit_codes(monkeypatch):
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+    monkeypatch.setattr(plugin._CORE.secrets, "randbelow", lambda _limit: 1234)
+    plugin._emit_activity(
+        "blocked",
+        session_id="old",
+        tool_name="send_message",
+        action_family="message_send",
+        destination="friend",
+        data_classes={"email"},
+        reason="requires approval",
+        approval_id="1234",
+    )
+
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
+
+    assert first_pending_id(plugin) == "1235"
+
+
+def test_approval_id_generation_reuses_codes_after_seven_days(monkeypatch):
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+    monkeypatch.setattr(plugin._CORE.secrets, "randbelow", lambda _limit: 1234)
+    current_time = plugin._now()
+    monkeypatch.setattr(plugin, "_now", lambda: current_time - plugin._APPROVAL_ID_REUSE_SECONDS - 1)
+    plugin._emit_activity(
+        "blocked",
+        session_id="old",
+        tool_name="send_message",
+        action_family="message_send",
+        destination="friend",
+        data_classes={"email"},
+        reason="requires approval",
+        approval_id="1234",
+    )
+    monkeypatch.setattr(plugin, "_now", lambda: current_time)
+
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
+
+    assert first_pending_id(plugin) == "1234"
 
 
 def test_approval_session_allows_same_destination_only_same_session():
@@ -1941,6 +2561,22 @@ def test_approval_always_persists_narrow_rule(tmp_path):
     assert plugin._on_pre_tool_call("send_message", {"to": "attacker", "text": "retry"}, session_id="s1") is not None
 
 
+def test_approval_always_save_failure_keeps_pending_approval(monkeypatch):
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
+    approval_id = first_pending_id(plugin)
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always"))
+    monkeypatch.setattr(plugin._CORE, "_save_persistent_rules", lambda _data: False)
+
+    response = plugin._handle_guardian_command(f"approve {approval_id} always")
+
+    assert "Failed to save persistent guardian approval" in response
+    assert approval_id in plugin._PENDING_APPROVALS
+
+
 def test_deny_keeps_retry_blocked():
     plugin = load_plugin()
     bind_owner(plugin)
@@ -1956,6 +2592,109 @@ def test_deny_keeps_retry_blocked():
 
 def test_wrong_sender_cannot_approve():
     plugin = load_plugin()
+    bind_owner(plugin, user_id="kevin")
+    plugin._taint_session("s1", {"email"})
+
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
+    approval_id = first_pending_id(plugin)
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} once", user_id="attacker"))
+    response = plugin._handle_guardian_command(f"approve {approval_id} once")
+
+    assert "different user/session" in response
+    assert approval_id in plugin._PENDING_APPROVALS
+
+
+def test_configured_telegram_owner_can_approve_cron_approval(monkeypatch):
+    plugin = load_plugin()
+    cron_session = "cron_41c2974734f8_20260607_030107"
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "kevin")
+    plugin._on_pre_llm_call(session_id=cron_session, platform="cron", sender_id="scheduler")
+    plugin._taint_session(cron_session, {"email"})
+
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id=cron_session)
+    approval_id = first_pending_id(plugin)
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always", user_id="kevin"))
+    response = plugin._handle_guardian_command(f"approve {approval_id} always")
+
+    assert "Approved message_send" in response
+    assert approval_id not in plugin._PENDING_APPROVALS
+
+
+def test_cron_approval_can_be_approved_from_separate_process(monkeypatch, tmp_path):
+    activity_path = tmp_path / "activity.sqlite3"
+    rules_path = tmp_path / "rules.json"
+    creator = load_plugin()
+    creator._ACTIVITY_DB_PATH = activity_path
+    creator._ACTIVITY_DB_INITIALIZED = False
+    creator._PERSISTENT_RULES_PATH = rules_path
+    creator._PERSISTENT_RULES_CACHE = {"rules": []}
+    cron_session = "cron_41c2974734f8_20260607_030107"
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "kevin")
+    creator._on_pre_llm_call(session_id=cron_session, platform="cron", sender_id="scheduler")
+    creator._taint_session(cron_session, {"email"})
+
+    creator._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id=cron_session)
+    approval_id = first_pending_id(creator)
+
+    approver = load_plugin()
+    approver._ACTIVITY_DB_PATH = activity_path
+    approver._ACTIVITY_DB_INITIALIZED = False
+    approver._PERSISTENT_RULES_PATH = rules_path
+    approver._PERSISTENT_RULES_CACHE = {"rules": []}
+    approver._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always", user_id="kevin"))
+    response = approver._handle_guardian_command(f"approve {approval_id} always")
+
+    assert "Approved message_send" in response
+    assert approval_id not in approver._PENDING_APPROVALS
+    with sqlite3.connect(activity_path) as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM pending_approvals WHERE id = ?",
+            (approval_id,),
+        ).fetchone()[0]
+    assert count == 0
+    data = json.loads(rules_path.read_text())
+    assert data["rules"][0]["destination"] == "friend"
+
+
+def test_cron_always_approval_is_scoped_to_same_cron_job(monkeypatch, tmp_path):
+    plugin = load_plugin()
+    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin._PERSISTENT_RULES_CACHE = None
+    plugin._CORE._cron_job_name = lambda job_id: "Ritz-Carlton AX 2026 availability check" if job_id == "41c2974734f8" else ""
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "kevin")
+    first_run = "cron_41c2974734f8_20260607_030107"
+    second_run = "cron_41c2974734f8_20260607_090812"
+    other_job = "cron_993fbb2dc5a4_20260607_080012"
+    plugin._on_pre_llm_call(session_id=first_run, platform="cron", sender_id="scheduler")
+    plugin._taint_session(first_run, {"email"})
+
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id=first_run)
+    approval_id = first_pending_id(plugin)
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always", user_id="kevin"))
+    response = plugin._handle_guardian_command(f"approve {approval_id} always")
+
+    assert "always for cron job Ritz-Carlton AX 2026 availability check (41c2974734f8)" in response
+    data = json.loads((tmp_path / "rules.json").read_text())
+    assert data["rules"][0]["cron_job_id"] == "41c2974734f8"
+    assert data["rules"][0]["cron_job_name"] == "Ritz-Carlton AX 2026 availability check"
+    rules_text = plugin._handle_guardian_command("rules")
+    assert "scope=cron job Ritz-Carlton AX 2026 availability check (41c2974734f8)" in rules_text
+    policy = plugin._policy_snapshot()
+    assert policy["rules"][0]["cron_job_id"] == "41c2974734f8"
+    assert policy["rules"][0]["scope"] == "cron job Ritz-Carlton AX 2026 availability check (41c2974734f8)"
+
+    plugin._on_pre_llm_call(session_id=second_run, platform="cron", sender_id="scheduler")
+    plugin._taint_session(second_run, {"email"})
+    assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "retry"}, session_id=second_run) is None
+
+    plugin._on_pre_llm_call(session_id=other_job, platform="cron", sender_id="scheduler")
+    plugin._taint_session(other_job, {"email"})
+    assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "retry"}, session_id=other_job) is not None
+
+
+def test_configured_telegram_owner_exception_is_cron_only(monkeypatch):
+    plugin = load_plugin()
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "attacker")
     bind_owner(plugin, user_id="kevin")
     plugin._taint_session("s1", {"email"})
 
@@ -2026,6 +2765,26 @@ def test_transform_llm_output_removes_sensitive_email_rows_from_final_response()
     assert "hermes-guardian omitted 2 security-sensitive email record(s)" in transformed
 
 
+def test_transform_llm_output_omits_all_sensitive_rows_without_leaking_original_text():
+    plugin = load_plugin()
+
+    transformed = plugin._on_transform_llm_output(
+        response_text=(
+            "Loaded your inbox emails:\n\n"
+            "1. From: GitHub <noreply@github.com>\n"
+            "   Subject: A new SSH key was added\n"
+            "   ID: sensitive-a\n\n"
+            "2. From: Example <security@example.com>\n"
+            "   Subject: Your verification code is 123456\n"
+            "   ID: sensitive-b\n"
+        )
+    )
+
+    assert transformed == "[hermes-guardian omitted 2 security-sensitive email record(s).]"
+    assert "sensitive-a" not in transformed
+    assert "123456" not in transformed
+
+
 def test_register_wires_expected_hooks_and_command():
     plugin = load_plugin()
 
@@ -2033,6 +2792,7 @@ def test_register_wires_expected_hooks_and_command():
         def __init__(self):
             self.hooks = []
             self.commands = []
+            self.cli_commands = []
             self.llm = object()
 
         def register_hook(self, name, callback):
@@ -2040,6 +2800,9 @@ def test_register_wires_expected_hooks_and_command():
 
         def register_command(self, name, handler, description="", args_hint=""):
             self.commands.append((name, handler, description, args_hint))
+
+        def register_cli_command(self, name, help_text, setup_fn, handler_fn=None, description=""):
+            self.cli_commands.append((name, help_text, setup_fn, handler_fn, description))
 
     ctx = FakeContext()
     plugin.register(ctx)
@@ -2054,6 +2817,10 @@ def test_register_wires_expected_hooks_and_command():
         "on_session_end",
     ]
     assert ctx.commands[0][0] == "guardian"
+    assert "dashboard" not in ctx.commands[0][3]
+    assert ctx.cli_commands[0][0] == "guardian"
+    assert ctx.cli_commands[0][1] == "Manage Hermes Guardian"
+    assert ctx.cli_commands[0][3] is None
     assert plugin._PLUGIN_LLM is ctx.llm
 
 

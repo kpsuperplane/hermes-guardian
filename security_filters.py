@@ -1,4 +1,4 @@
-"""Modularized guardian runtime module."""
+"""Core-facing wrappers around reusable security scanning helpers."""
 
 from __future__ import annotations
 

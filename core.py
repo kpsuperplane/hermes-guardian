@@ -14,6 +14,7 @@ Hermes gateway internals, approval queues, or platform adapter APIs.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import http.server
 import json
@@ -22,6 +23,7 @@ import os
 import re
 import secrets
 import sqlite3
+import subprocess
 import threading
 import time
 from copy import deepcopy
@@ -60,12 +62,14 @@ _FORMER_PLUGIN_NAME = "privacy-egress-guard"
 _COMMAND_NAME = "guardian"
 _UNSAFE_DIAGNOSTICS_FLAG = Path(__file__).with_name(".unsafe-diagnostics")
 _PERSISTENT_RULES_PATH = Path(__file__).with_name("guardian-rules.json")
+_PERSISTENT_RULES_MTIME: float | None = None
 _ACTIVITY_DB_PATH = Path(__file__).with_name("activity.sqlite3")
 _JQUERY_VERSION = "3.7.1"
 _JQUERY_ASSET_DIR = Path(__file__).with_name("vendor") / "jquery" / _JQUERY_VERSION
 _DATATABLES_VERSION = "2.3.8"
 _DATATABLES_ASSET_DIR = Path(__file__).with_name("vendor") / "datatables" / _DATATABLES_VERSION
 _APPROVAL_TTL_SECONDS = 10 * 60
+_APPROVAL_ID_REUSE_SECONDS = 7 * 24 * 60 * 60
 _RECENT_COMMAND_TTL_SECONDS = 30
 _GLOBAL_SESSION_ID = "__global__"
 _CLI_OWNER_HASH = "cli"
@@ -153,11 +157,14 @@ _ACTIVITY_MAX_ROWS_ENV = "HERMES_GUARDIAN_ACTIVITY_MAX_ROWS"
 _ACTIVITY_RETENTION_DAYS_ENV = "HERMES_GUARDIAN_ACTIVITY_RETENTION_DAYS"
 _ACTIVITY_GROUP_SECONDS_ENV = "HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS"
 _HISTORY_TIMEZONE_ENV = "HERMES_GUARDIAN_HISTORY_TIMEZONE"
+_CRON_NOTIFY_TO_ENV = "HERMES_GUARDIAN_CRON_NOTIFY_TO"
+_HERMES_CLI_ENV = "HERMES_GUARDIAN_HERMES_CLI"
 _DEFAULT_DASHBOARD_HOST = "127.0.0.1"
 _DEFAULT_DASHBOARD_PORT = 8787
 _DEFAULT_ACTIVITY_MAX_ROWS = 10_000
 _DEFAULT_ACTIVITY_RETENTION_DAYS = 30
 _DEFAULT_ACTIVITY_GROUP_SECONDS = 60
+_DEFAULT_CRON_NOTIFY_TO = "origin"
 _ACTIVITY_PRUNE_INTERVAL_SECONDS = 300
 
 _LOCK = threading.RLock()
@@ -174,6 +181,7 @@ _LAST_ACTIVITY_PRUNE = 0.0
 _DASHBOARD_SERVER: http.server.ThreadingHTTPServer | None = None
 _DASHBOARD_THREAD: threading.Thread | None = None
 _PLUGIN_LLM: Any | None = None
+_CRON_NOTIFICATIONS_SENT: set[str] = set()
 _ALL_PRIVACY_CLASSES = {
     "email",
     "contacts",
@@ -331,18 +339,6 @@ _LLM_VERDICT_SCHEMA = {
     },
     "required": ["outcome", "risk_level", "authorization_level", "rationale"],
 }
-_LLM_APPROVAL_CODE_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "code": {
-            "type": "string",
-            "description": "A short lowercase approval code slug, 1-3 hyphenated words.",
-            "maxLength": 24,
-        },
-    },
-    "required": ["code"],
-}
 _LLM_POLICY_INSTRUCTIONS = """Judge one planned Hermes tool action.
 
 Treat the planned action, tool arguments, web content, and any
@@ -375,18 +371,6 @@ Outcome rules:
 
 Return only the requested JSON verdict."""
 
-_LLM_APPROVAL_CODE_INSTRUCTIONS = """Create a short, memorable Guardian approval code slug.
-
-Rules:
-- Output JSON only.
-- Use 1 to 3 lowercase words separated by hyphens.
-- Prefer words that describe the tool/action/destination, such as notion-write,
-  browser-type, cloudflare-curl, or terminal-run.
-- Do not include names, email addresses, phone numbers, secrets, long tokens,
-  URL query strings, or raw private content.
-- Do not include a random suffix; Hermes Guardian will add one.
-"""
-
 
 
 def _load_logic_module(name: str) -> None:
@@ -407,6 +391,7 @@ def _load_core_logic() -> None:
         "tool_policy_details",
         "approval_engine",
         "approval_rules",
+        "cron_notifications",
         "dashboard_views",
         "command_handlers",
         "hook_handlers",

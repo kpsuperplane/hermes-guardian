@@ -1,6 +1,9 @@
-"""Modularized guardian runtime module."""
+"""Slash-command handlers for Guardian status, approvals, rules, and history."""
 
 from __future__ import annotations
+
+_FAILURE_HISTORY_DECISIONS = ("blocked", "denied", "security_blocked")
+
 
 def _guardian_dashboard_command(tokens: list[str]) -> str:
     action = tokens[1].lower() if len(tokens) > 1 else "status"
@@ -18,22 +21,55 @@ def _guardian_dashboard_command(tokens: list[str]) -> str:
         return _dashboard_status()
     if action == "url":
         return _dashboard_url()
-    return "Usage: /guardian dashboard status|start|stop|url|prune"
+    return "Usage: hermes guardian dashboard status|start|stop|url|prune"
 
 
-def _guardian_history_command(tokens: list[str]) -> str:
+def _guardian_cli_setup(parser: Any) -> None:
+    subparsers = parser.add_subparsers(dest="guardian_command", required=True)
+    dashboard = subparsers.add_parser(
+        "dashboard",
+        help="Manage the Hermes Guardian dashboard",
+        description="Start, stop, inspect, or prune the Hermes Guardian dashboard.",
+    )
+    dashboard.add_argument(
+        "action",
+        nargs="?",
+        choices=["status", "start", "stop", "url", "prune"],
+        default="status",
+        help="Dashboard action to run",
+    )
+    dashboard.set_defaults(func=_guardian_cli_command)
+
+
+def _guardian_cli_command(args: Any) -> None:
+    command = getattr(args, "guardian_command", "")
+    if command == "dashboard":
+        action = getattr(args, "action", "status")
+        print(_guardian_dashboard_command(["dashboard", str(action)]))
+        return
+    print("Usage: hermes guardian dashboard [status|start|stop|url|prune]")
+
+
+def _guardian_history_command(
+    tokens: list[str],
+    *,
+    filters: dict[str, str] | None = None,
+    title: str = "Guardian history",
+    empty_message: str = "No guardian activity history yet.",
+) -> str:
     limit = 10
     if len(tokens) > 1:
         try:
             limit = int(tokens[1])
         except ValueError:
-            return "Usage: /guardian history [limit]"
+            command = tokens[0].lower() if tokens else "history"
+            return f"Usage: /guardian {command} [limit]"
     limit = max(1, min(limit, 25))
-    rows = _grouped_activity_rows({}, limit=limit)
+    rows = _grouped_activity_rows(filters or {}, limit=limit)
     if not rows:
-        return "No guardian activity history yet."
+        return empty_message
 
-    lines = [f"🛡️ **Guardian history** · newest first · {len(rows)} shown"]
+    lines = [f"🛡️ **{title}** · newest first · {len(rows)} shown"]
     for row in rows:
         timestamp = _activity_time_text(row)
         raw_decision = str(row.get("decision") or "").strip()
@@ -164,22 +200,28 @@ def _handle_guardian_command(raw_args: str = "") -> str:
         return (
             "Usage: /guardian status | /guardian approve <id> once|session|always | "
             "/guardian deny <id> | /guardian clear-taint | /guardian rules | "
-            "/guardian revoke <rule_id> | /guardian self-test | "
-            "/guardian dashboard status|start|stop|url|prune | "
-            "/guardian history [limit] | /guardian debug ..."
+            "/guardian rule delete <rule_id> | /guardian revoke <rule_id> | /guardian self-test | "
+            "/guardian history [limit] | /guardian failures [limit] | /guardian debug ..."
         )
 
     command = tokens[0].lower()
-    if command == "dashboard":
-        return _guardian_dashboard_command(tokens)
     if command == "history":
         return _guardian_history_command(tokens)
+    if command in {"failures", "failed"}:
+        return _guardian_history_command(
+            tokens,
+            filters={"decisions": ",".join(_FAILURE_HISTORY_DECISIONS)},
+            title="Guardian failures",
+            empty_message="No guardian failure history yet.",
+        )
     if command == "debug":
         return _guardian_debug_command(tokens)
     if command == "self-test":
         return _guardian_self_test()
     if command == "status":
         return _guardian_status(owner_hash)
+    if command in {"rule", "rules"} and len(tokens) == 3 and tokens[1].lower() in {"delete", "remove", "revoke"}:
+        return _guardian_delete_rule(owner_hash, tokens[2])
     if command == "rules":
         return _guardian_rules(owner_hash)
     if command == "clear-taint":
@@ -279,8 +321,10 @@ def _guardian_rules(owner_hash: str) -> str:
     lines = ["Hermes Guardian allow rules:"]
     for rule in rules:
         classes = ",".join(rule.get("data_classes") or [])
+        scope = _rule_scope_label(rule)
         lines.append(
-            f"- {rule['rule_id']}: {rule['action_family']} -> {rule['destination']} ({classes})"
+            f"- {rule['rule_id']}: {rule['action_family']} -> {rule['destination']} "
+            f"({classes}) scope={scope}"
         )
     return "\n".join(lines)
 
@@ -299,19 +343,15 @@ def _guardian_clear_taint(owner_hash: str) -> str:
 
 
 def _guardian_revoke(owner_hash: str, rule_id: str) -> str:
-    data = _load_persistent_rules()
-    rules = data.get("rules", [])
-    kept = [
-        rule
-        for rule in rules
-        if not (rule.get("rule_id") == rule_id and (rule.get("owner_hash") == owner_hash or owner_hash == _CLI_OWNER_HASH))
-    ]
-    if len(kept) == len(rules):
-        return f"No matching persistent rule found for {rule_id}."
-    new_data = {"rules": kept}
-    if not _save_persistent_rules(new_data):
-        return "Failed to revoke persistent guardian rule; Hermes Guardian remains fail-closed."
-    return f"Revoked persistent guardian rule {rule_id}."
+    ok, message, _removed = _delete_persistent_rule(owner_hash, rule_id)
+    if ok:
+        return f"Revoked persistent guardian rule {rule_id}."
+    return message
+
+
+def _guardian_delete_rule(owner_hash: str, rule_id: str) -> str:
+    ok, message, _removed = _delete_persistent_rule(owner_hash, rule_id)
+    return message
 
 
 def _guardian_deny(owner_hash: str, approval_id: str) -> str:
@@ -321,9 +361,10 @@ def _guardian_deny(owner_hash: str, approval_id: str) -> str:
         approval = _PENDING_APPROVALS.get(approval_id)
         if not approval:
             return f"No pending approval found for {requested_id}."
-        if approval.get("owner_hash") != owner_hash and owner_hash != _CLI_OWNER_HASH:
+        if not _approval_owner_allowed(owner_hash, approval):
             return "Approval denied: this request belongs to a different user/session."
         _PENDING_APPROVALS.pop(approval_id, None)
+        _delete_pending_approvals_from_store_unlocked([approval_id])
     _emit_activity(
         "denied",
         session_id=approval.get("session_id", ""),
@@ -349,9 +390,10 @@ def _guardian_approve(owner_hash: str, approval_id: str, scope: str) -> str:
         approval = _PENDING_APPROVALS.get(approval_id)
         if not approval:
             return f"No pending approval found for {requested_id}."
-        if approval.get("owner_hash") != owner_hash and owner_hash != _CLI_OWNER_HASH:
+        if not _approval_owner_allowed(owner_hash, approval):
             return "Approval denied: this request belongs to a different user/session."
         _PENDING_APPROVALS.pop(approval_id, None)
+        _delete_pending_approvals_from_store_unlocked([approval_id])
         rule = _rule_from_approval(approval, persistent=(scope == "always"))
         sid = approval["session_id"]
         if scope == "once":
@@ -363,6 +405,8 @@ def _guardian_approve(owner_hash: str, approval_id: str, scope: str) -> str:
             persistent_rule = rule
             data = {"rules": list(data.get("rules", [])) + [persistent_rule]}
             if not _save_persistent_rules(data):
+                _PENDING_APPROVALS[approval_id] = approval
+                _save_pending_approval_to_store_unlocked(approval)
                 return "Failed to save persistent guardian approval; Hermes Guardian remains blocked."
     _emit_activity(
         "manual_approved",
@@ -378,9 +422,10 @@ def _guardian_approve(owner_hash: str, approval_id: str, scope: str) -> str:
         rule_source=scope,
         action_detail=approval.get("action_detail", ""),
     )
+    scope_label = scope
+    if scope == "always":
+        scope_label = f"always for {_rule_scope_label(rule)}"
     return (
         f"Approved {approval['action_family']} -> {approval['destination']} "
-        f"for {', '.join(approval.get('data_classes') or ['private'])} ({scope})."
+        f"for {', '.join(approval.get('data_classes') or ['private'])} ({scope_label})."
     )
-
-

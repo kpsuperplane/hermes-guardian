@@ -185,7 +185,8 @@ Defaults:
 Set a retention value to `0` to disable that specific limit. Set
 `HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS=0` to disable display grouping.
 
-Grouping affects only the dashboard, `/api/activity`, and `/guardian history`.
+Grouping affects only the dashboard, `/api/activity`, `/guardian history`, and
+`/guardian failures`.
 The underlying audit rows remain exact until retention pruning deletes them.
 
 ### History Timezone
@@ -196,6 +197,37 @@ HERMES_GUARDIAN_HISTORY_TIMEZONE=America/Los_Angeles
 
 If unset, Hermes Guardian tries to read `timezone:` from `~/.hermes/config.yaml`.
 If neither is available, it uses the process local timezone.
+
+### Cron Failure Notifications
+
+```bash
+HERMES_GUARDIAN_CRON_NOTIFY_TO=origin
+HERMES_GUARDIAN_HERMES_CLI=/root/.local/bin/hermes
+```
+
+Defaults:
+
+- `HERMES_GUARDIAN_CRON_NOTIFY_TO=origin`
+- `HERMES_GUARDIAN_HERMES_CLI=/root/.local/bin/hermes`
+
+When Guardian blocks a command inside a cron session such as
+`cron_<job_id>_<timestamp>`, it sends one sanitized notification for that run
+using `hermes send --to <target>`. By default, `origin` means the cron job's
+own `deliver` target(s), so the warning goes to the same output channel as the
+job result. The target can also be any explicit `hermes send` target, for
+example `telegram`, `discord`, or `telegram:<chat_id>:<thread_id>`. Multiple
+explicit targets can be separated with semicolons or newlines.
+
+Set `HERMES_GUARDIAN_CRON_NOTIFY_TO=off` to disable these notifications.
+
+Notifications include safe metadata only: job name/id, action, destination,
+data classes, reason, and `/guardian approve <id> always` when an approval is
+available. Raw tool arguments and private content are not included.
+
+The notification text is the same on every delivery target. For Telegram,
+Guardian also adds one inline copy-text button for the approval command. If
+Telegram copy-button delivery is unavailable, Guardian falls back to the same
+plain `hermes send` notification used for other platforms.
 
 ### Unsafe Diagnostics
 
@@ -369,28 +401,26 @@ When egress is blocked, the model/user sees a message like:
 ```text
 Hermes Guardian blocked this egress.
 
-Approval ID: browser-type-4827
+Approval ID: 4827
 Action: browser_type
 Destination: example.com
 Action detail: browser_type to example.com
 Data classes: email, contacts
 
 Kevin can approve with:
-/guardian approve browser-type-4827 once
-/guardian approve browser-type-4827 session
-/guardian approve browser-type-4827 always
+/guardian approve 4827 once
+/guardian approve 4827 session
+/guardian approve 4827 always
 or deny with:
-/guardian deny browser-type-4827
+/guardian deny 4827
 ```
 
-Approval IDs use a short, request-relevant slug plus four random digits, so
-they are easier to understand and type on mobile. When Hermes exposes a plugin
-LLM interface, Guardian asks it to suggest the slug from sanitized action
-metadata only; otherwise it falls back to a local slug such as `message-send`,
-`notion-write`, `browser-type`, or `terminal-curl`. Hyphens are optional when
-approving or denying, so `/guardian approve browsertype4827 once` works too.
-IDs remain short-lived and scoped to the gateway sender identity captured for
-the session.
+Approval IDs are four-digit codes, so they are easy to type on mobile. Guardian
+avoids reusing codes that are pending or that appeared in activity during the
+last 7 days; older codes can be reused. IDs remain short-lived and scoped to
+the gateway sender identity captured for the session. Pending approvals are
+stored in Guardian's SQLite activity database so cron-created approvals can be
+resolved by gateway or CLI command handlers in another process.
 
 Approval scopes:
 
@@ -398,7 +428,11 @@ Approval scopes:
 - `session`: allow the same destination, action family, and data classes for
   the current session.
 - `always`: persist a narrow rule for the same destination, action family, and
-  data classes.
+  data classes. When approved from a cron run, the persistent rule is also
+  scoped to that cron job ID, so it can apply to future runs of the same job
+  without approving the same action for unrelated jobs or chat sessions.
+  Guardian displays the cron name when available and keeps the numeric job ID
+  beside it for unambiguous matching.
 
 There is no global "allow everything" approval.
 
@@ -416,12 +450,8 @@ Use these from a Hermes gateway interface:
 /guardian rules
 /guardian revoke <rule_id>
 /guardian self-test
-/guardian dashboard status
-/guardian dashboard start
-/guardian dashboard stop
-/guardian dashboard url
-/guardian dashboard prune
 /guardian history [limit]
+/guardian failures [limit]
 /guardian debug action=<family> destination=<dest> classes=<class+class> [tool=<tool_name>]
 ```
 
@@ -445,10 +475,14 @@ and recent activity. The activity feed uses a paginated DataTables view backed
 by server-side SQLite queries, so the browser does not render the whole activity
 database at once.
 
-Start it from the gateway:
+Manage it from the Hermes CLI:
 
-```text
-/guardian dashboard start
+```bash
+hermes guardian dashboard start
+hermes guardian dashboard status
+hermes guardian dashboard url
+hermes guardian dashboard stop
+hermes guardian dashboard prune
 ```
 
 Or run it as a standalone local service:
@@ -507,9 +541,13 @@ Recent sanitized activity can be checked from gateway interfaces:
 ```text
 /guardian history
 /guardian history 20
+/guardian failures
+/guardian failures 20
 ```
 
-History is capped at 25 grouped entries.
+History is capped at 25 grouped entries. `/guardian failures` is a shortcut for
+command-level failures: blocked calls, denied approvals, and security-blocked
+tool calls.
 
 Example:
 
@@ -582,6 +620,7 @@ HERMES_GUARDIAN_ACTIVITY_MAX_ROWS=10000
 HERMES_GUARDIAN_ACTIVITY_RETENTION_DAYS=30
 HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS=60
 HERMES_GUARDIAN_HISTORY_TIMEZONE=America/Los_Angeles
+HERMES_GUARDIAN_CRON_NOTIFY_TO=origin
 ```
 
 Expose the dashboard only behind an authenticated tunnel or other access

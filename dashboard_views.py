@@ -1,4 +1,4 @@
-"""Modularized guardian runtime module."""
+"""Dashboard HTTP handlers and presentation adapter functions."""
 
 from __future__ import annotations
 
@@ -105,6 +105,43 @@ def _dashboard_html() -> str:
         all_privacy_classes=_ALL_PRIVACY_CLASSES,
     )
 
+
+def _dashboard_approval_action(approval_id: str, action: str, scope: str = "") -> tuple[dict[str, Any], int]:
+    approval_id = str(approval_id or "").strip()
+    action = str(action or "").strip().lower()
+    scope = str(scope or "").strip().lower()
+    if not re.fullmatch(r"[0-9]{4}", approval_id):
+        return {"ok": False, "message": "Invalid approval id.", "policy": _policy_snapshot()}, 400
+    if action == "approve":
+        if scope not in {"once", "always"}:
+            return {"ok": False, "message": "Approval scope must be once or always.", "policy": _policy_snapshot()}, 400
+        message = _guardian_approve(_CLI_OWNER_HASH, approval_id, scope)
+        ok = message.startswith("Approved ")
+    elif action == "dismiss":
+        message = _guardian_deny(_CLI_OWNER_HASH, approval_id)
+        ok = message.startswith("Denied ")
+    else:
+        return {"ok": False, "message": "Unsupported approval action.", "policy": _policy_snapshot()}, 400
+    status = 200 if ok else (404 if message.startswith("No pending approval") else 400)
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
+
+
+def _dashboard_rule_delete_action(rule_id: str) -> tuple[dict[str, Any], int]:
+    global _PERSISTENT_RULES_CACHE
+    ok, message, _removed = _delete_persistent_rule(_CLI_OWNER_HASH, rule_id)
+    if ok:
+        current = _PERSISTENT_RULES_CACHE if isinstance(_PERSISTENT_RULES_CACHE, dict) else _load_persistent_rules()
+        _PERSISTENT_RULES_CACHE = {
+            "rules": [
+                rule
+                for rule in current.get("rules", [])
+                if rule.get("rule_id") != str(rule_id or "").strip()
+            ]
+        }
+    status = 200 if ok else (404 if message.startswith("No matching persistent rule") else 400)
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
+
+
 class _DashboardHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         logger.debug("%s dashboard: " + format, _PLUGIN_NAME, *args)
@@ -159,6 +196,20 @@ class _DashboardHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
         return True
 
+    def _read_json_body(self) -> dict[str, Any]:
+        try:
+            length = int(self.headers.get("Content-Length") or "0")
+        except ValueError:
+            length = 0
+        if length <= 0:
+            return {}
+        try:
+            payload = self.rfile.read(min(length, 8192))
+            parsed = json.loads(payload.decode("utf-8"))
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if self._send_asset(parsed.path):
@@ -187,6 +238,27 @@ class _DashboardHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json({"error": str(exc)}, status=400)
             return
         self._send_json({"error": "not found"}, status=404)
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        query = {key: vals[-1] for key, vals in parse_qs(parsed.query).items() if vals}
+        match = re.fullmatch(r"/api/approvals/([0-9]{4})/(approve|dismiss)", parsed.path)
+        if not match:
+            self._send_json({"error": "not found"}, status=404)
+            return
+        body = self._read_json_body()
+        scope = str(body.get("scope") or query.get("scope") or "")
+        payload, status = _dashboard_approval_action(match.group(1), match.group(2), scope)
+        self._send_json(payload, status=status)
+
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        match = re.fullmatch(r"/api/rules/([A-Za-z0-9_-]{1,80})", parsed.path)
+        if not match:
+            self._send_json({"error": "not found"}, status=404)
+            return
+        payload, status = _dashboard_rule_delete_action(match.group(1))
+        self._send_json(payload, status=status)
 
 
 def _dashboard_status() -> str:
@@ -231,5 +303,3 @@ def _dashboard_stop() -> str:
     if thread is not None:
         thread.join(timeout=2.0)
     return "Hermes Guardian dashboard stopped."
-
-

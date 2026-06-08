@@ -1,13 +1,16 @@
-"""Modularized guardian runtime module."""
+"""Session lifecycle hooks and plugin registration."""
 
 from __future__ import annotations
 
 def _on_session_reset(session_id: str = "", old_session_id: str = "", **_: Any) -> None:
     with _LOCK:
+        _load_pending_approvals_from_store_unlocked()
+        deleted_approval_ids: list[str] = []
         for sid in {_normalize_session_id(session_id), _normalize_session_id(old_session_id)}:
             _SESSIONS.pop(sid, None)
             _ONCE_APPROVALS.pop(sid, None)
             _SESSION_APPROVALS.pop(sid, None)
+            _CRON_NOTIFICATIONS_SENT.discard(sid)
         for owner, session_ids in list(_OWNER_SESSIONS.items()):
             session_ids.difference_update({_normalize_session_id(session_id), _normalize_session_id(old_session_id)})
             if not session_ids:
@@ -15,6 +18,8 @@ def _on_session_reset(session_id: str = "", old_session_id: str = "", **_: Any) 
         for approval_id, approval in list(_PENDING_APPROVALS.items()):
             if approval.get("session_id") in {_normalize_session_id(session_id), _normalize_session_id(old_session_id)}:
                 _PENDING_APPROVALS.pop(approval_id, None)
+                deleted_approval_ids.append(approval_id)
+        _delete_pending_approvals_from_store_unlocked(deleted_approval_ids)
 
 
 def _on_session_end(session_id: str = "", **_: Any) -> None:
@@ -42,5 +47,12 @@ def register(ctx) -> None:
             _COMMAND_NAME,
             _handle_guardian_command,
             description="Manage Hermes Guardian approvals",
-            args_hint="status|approve|deny|rules|revoke|clear-taint|dashboard|history|debug",
+            args_hint="status|approve|deny|rules|revoke|clear-taint|history|failures|debug",
+        )
+    if hasattr(ctx, "register_cli_command"):
+        ctx.register_cli_command(
+            "guardian",
+            "Manage Hermes Guardian",
+            _guardian_cli_setup,
+            description="Manage Hermes Guardian dashboard and local maintenance commands.",
         )
