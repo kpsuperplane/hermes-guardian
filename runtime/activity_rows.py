@@ -550,6 +550,7 @@ def _policy_snapshot() -> dict[str, Any]:
         "privacy_policy": _privacy_policy(),
         "privacy_mode": _privacy_policy(),
         "security_rules": _security_rules_snapshot(),
+        "language_packs": _language_packs_snapshot(),
         "activity_db": str(_ACTIVITY_DB_PATH),
         "activity_max_rows": _activity_max_rows(),
         "activity_retention_days": _activity_retention_days(),

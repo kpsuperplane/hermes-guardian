@@ -20,6 +20,8 @@ _GUARDIAN_HELP_LINES = [
     "/guardian privacy mode strict|read-only|llm|off",
     "/guardian security",
     "/guardian security enable|disable <rule_id>",
+    "/guardian language-packs",
+    "/guardian language-packs enable|disable <pack_id>",
     "/guardian history [limit]",
     "/guardian failures [limit]",
     "/guardian failed [limit] (alias)",
@@ -297,6 +299,8 @@ def _handle_guardian_command(raw_args: str = "") -> str:
         return _guardian_privacy_command(owner_hash, tokens)
     if command == "security":
         return _guardian_security_command(owner_hash, tokens)
+    if command in {"language-packs", "language-pack", "languages"}:
+        return _guardian_language_packs_command(owner_hash, tokens)
     if command == "rule":
         return _guardian_rule_command(owner_hash, tokens)
     if command in {"rule", "rules"} and len(tokens) == 3 and tokens[1].lower() in {"delete", "remove", "revoke"}:
@@ -342,6 +346,26 @@ def _guardian_security_command(owner_hash: str, tokens: list[str]) -> str:
         ok, message = _set_security_rule(tokens[2], enabled)
         return message
     return "Usage: /guardian security | /guardian security enable|disable <rule_id>"
+
+
+def _guardian_language_packs_command(owner_hash: str, tokens: list[str]) -> str:
+    if len(tokens) == 1:
+        lines = ["Hermes Guardian language packs"]
+        for pack in _language_packs_snapshot():
+            state = "enabled" if pack.get("enabled") else "disabled"
+            required = " required" if pack.get("required") else ""
+            lines.append(
+                f"- {pack['id']}: {state}{required} - {pack.get('name', '')}"
+            )
+        lines.append("Use /guardian language-packs enable|disable <pack_id>.")
+        return "\n".join(lines)
+    if len(tokens) == 3 and tokens[1].lower() in {"enable", "disable"}:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        enabled = tokens[1].lower() == "enable"
+        ok, message = _set_language_pack(tokens[2], enabled)
+        return message
+    return "Usage: /guardian language-packs | /guardian language-packs enable|disable <pack_id>"
 
 
 def _rule_add_usage() -> str:
@@ -487,10 +511,16 @@ def _guardian_status(owner_hash: str) -> str:
             for rule in _security_rules_snapshot()
             if not bool(rule.get("enabled"))
         ]
+        enabled_language_packs = [
+            pack
+            for pack in _language_packs_snapshot()
+            if bool(pack.get("enabled"))
+        ]
     lines = [
         "Hermes Guardian status",
         f"Privacy mode: {_privacy_policy()}",
         f"Security rules: {len(_SECURITY_RULE_IDS) - len(disabled_security)} enabled, {len(disabled_security)} disabled",
+        f"Language packs: {', '.join(pack.get('id', '') for pack in enabled_language_packs) or 'none'}",
         f"Taint classes: {', '.join(taint) if taint else 'none'}",
         f"Pending approvals: {len(pending)}",
         f"Privacy rules: {len(rules)}",

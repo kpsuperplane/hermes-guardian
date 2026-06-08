@@ -67,6 +67,19 @@ def _enabled_pack_ids(raw: str | None = None) -> tuple[str, ...]:
     return tuple(deduped or _DEFAULT_LANGUAGE_PACKS)
 
 
+def _available_language_packs() -> list[dict[str, Any]]:
+    packs: list[dict[str, Any]] = []
+    for pack_id in _ALL_PACK_IDS:
+        pack = _load_pack(pack_id)
+        packs.append({
+            "id": pack["id"],
+            "name": pack["name"],
+            "default_enabled": pack["id"] in _DEFAULT_LANGUAGE_PACKS,
+            "required": pack["id"] == "en",
+        })
+    return packs
+
+
 def _validate_string_list(value: Any, *, field: str, pack_id: str) -> list[str]:
     if not isinstance(value, list) or not value:
         raise ValueError(f"language pack {pack_id} field {field} must be a non-empty list")

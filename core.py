@@ -464,6 +464,10 @@ try:
     _security._set_security_rule_enabled_callback(_security_rule_enabled)
 except Exception as exc:
     logger.warning("%s: failed to wire security rule callback: %s", _PLUGIN_NAME, exc)
+try:
+    _apply_language_pack_config(_load_privacy_config())
+except Exception as exc:
+    logger.warning("%s: failed to apply language pack config: %s", _PLUGIN_NAME, exc)
 
 
 def register(ctx) -> None:

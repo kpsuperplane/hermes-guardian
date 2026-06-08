@@ -475,6 +475,16 @@
         });
     }
 
+    function patchLanguagePack(packId, enabled) {
+      return api("/language-packs/" + encodeURIComponent(packId), { method: "PATCH", body: JSON.stringify({ enabled: enabled }) })
+        .then(function (result) {
+          showToast(result.message || "Updated.");
+          return load();
+        }).catch(function (err) {
+          showToast(String(err.message || err), "error");
+        });
+    }
+
     function deleteRule(ruleId) {
       if (!window.confirm("Delete this persistent Guardian privacy rule?")) return;
       api("/rules/" + encodeURIComponent(ruleId), { method: "DELETE" })
@@ -541,6 +551,7 @@
 
     function renderSettings() {
       const securityRules = (policy && policy.security_rules) || [];
+      const languagePacks = (policy && policy.language_packs) || [];
       return h("div", { className: "hermes-guardian-grid" },
         h("div", { className: "hermes-guardian-card" },
           h("div", { className: "hermes-guardian-card-head" },
@@ -573,6 +584,25 @@
               );
             }),
           ) : h("div", { className: "hermes-guardian-muted" }, "No security policy rules."),
+        ),
+        h("div", { className: "hermes-guardian-card" },
+          h("div", { className: "hermes-guardian-card-title" }, "Language packs"),
+          languagePacks.length ? h("div", { className: "hermes-guardian-grid" },
+            languagePacks.map(function (pack) {
+              return h("label", { key: pack.id, className: "hermes-guardian-check hermes-guardian-security-check" },
+                h("input", {
+                  type: "checkbox",
+                  checked: pack.enabled !== false,
+                  disabled: pack.required === true,
+                  onChange: function (event) { patchLanguagePack(pack.id, event.target.checked); },
+                }),
+                h("span", { className: "hermes-guardian-security-rule-text" },
+                  h("span", null, text(pack.name || pack.id)),
+                  h("span", { className: "hermes-guardian-muted" }, text(pack.id) + (pack.required ? " · required" : "")),
+                ),
+              );
+            }),
+          ) : h("div", { className: "hermes-guardian-muted" }, "No language packs."),
         ),
         h("div", { className: "hermes-guardian-card" },
           h("div", { className: "hermes-guardian-card-title" }, "Runtime"),

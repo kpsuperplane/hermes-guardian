@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from language_packs.en import PACK as EN_PACK
 from language_packs.es import PACK as ES_PACK
 from language_packs.runtime import (
+    _available_language_packs,
     _compile_language_packs,
     _enabled_pack_ids,
     _literal_phrase_pattern,
@@ -33,6 +34,14 @@ def test_language_pack_selection_defaults_and_forces_english():
     assert _enabled_pack_ids("") == ("en", "es")
     assert _enabled_pack_ids("es") == ("en", "es")
     assert _enabled_pack_ids("all") == ("en", "es")
+
+
+def test_available_language_pack_metadata_lists_bundled_packs():
+    packs = {pack["id"]: pack for pack in _available_language_packs()}
+
+    assert packs["en"]["name"] == "English"
+    assert packs["en"]["required"] is True
+    assert packs["es"]["name"] == "Spanish"
 
 
 def test_language_pack_compiler_escapes_literal_phrases():

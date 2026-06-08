@@ -196,6 +196,9 @@ environment variables.
     "mode": "strict",
     "rules": []
   },
+  "language_packs": {
+    "enabled": ["en", "es"]
+  },
   "security": {
     "rules": [
       {"id": "account_security_content", "enabled": true},
@@ -221,6 +224,22 @@ Supported `privacy.mode` values:
   content is still blocked.
 
 Security/access-sensitive content is always blocked regardless of this setting.
+
+### Language Packs
+
+Semantic Security Module terms are configured under `language_packs.enabled`.
+English is required and is always kept enabled. Bundled packs can be toggled
+directly in `guardian-rules.json`, with
+`/guardian language-packs enable|disable <pack_id>`, or from the dashboard
+Settings tab.
+
+Bundled pack ids:
+
+- `en`: English.
+- `es`: Spanish.
+
+If `language_packs.enabled` is missing, Guardian falls back to
+`HERMES_GUARDIAN_LANGUAGE_PACKS` and then to the default bundled set.
 
 ### Security Rules
 
@@ -295,7 +314,8 @@ Hermes Guardian registers a tab in the main Hermes dashboard at `/guardian` via
 
 Dashboard tabs:
 
-- Settings: edit `privacy.mode` and toggle high-level Security Module rules.
+- Settings: edit `privacy.mode`, toggle high-level Security Module rules, and
+  manage bundled language packs.
 - Rules: create, edit, delete, enable/disable, and reorder privacy allow/deny
   rules. The rule modal uses guided fields, data-class selection, invocation
   lifetime controls, and cron-job name selection.
@@ -662,6 +682,8 @@ Use these from a Hermes gateway interface:
 /guardian privacy mode strict|read-only|llm|off
 /guardian security
 /guardian security enable|disable <rule_id>
+/guardian language-packs
+/guardian language-packs enable|disable <pack_id>
 /guardian history [limit]
 /guardian failures [limit]
 /guardian failed [limit]
@@ -678,6 +700,9 @@ Command notes:
 - `/guardian security` lists high-level Security Module rules.
 - `/guardian security enable|disable ...` edits `security.rules` in
   `guardian-rules.json`.
+- `/guardian language-packs` lists bundled semantic detection packs.
+- `/guardian language-packs enable|disable ...` edits
+  `language_packs.enabled` in `guardian-rules.json`.
 - `/guardian clear-taint` clears taint and session approvals for active Guardian
   sessions owned by the sender.
 - `/guardian dismiss <id>` removes a pending approval without adding a rule.
@@ -709,6 +734,7 @@ GET /api/plugins/hermes-guardian/activity
 GET /api/plugins/hermes-guardian/activity/datatables
 POST /api/plugins/hermes-guardian/privacy/mode
 PATCH /api/plugins/hermes-guardian/security/rules/{rule_id}
+PATCH /api/plugins/hermes-guardian/language-packs/{pack_id}
 POST /api/plugins/hermes-guardian/rules
 PATCH /api/plugins/hermes-guardian/rules/{rule_id}
 DELETE /api/plugins/hermes-guardian/rules/{rule_id}
@@ -792,8 +818,8 @@ In-memory state:
 
 Persistent state:
 
-- `guardian-rules.json`: privacy mode, high-level security-rule toggles, and
-  persistent privacy allow/deny rules.
+- `guardian-rules.json`: privacy mode, high-level security-rule toggles,
+  language-pack selection, and persistent privacy allow/deny rules.
 - `activity.sqlite3`: sanitized activity history and pending approvals.
 - `.guardian-hmac-key`: local key used to bind exact-argument one-time
   approvals.

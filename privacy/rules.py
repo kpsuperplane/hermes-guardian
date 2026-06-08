@@ -32,6 +32,7 @@ _SECURITY_RULE_DEFINITIONS = {
     },
 }
 _SECURITY_RULE_IDS = tuple(_SECURITY_RULE_DEFINITIONS)
+_LANGUAGE_PACK_APPLIED_IDS: tuple[str, ...] | None = None
 
 
 def _config_bool(value: Any, *, default: bool = True) -> bool:
@@ -59,6 +60,7 @@ def _default_privacy_config() -> dict[str, Any]:
         "security": {
             "rules": _default_security_rules(),
         },
+        "language_packs": _default_language_pack_config(),
     }
 
 
@@ -116,6 +118,62 @@ def _normalize_security_rules(raw: Any) -> list[dict[str, Any]]:
     return rules
 
 
+def _available_language_pack_map() -> dict[str, dict[str, Any]]:
+    try:
+        packs = _language._available_language_packs()
+    except Exception as exc:
+        logger.warning("%s: failed to inspect language packs: %s", _PLUGIN_NAME, exc)
+        packs = [{"id": "en", "name": "English", "default_enabled": True, "required": True}]
+    return {str(pack.get("id") or ""): pack for pack in packs if pack.get("id")}
+
+
+def _normalize_language_pack_ids(raw: Any = None) -> list[str]:
+    available = _available_language_pack_map()
+    if raw is None:
+        normalized = list(_language._enabled_pack_ids())
+    elif isinstance(raw, list):
+        normalized = list(_language._enabled_pack_ids(",".join(str(item) for item in raw)))
+    else:
+        normalized = list(_language._enabled_pack_ids(str(raw or "")))
+    ids: list[str] = []
+    for pack_id in normalized:
+        if pack_id in available and pack_id not in ids:
+            ids.append(pack_id)
+    if "en" in available and "en" not in ids:
+        ids.insert(0, "en")
+    return ids or ["en"]
+
+
+def _default_language_pack_config() -> dict[str, Any]:
+    return {
+        "enabled": _normalize_language_pack_ids(None),
+    }
+
+
+def _normalize_language_pack_config(raw: Any) -> dict[str, Any]:
+    config = raw if isinstance(raw, dict) else {}
+    enabled = config.get("enabled", config.get("packs")) if config else None
+    return {
+        "enabled": _normalize_language_pack_ids(enabled),
+    }
+
+
+def _language_pack_ids_from_config(data: dict[str, Any]) -> list[str]:
+    return _normalize_language_pack_config(data.get("language_packs") if isinstance(data, dict) else {}).get("enabled", ["en"])
+
+
+def _apply_language_pack_config(data: dict[str, Any]) -> None:
+    global _LANGUAGE_PACK_APPLIED_IDS
+    ids = tuple(_language_pack_ids_from_config(data))
+    if ids == _LANGUAGE_PACK_APPLIED_IDS:
+        return
+    try:
+        _security._set_enabled_language_packs(",".join(ids))
+        _LANGUAGE_PACK_APPLIED_IDS = ids
+    except Exception as exc:
+        logger.warning("%s: failed to apply language packs %s: %s", _PLUGIN_NAME, ",".join(ids), exc)
+
+
 def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
     if not isinstance(rule, dict):
         return None
@@ -167,6 +225,7 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
     if not isinstance(privacy, dict):
         privacy = {}
     security = parsed.get("security") if isinstance(parsed.get("security"), dict) else {}
+    language_packs = parsed.get("language_packs") if isinstance(parsed.get("language_packs"), dict) else {}
     normalized_rules = [
         normalized
         for normalized in (_normalize_privacy_rule(rule) for rule in privacy.get("rules", []))
@@ -181,6 +240,7 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
         "security": {
             "rules": _normalize_security_rules(security.get("rules")),
         },
+        "language_packs": _normalize_language_pack_config(language_packs),
     }
 
 
@@ -196,6 +256,7 @@ def _load_privacy_config() -> dict[str, Any]:
             and _PERSISTENT_RULES_MTIME == current_mtime
             and isinstance(_PERSISTENT_RULES_CACHE.get("privacy"), dict)
         ):
+            _apply_language_pack_config(_PERSISTENT_RULES_CACHE)
             return _PERSISTENT_RULES_CACHE
         try:
             if not _PERSISTENT_RULES_PATH.exists():
@@ -213,6 +274,7 @@ def _load_privacy_config() -> dict[str, Any]:
             _PERSISTENT_RULES_CACHE = _default_privacy_config()
             _PERSISTENT_RULES_MTIME = None
             _PERSISTENT_RULES_ERROR = True
+        _apply_language_pack_config(_PERSISTENT_RULES_CACHE)
         return _PERSISTENT_RULES_CACHE
 
 
@@ -225,6 +287,7 @@ def _save_privacy_config(data: dict[str, Any]) -> bool:
             tmp.write_text(json.dumps(normalized, indent=2, sort_keys=True) + "\n")
             tmp.replace(_PERSISTENT_RULES_PATH)
             _PERSISTENT_RULES_CACHE = normalized
+            _apply_language_pack_config(_PERSISTENT_RULES_CACHE)
             try:
                 _PERSISTENT_RULES_MTIME = _PERSISTENT_RULES_PATH.stat().st_mtime
             except Exception:
@@ -253,6 +316,7 @@ def _set_privacy_mode(mode: str) -> tuple[bool, str]:
             "rules": list(data.get("privacy", {}).get("rules", [])),
         },
         "security": dict(data.get("security") or {}),
+        "language_packs": dict(data.get("language_packs") or {}),
     }
     if not _save_privacy_config(data):
         return False, "Failed to save privacy mode; Guardian remains unchanged."
@@ -272,6 +336,7 @@ def _save_persistent_privacy_rules(rules: list[dict[str, Any]]) -> bool:
             "rules": rules,
         },
         "security": dict(data.get("security") or {}),
+        "language_packs": dict(data.get("language_packs") or {}),
     })
 
 
@@ -325,11 +390,60 @@ def _set_security_rule(rule_id: str, enabled: bool) -> tuple[bool, str]:
         "security": {
             "rules": security_rules,
         },
+        "language_packs": dict(data.get("language_packs") or {}),
     }
     if not _save_privacy_config(next_data):
         return False, "Failed to save security rule; Guardian remains unchanged."
     label = _SECURITY_RULE_DEFINITIONS[normalized_id]["label"]
     return True, f"{'Enabled' if desired else 'Disabled'} security rule {normalized_id} ({label})."
+
+
+def _language_pack_ids() -> list[str]:
+    return list(_load_privacy_config().get("language_packs", {}).get("enabled", ["en"]))
+
+
+def _language_packs_snapshot() -> list[dict[str, Any]]:
+    enabled = set(_language_pack_ids())
+    out: list[dict[str, Any]] = []
+    for pack_id, pack in _available_language_pack_map().items():
+        out.append({
+            "id": pack_id,
+            "pack_id": pack_id,
+            "name": str(pack.get("name") or pack_id),
+            "enabled": pack_id in enabled,
+            "required": bool(pack.get("required")),
+            "default_enabled": bool(pack.get("default_enabled")),
+        })
+    return out
+
+
+def _set_language_pack(pack_id: str, enabled: bool) -> tuple[bool, str]:
+    normalized_id = str(pack_id or "").strip().lower()
+    available = _available_language_pack_map()
+    if normalized_id not in available:
+        return False, "Unknown language pack. Use /guardian language-packs to list pack ids."
+    desired = _config_bool(enabled, default=True)
+    if normalized_id == "en" and not desired:
+        return False, "English language pack is required and cannot be disabled."
+    data = _load_privacy_config()
+    ids = _language_pack_ids_from_config(data)
+    if desired and normalized_id not in ids:
+        ids.append(normalized_id)
+    if not desired:
+        ids = [existing for existing in ids if existing != normalized_id]
+    ids = _normalize_language_pack_ids(ids)
+    next_data = {
+        "version": _PRIVACY_RULE_FILE_VERSION,
+        "privacy": dict(data.get("privacy") or {}),
+        "security": dict(data.get("security") or {}),
+        "language_packs": {
+            "enabled": ids,
+        },
+    }
+    if not _save_privacy_config(next_data):
+        return False, "Failed to save language pack; Guardian remains unchanged."
+    name = str(available[normalized_id].get("name") or normalized_id)
+    return True, f"{'Enabled' if desired else 'Disabled'} language pack {normalized_id} ({name})."
 
 
 def _load_persistent_rules() -> dict[str, Any]:

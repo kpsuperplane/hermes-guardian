@@ -187,6 +187,16 @@ async def update_security_rule(request: Request, rule_id: str, body: dict[str, A
     )
 
 
+@router.patch("/language-packs/{pack_id}")
+async def update_language_pack(request: Request, pack_id: str, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    return _json_mutation_result(
+        request,
+        "language_pack",
+        _guardian()._dashboard_language_pack_action(pack_id, _body_bool(body, "enabled")),
+    )
+
+
 @router.post("/rules")
 async def create_rule(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)

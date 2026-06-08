@@ -10,6 +10,7 @@ def clear_guardian_env(monkeypatch):
     monkeypatch.delenv("HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_HISTORY_TIMEZONE", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_UNSAFE_DIAGNOSTICS", raising=False)
+    monkeypatch.delenv("HERMES_GUARDIAN_LANGUAGE_PACKS", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_CRON_NOTIFY_TO", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_HERMES_CLI", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", raising=False)

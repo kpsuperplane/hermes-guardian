@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from language_packs.runtime import _COMPILED_LANGUAGE_PACKS
+from language_packs.runtime import _COMPILED_LANGUAGE_PACKS, _compile_language_packs
 
 _PLUGIN_NAME = "hermes-guardian"
 _FORMER_PLUGIN_NAME = "privacy-egress-guard"
@@ -22,8 +22,8 @@ _MESSAGE_KEYS = {
     "thread_id",
 }
 
-_SECURITY_SENSITIVE_PATTERNS = list(_COMPILED_LANGUAGE_PACKS.security_sensitive_patterns)
-_REDACTION_MARKER_PATTERNS = list(_COMPILED_LANGUAGE_PACKS.redaction_marker_patterns)
+_SECURITY_SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = []
+_REDACTION_MARKER_PATTERNS: list[tuple[re.Pattern[str], str]] = []
 
 _CREDENTIAL_PATTERNS = [
     (re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----", re.I), "private key"),
@@ -52,12 +52,33 @@ def _scanner_security_rule_enabled(rule_id: str) -> bool:
     except Exception:
         return True
 
-_CODE_CONTEXT_RE = re.compile(
-    _COMPILED_LANGUAGE_PACKS.auth_code_label_pattern.pattern
-    + r"(?:\s*(?:is|es|=|:|-|#)\s*|\s.{0,40}?\s)"
-    + r"\b(?:\d[\d -]{4,15}|[A-Z0-9]*\d[A-Z0-9 -]{4,15})\b",
-    re.I | re.S,
-)
+
+def _code_context_pattern() -> re.Pattern[str]:
+    return re.compile(
+        _COMPILED_LANGUAGE_PACKS.auth_code_label_pattern.pattern
+        + r"(?:\s*(?:is|es|=|:|-|#)\s*|\s.{0,40}?\s)"
+        + r"\b(?:\d[\d -]{4,15}|[A-Z0-9]*\d[A-Z0-9 -]{4,15})\b",
+        re.I | re.S,
+    )
+
+
+def _apply_compiled_language_packs(compiled: Any) -> None:
+    global _COMPILED_LANGUAGE_PACKS, _SECURITY_SENSITIVE_PATTERNS, _REDACTION_MARKER_PATTERNS
+    global _CODE_CONTEXT_RE, _PRIVATE_FIELD_RE
+    _COMPILED_LANGUAGE_PACKS = compiled
+    _SECURITY_SENSITIVE_PATTERNS = list(compiled.security_sensitive_patterns)
+    _REDACTION_MARKER_PATTERNS = list(compiled.redaction_marker_patterns)
+    _CODE_CONTEXT_RE = _code_context_pattern()
+    _PRIVATE_FIELD_RE = compiled.private_field_pattern
+
+
+def _set_enabled_language_packs(raw_ids: str | None = None) -> tuple[str, ...]:
+    compiled = _compile_language_packs(raw_ids)
+    _apply_compiled_language_packs(compiled)
+    return compiled.ids
+
+
+_CODE_CONTEXT_RE = _code_context_pattern()
 _NUMBERED_RECORD_START_RE = re.compile(r"(?m)(?=^[^\S\r\n]*\d+[\.)][^\S\r\n]+)")
 _HEADER_RECORD_START_RE = re.compile(r"(?m)(?=^[^\S\r\n]*(?:\d+[\.)][^\S\r\n]*)?(?:From|Sender):[^\S\r\n])")
 _EMAIL_SHAPED_TEXT_RE = re.compile(
@@ -68,6 +89,7 @@ _EMAIL_ADDRESS_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.
 _PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}(?!\d)")
 _SSN_RE = re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)")
 _PRIVATE_FIELD_RE = _COMPILED_LANGUAGE_PACKS.private_field_pattern
+_apply_compiled_language_packs(_COMPILED_LANGUAGE_PACKS)
 
 def _context(text: str, start: int, end: int, *, radius: int = 120) -> str:
     prefix = max(0, start - radius)

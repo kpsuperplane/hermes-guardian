@@ -18,6 +18,7 @@ def load_plugin():
     module._PERSISTENT_RULES_PATH = Path("/tmp/hermes-guardian-test-rules.json")
     module._PERSISTENT_RULES_PATH.unlink(missing_ok=True)
     module._PERSISTENT_RULES_CACHE = module._default_privacy_config()
+    module._apply_language_pack_config(module._PERSISTENT_RULES_CACHE)
     module._PERSISTENT_RULES_MTIME = None
     module._PERSISTENT_RULES_ERROR = False
     module._ACTIVITY_DB_PATH = Path(f"/tmp/hermes-guardian-test-activity-{id(module)}.sqlite3")
