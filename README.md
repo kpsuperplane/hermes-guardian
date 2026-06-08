@@ -20,6 +20,23 @@ Guardian adds two policy layers:
 - **Privacy Module**: session taint, egress classification, narrow approval
   rules, and metadata-only activity history for private data flows.
 
+## Features
+
+- Blocks or suppresses credentials, OTPs, reset links, magic links, account
+  verification links, security alerts, private keys, bearer tokens, JWTs,
+  cookies, and known upstream redaction placeholders.
+- Taints sessions after private sources are read, including email, contacts,
+  memory, documents, calendar, local system output, and private browser input.
+- Classifies common Hermes egress families such as messaging, MCP writes,
+  browser typing/submission, terminal execution, local writes, cron writes,
+  web/API calls, model APIs, delegated tasks, and final responses.
+- Supports `strict`, `read-only`, `llm`, and `off` privacy modes.
+- Stores sanitized activity rows and pending approvals in local SQLite.
+- Binds one-time approvals to an HMAC fingerprint of the exact tool arguments.
+- Provides slash commands, CLI maintenance commands, and a Hermes dashboard tab.
+- Sends sanitized cron failure notifications at most once per cron run.
+- Uses declarative multilingual language packs for semantic security detection.
+
 ## Quickstart
 
 Clone the plugin into the Hermes user plugin directory:
@@ -112,23 +129,6 @@ Block, create approval ID, log sanitized metadata
 
 Security checks run before privacy checks. Privacy allow rules and approval
 commands cannot bypass Security Module blocks.
-
-## Features
-
-- Blocks or suppresses credentials, OTPs, reset links, magic links, account
-  verification links, security alerts, private keys, bearer tokens, JWTs,
-  cookies, and known upstream redaction placeholders.
-- Taints sessions after private sources are read, including email, contacts,
-  memory, documents, calendar, local system output, and private browser input.
-- Classifies common Hermes egress families such as messaging, MCP writes,
-  browser typing/submission, terminal execution, local writes, cron writes,
-  web/API calls, model APIs, delegated tasks, and final responses.
-- Supports `strict`, `read-only`, `llm`, and `off` privacy modes.
-- Stores sanitized activity rows and pending approvals in local SQLite.
-- Binds one-time approvals to an HMAC fingerprint of the exact tool arguments.
-- Provides slash commands, CLI maintenance commands, and a Hermes dashboard tab.
-- Sends sanitized cron failure notifications at most once per cron run.
-- Uses declarative multilingual language packs for semantic security detection.
 
 ## Privacy Modes
 
