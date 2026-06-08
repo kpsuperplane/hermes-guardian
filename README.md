@@ -195,6 +195,15 @@ environment variables.
   "privacy": {
     "mode": "strict",
     "rules": []
+  },
+  "security": {
+    "rules": [
+      {"id": "account_security_content", "enabled": true},
+      {"id": "credential_content", "enabled": true},
+      {"id": "sensitive_links", "enabled": true},
+      {"id": "intrinsic_exfiltration", "enabled": true},
+      {"id": "private_network_reads", "enabled": true}
+    ]
   }
 }
 ```
@@ -212,6 +221,32 @@ Supported `privacy.mode` values:
   content is still blocked.
 
 Security/access-sensitive content is always blocked regardless of this setting.
+
+### Security Rules
+
+High-level Security Module protections are configured under `security.rules`.
+They are enabled by default and can be toggled directly in
+`guardian-rules.json`, with `/guardian security enable|disable <rule_id>`, or
+from the dashboard Settings tab.
+
+Supported rule ids:
+
+- `account_security_content`: password reset/recovery, auth-code, magic-link,
+  account verification, security alert, redacted security, and similar
+  semantic account-security content.
+- `credential_content`: private keys, OAuth/session/cloud/API tokens, bearer
+  tokens, JWTs, cookies, and `.env`-style secret assignments.
+- `sensitive_links`: reset, recovery, verification, confirmation, magic-link,
+  OTP, and 2FA URLs.
+- `intrinsic_exfiltration`: same-call local/browser secret reads combined with
+  network sinks before session taint exists.
+- `private_network_reads`: terminal remote-read shortcuts that target
+  localhost, private IPs, link-local/metadata hosts, or `.local` hosts.
+
+Disabling a security rule weakens non-approvable hardening. Privacy rules and
+approval flows still apply to classified private egress, but disabled Security
+Module rules no longer categorically block the matching content or action
+shape.
 
 ### Privacy Rules
 
@@ -260,7 +295,7 @@ Hermes Guardian registers a tab in the main Hermes dashboard at `/guardian` via
 
 Dashboard tabs:
 
-- Settings: edit `privacy.mode`.
+- Settings: edit `privacy.mode` and toggle high-level Security Module rules.
 - Rules: create, edit, delete, enable/disable, and reorder privacy allow/deny
   rules. The rule modal uses guided fields, data-class selection, invocation
   lifetime controls, and cron-job name selection.
@@ -625,6 +660,8 @@ Use these from a Hermes gateway interface:
 /guardian rule enable|disable <rule_id>
 /guardian rule move <rule_id> before|after <other_rule_id>
 /guardian privacy mode strict|read-only|llm|off
+/guardian security
+/guardian security enable|disable <rule_id>
 /guardian history [limit]
 /guardian failures [limit]
 /guardian failed [limit]
@@ -638,6 +675,9 @@ Command notes:
 - `/guardian rules` lists persistent privacy rules without raw private content.
 - `/guardian rule ...` creates, deletes, toggles, and reorders privacy rules.
 - `/guardian privacy mode ...` edits `guardian-rules.json`.
+- `/guardian security` lists high-level Security Module rules.
+- `/guardian security enable|disable ...` edits `security.rules` in
+  `guardian-rules.json`.
 - `/guardian clear-taint` clears taint and session approvals for active Guardian
   sessions owned by the sender.
 - `/guardian dismiss <id>` removes a pending approval without adding a rule.
@@ -668,6 +708,7 @@ GET /api/plugins/hermes-guardian/policy
 GET /api/plugins/hermes-guardian/activity
 GET /api/plugins/hermes-guardian/activity/datatables
 POST /api/plugins/hermes-guardian/privacy/mode
+PATCH /api/plugins/hermes-guardian/security/rules/{rule_id}
 POST /api/plugins/hermes-guardian/rules
 PATCH /api/plugins/hermes-guardian/rules/{rule_id}
 DELETE /api/plugins/hermes-guardian/rules/{rule_id}
@@ -751,7 +792,8 @@ In-memory state:
 
 Persistent state:
 
-- `guardian-rules.json`: privacy mode and persistent privacy allow/deny rules.
+- `guardian-rules.json`: privacy mode, high-level security-rule toggles, and
+  persistent privacy allow/deny rules.
 - `activity.sqlite3`: sanitized activity history and pending approvals.
 - `.guardian-hmac-key`: local key used to bind exact-argument one-time
   approvals.

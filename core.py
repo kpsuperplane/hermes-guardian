@@ -456,6 +456,10 @@ def _safe_session_label(session_id: str | None) -> str:
 
 
 _load_core_logic()
+try:
+    _security._set_security_rule_enabled_callback(_security_rule_enabled)
+except Exception as exc:
+    logger.warning("%s: failed to wire security rule callback: %s", _PLUGIN_NAME, exc)
 
 
 def register(ctx) -> None:

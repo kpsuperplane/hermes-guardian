@@ -9,6 +9,7 @@ from language_packs.runtime import _COMPILED_LANGUAGE_PACKS
 
 _PLUGIN_NAME = "hermes-guardian"
 _FORMER_PLUGIN_NAME = "privacy-egress-guard"
+_SECURITY_RULE_ENABLED_CALLBACK: Any | None = None
 
 _MESSAGE_KEYS = {
     "body",
@@ -36,6 +37,20 @@ _CREDENTIAL_PATTERNS = [
     (re.compile(r"(?im)^\s*(?:cookie|session(?:id)?|csrf(?:_token)?)\s*[:=]\s*[^\s#;]{12,}"), "session cookie"),
     (re.compile(r"(?im)^\s*[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY|API_KEY)[A-Z0-9_]*\s*=\s*[^\s#]{8,}"), "secret assignment"),
 ]
+
+
+def _set_security_rule_enabled_callback(callback: Any) -> None:
+    global _SECURITY_RULE_ENABLED_CALLBACK
+    _SECURITY_RULE_ENABLED_CALLBACK = callback
+
+
+def _scanner_security_rule_enabled(rule_id: str) -> bool:
+    if _SECURITY_RULE_ENABLED_CALLBACK is None:
+        return True
+    try:
+        return bool(_SECURITY_RULE_ENABLED_CALLBACK(rule_id))
+    except Exception:
+        return True
 
 _CODE_CONTEXT_RE = re.compile(
     _COMPILED_LANGUAGE_PACKS.auth_code_label_pattern.pattern
@@ -79,46 +94,59 @@ def _sensitive_finding(value: Any) -> dict[str, str] | None:
     text = _stringify_for_scan(value)
     if not text:
         return None
-    for pattern, reason in _CREDENTIAL_PATTERNS:
-        match = pattern.search(text)
-        if match:
-            return {
-                "reason": reason,
-                "match": match.group(0),
-                "context": _context(text, match.start(), match.end()),
-            }
-    for pattern, reason in _REDACTION_MARKER_PATTERNS:
-        match = pattern.search(text)
-        if match:
-            return {
-                "reason": reason,
-                "match": match.group(0),
-                "context": _context(text, match.start(), match.end()),
-            }
+    account_security_enabled = _scanner_security_rule_enabled("account_security_content")
+    sensitive_links_enabled = _scanner_security_rule_enabled("sensitive_links")
+    if _scanner_security_rule_enabled("credential_content"):
+        for pattern, reason in _CREDENTIAL_PATTERNS:
+            match = pattern.search(text)
+            if match:
+                return {
+                    "reason": reason,
+                    "match": match.group(0),
+                    "context": _context(text, match.start(), match.end()),
+                }
+    if account_security_enabled:
+        for pattern, reason in _REDACTION_MARKER_PATTERNS:
+            match = pattern.search(text)
+            if match:
+                return {
+                    "reason": reason,
+                    "match": match.group(0),
+                    "context": _context(text, match.start(), match.end()),
+                }
     redacted_match = re.search(r"\[?\s*redacted\s*\]?", text, re.I)
-    if redacted_match and _COMPILED_LANGUAGE_PACKS.redacted_security_context_pattern.search(text):
+    if (
+        redacted_match
+        and account_security_enabled
+        and _COMPILED_LANGUAGE_PACKS.redacted_security_context_pattern.search(text)
+    ):
         return {
             "reason": "redacted security content",
             "match": redacted_match.group(0),
             "context": _context(text, redacted_match.start(), redacted_match.end()),
         }
-    for pattern, reason in _SECURITY_SENSITIVE_PATTERNS:
-        match = pattern.search(text)
+    if account_security_enabled:
+        for pattern, reason in _SECURITY_SENSITIVE_PATTERNS:
+            match = pattern.search(text)
+            if match:
+                return {
+                    "reason": reason,
+                    "match": match.group(0),
+                    "context": _context(text, match.start(), match.end()),
+                }
+    if account_security_enabled:
+        match = _CODE_CONTEXT_RE.search(text)
         if match:
             return {
-                "reason": reason,
+                "reason": "auth code",
                 "match": match.group(0),
                 "context": _context(text, match.start(), match.end()),
             }
-    match = _CODE_CONTEXT_RE.search(text)
-    if match:
-        return {
-            "reason": "auth code",
-            "match": match.group(0),
-            "context": _context(text, match.start(), match.end()),
-        }
     for match in re.finditer(r"https?://[^\s\"'<>]+", text, re.I):
-        if _COMPILED_LANGUAGE_PACKS.security_link_term_pattern.search(match.group(0)):
+        if (
+            sensitive_links_enabled
+            and _COMPILED_LANGUAGE_PACKS.security_link_term_pattern.search(match.group(0))
+        ):
             return {
                 "reason": "sensitive link",
                 "match": match.group(0),

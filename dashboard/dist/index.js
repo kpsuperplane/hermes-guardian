@@ -465,6 +465,16 @@
         });
     }
 
+    function patchSecurityRule(ruleId, enabled) {
+      return api("/security/rules/" + encodeURIComponent(ruleId), { method: "PATCH", body: JSON.stringify({ enabled: enabled }) })
+        .then(function (result) {
+          showToast(result.message || "Updated.");
+          return load();
+        }).catch(function (err) {
+          showToast(String(err.message || err), "error");
+        });
+    }
+
     function deleteRule(ruleId) {
       if (!window.confirm("Delete this persistent Guardian privacy rule?")) return;
       api("/rules/" + encodeURIComponent(ruleId), { method: "DELETE" })
@@ -520,6 +530,7 @@
     const blocks = (policy && policy.recent_blocks) || [];
 
     function renderSettings() {
+      const securityRules = (policy && policy.security_rules) || [];
       return h("div", { className: "hermes-guardian-grid" },
         h("div", { className: "hermes-guardian-card" },
           h("div", { className: "hermes-guardian-card-head" },
@@ -534,6 +545,22 @@
               h(Button, { onClick: saveMode, disabled: modeSaving }, modeSaving ? "Saving" : "Save"),
             ),
           ),
+        ),
+        h("div", { className: "hermes-guardian-card" },
+          h("div", { className: "hermes-guardian-card-title" }, "Security rules"),
+          securityRules.length ? h("div", { className: "hermes-guardian-grid" },
+            securityRules.map(function (rule) {
+              return h("label", { key: rule.id, className: "hermes-guardian-check" },
+                h("input", {
+                  type: "checkbox",
+                  checked: rule.enabled !== false,
+                  onChange: function (event) { patchSecurityRule(rule.id, event.target.checked); },
+                }),
+                h("span", null, text(rule.label || rule.id)),
+                rule.description ? h("span", { className: "hermes-guardian-muted" }, text(rule.description)) : null,
+              );
+            }),
+          ) : h("div", { className: "hermes-guardian-muted" }, "No security rules."),
         ),
         h("div", { className: "hermes-guardian-card" },
           h("div", { className: "hermes-guardian-card-title" }, "Runtime"),

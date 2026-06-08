@@ -4,6 +4,49 @@ from __future__ import annotations
 
 _PRIVACY_RULE_FILE_VERSION = 1
 _PRIVACY_MODES = {"strict", "read-only", "llm", "off"}
+_SECURITY_RULE_DEFINITIONS = {
+    "account_security_content": {
+        "label": "Account security content",
+        "description": "Block or suppress password reset, recovery, auth-code, magic-link, security-alert, redacted security, and similar account-security content.",
+        "default_enabled": True,
+    },
+    "credential_content": {
+        "label": "Credential content",
+        "description": "Block or suppress private keys, cloud/API tokens, bearer tokens, JWTs, cookies, and .env-style secret assignments.",
+        "default_enabled": True,
+    },
+    "sensitive_links": {
+        "label": "Sensitive links",
+        "description": "Block or suppress reset, recovery, verification, confirmation, magic-link, OTP, and 2FA URLs.",
+        "default_enabled": True,
+    },
+    "intrinsic_exfiltration": {
+        "label": "Intrinsic exfiltration",
+        "description": "Block same-call local/browser secret reads combined with network sinks before session taint exists.",
+        "default_enabled": True,
+    },
+    "private_network_reads": {
+        "label": "Private-network remote reads",
+        "description": "Prevent terminal remote-read shortcuts from treating localhost, private IPs, metadata hosts, and .local hosts as public reads.",
+        "default_enabled": True,
+    },
+}
+_SECURITY_RULE_IDS = tuple(_SECURITY_RULE_DEFINITIONS)
+
+
+def _config_bool(value: Any, *, default: bool = True) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "off", "disabled"}:
+        return False
+    return default
 
 
 def _default_privacy_config() -> dict[str, Any]:
@@ -12,6 +55,9 @@ def _default_privacy_config() -> dict[str, Any]:
         "privacy": {
             "mode": "strict",
             "rules": [],
+        },
+        "security": {
+            "rules": _default_security_rules(),
         },
     }
 
@@ -31,6 +77,43 @@ def _normalize_rule_classes(raw: Any, *, allow_star: bool = True) -> list[str]:
         if text in _ALL_PRIVACY_CLASSES and text not in classes:
             classes.append(text)
     return sorted(classes)
+
+
+def _default_security_rules() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": rule_id,
+            "enabled": bool(definition.get("default_enabled", True)),
+        }
+        for rule_id, definition in _SECURITY_RULE_DEFINITIONS.items()
+    ]
+
+
+def _normalize_security_rule(rule: Any) -> dict[str, Any] | None:
+    if not isinstance(rule, dict):
+        return None
+    rule_id = str(rule.get("id") or rule.get("rule_id") or "").strip().lower().replace("-", "_")
+    if rule_id not in _SECURITY_RULE_DEFINITIONS:
+        return None
+    return {
+        "id": rule_id,
+        "enabled": _config_bool(rule.get("enabled"), default=True),
+    }
+
+
+def _normalize_security_rules(raw: Any) -> list[dict[str, Any]]:
+    configured = raw if isinstance(raw, list) else []
+    by_id = {
+        normalized["id"]: normalized
+        for normalized in (_normalize_security_rule(rule) for rule in configured)
+        if normalized is not None
+    }
+    rules: list[dict[str, Any]] = []
+    for default_rule in _default_security_rules():
+        rule = dict(default_rule)
+        rule.update(by_id.get(rule["id"]) or {})
+        rules.append(rule)
+    return rules
 
 
 def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
@@ -82,7 +165,8 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
         return default
     privacy = parsed.get("privacy")
     if not isinstance(privacy, dict):
-        return default
+        privacy = {}
+    security = parsed.get("security") if isinstance(parsed.get("security"), dict) else {}
     normalized_rules = [
         normalized
         for normalized in (_normalize_privacy_rule(rule) for rule in privacy.get("rules", []))
@@ -93,6 +177,9 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
         "privacy": {
             "mode": _normalize_privacy_mode(privacy.get("mode")),
             "rules": normalized_rules,
+        },
+        "security": {
+            "rules": _normalize_security_rules(security.get("rules")),
         },
     }
 
@@ -165,6 +252,7 @@ def _set_privacy_mode(mode: str) -> tuple[bool, str]:
             "mode": normalized,
             "rules": list(data.get("privacy", {}).get("rules", [])),
         },
+        "security": dict(data.get("security") or {}),
     }
     if not _save_privacy_config(data):
         return False, "Failed to save privacy mode; Guardian remains unchanged."
@@ -183,7 +271,65 @@ def _save_persistent_privacy_rules(rules: list[dict[str, Any]]) -> bool:
             "mode": _privacy_mode(),
             "rules": rules,
         },
+        "security": dict(data.get("security") or {}),
     })
+
+
+def _security_rules() -> list[dict[str, Any]]:
+    return list(_load_privacy_config().get("security", {}).get("rules", []))
+
+
+def _security_rule_enabled(rule_id: str) -> bool:
+    normalized_id = str(rule_id or "").strip().lower().replace("-", "_")
+    if normalized_id not in _SECURITY_RULE_DEFINITIONS:
+        return True
+    for rule in _security_rules():
+        if rule.get("id") == normalized_id:
+            return _config_bool(rule.get("enabled"), default=True)
+    return bool(_SECURITY_RULE_DEFINITIONS[normalized_id].get("default_enabled", True))
+
+
+def _security_rules_snapshot() -> list[dict[str, Any]]:
+    rules_by_id = {str(rule.get("id") or ""): rule for rule in _security_rules()}
+    out: list[dict[str, Any]] = []
+    for rule_id, definition in _SECURITY_RULE_DEFINITIONS.items():
+        configured = rules_by_id.get(rule_id) or {}
+        out.append({
+            "id": rule_id,
+            "rule_id": rule_id,
+            "enabled": _config_bool(
+                configured.get("enabled"),
+                default=bool(definition.get("default_enabled", True)),
+            ),
+            "label": str(definition.get("label") or rule_id),
+            "description": str(definition.get("description") or ""),
+            "default_enabled": bool(definition.get("default_enabled", True)),
+        })
+    return out
+
+
+def _set_security_rule(rule_id: str, enabled: bool) -> tuple[bool, str]:
+    normalized_id = str(rule_id or "").strip().lower().replace("-", "_")
+    if normalized_id not in _SECURITY_RULE_DEFINITIONS:
+        return False, "Unknown security rule. Use /guardian security to list rule ids."
+    desired = _config_bool(enabled, default=True)
+    data = _load_privacy_config()
+    security_rules = _normalize_security_rules(data.get("security", {}).get("rules"))
+    for rule in security_rules:
+        if rule["id"] == normalized_id:
+            rule["enabled"] = desired
+            break
+    next_data = {
+        "version": _PRIVACY_RULE_FILE_VERSION,
+        "privacy": dict(data.get("privacy") or {}),
+        "security": {
+            "rules": security_rules,
+        },
+    }
+    if not _save_privacy_config(next_data):
+        return False, "Failed to save security rule; Guardian remains unchanged."
+    label = _SECURITY_RULE_DEFINITIONS[normalized_id]["label"]
+    return True, f"{'Enabled' if desired else 'Disabled'} security rule {normalized_id} ({label})."
 
 
 def _load_persistent_rules() -> dict[str, Any]:

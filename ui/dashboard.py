@@ -112,6 +112,11 @@ def _dashboard_privacy_mode_action(mode: str) -> tuple[dict[str, Any], int]:
     return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
 
 
+def _dashboard_security_rule_action(rule_id: str, enabled: Any) -> tuple[dict[str, Any], int]:
+    ok, message = _set_security_rule(rule_id, _config_bool(enabled, default=True))
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+
+
 def _dashboard_rule_create_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     rule = _normalize_privacy_rule(payload)
     if rule is None:

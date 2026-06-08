@@ -18,6 +18,8 @@ _GUARDIAN_HELP_LINES = [
     "/guardian rule enable|disable <rule_id>",
     "/guardian rule move <rule_id> before|after <other_rule_id>",
     "/guardian privacy mode strict|read-only|llm|off",
+    "/guardian security",
+    "/guardian security enable|disable <rule_id>",
     "/guardian history [limit]",
     "/guardian failures [limit]",
     "/guardian failed [limit] (alias)",
@@ -293,6 +295,8 @@ def _handle_guardian_command(raw_args: str = "") -> str:
         return _guardian_status(owner_hash)
     if command == "privacy":
         return _guardian_privacy_command(owner_hash, tokens)
+    if command == "security":
+        return _guardian_security_command(owner_hash, tokens)
     if command == "rule":
         return _guardian_rule_command(owner_hash, tokens)
     if command in {"rule", "rules"} and len(tokens) == 3 and tokens[1].lower() in {"delete", "remove", "revoke"}:
@@ -319,6 +323,25 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
         ok, message = _set_privacy_mode(tokens[2])
         return message
     return "Usage: /guardian privacy mode strict|read-only|llm|off"
+
+
+def _guardian_security_command(owner_hash: str, tokens: list[str]) -> str:
+    if len(tokens) == 1:
+        lines = ["Hermes Guardian security rules"]
+        for rule in _security_rules_snapshot():
+            state = "enabled" if rule.get("enabled") else "disabled"
+            lines.append(
+                f"- {rule['id']}: {state} - {rule.get('label', '')}"
+            )
+        lines.append("Use /guardian security enable|disable <rule_id>.")
+        return "\n".join(lines)
+    if len(tokens) == 3 and tokens[1].lower() in {"enable", "disable"}:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        enabled = tokens[1].lower() == "enable"
+        ok, message = _set_security_rule(tokens[2], enabled)
+        return message
+    return "Usage: /guardian security | /guardian security enable|disable <rule_id>"
 
 
 def _rule_add_usage() -> str:
@@ -459,9 +482,15 @@ def _guardian_status(owner_hash: str) -> str:
             if approval.get("owner_hash") == owner_hash or owner_hash == _CLI_OWNER_HASH
         ]
         rules = _privacy_rules_for_owner(owner_hash)
+        disabled_security = [
+            rule
+            for rule in _security_rules_snapshot()
+            if not bool(rule.get("enabled"))
+        ]
     lines = [
         "Hermes Guardian status",
         f"Privacy mode: {_privacy_policy()}",
+        f"Security rules: {len(_SECURITY_RULE_IDS) - len(disabled_security)} enabled, {len(disabled_security)} disabled",
         f"Taint classes: {', '.join(taint) if taint else 'none'}",
         f"Pending approvals: {len(pending)}",
         f"Privacy rules: {len(rules)}",

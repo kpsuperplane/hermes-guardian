@@ -206,7 +206,7 @@ def _terminal_command_is_safe_remote_read(command: str) -> bool:
         return False
     if not _REMOTE_READ_URL_RE.search(command) or not _REMOTE_READ_TOOL_RE.search(command):
         return False
-    if any(_is_private_or_metadata_host(_safe_host_from_url(url)) for url in _extract_urls(command)):
+    if _security_rule_enabled("private_network_reads") and any(_is_private_or_metadata_host(_safe_host_from_url(url)) for url in _extract_urls(command)):
         return False
     if _REMOTE_READ_OUTBOUND_RE.search(command):
         return False
@@ -400,6 +400,8 @@ def _mcp_tool_action(lower: str, args: Any, session_id: str | None) -> ToolActio
 
 
 def _intrinsic_risk_for_tool(tool_name: str, args: Any) -> dict[str, Any] | None:
+    if not _security_rule_enabled("intrinsic_exfiltration"):
+        return None
     lower = str(tool_name or "").lower()
     text = _stringify_for_scan(args)
     if not text:

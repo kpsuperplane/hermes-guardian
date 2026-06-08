@@ -95,6 +95,22 @@ def _confirmation_value(body: dict[str, Any]) -> str:
     return str(body.get("confirm") or body.get("confirmation") or "").strip().lower()
 
 
+def _body_bool(body: dict[str, Any], key: str) -> bool:
+    if key not in body:
+        raise HTTPException(status_code=400, detail=f"{key} is required")
+    value = body.get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "off", "disabled"}:
+        return False
+    raise HTTPException(status_code=400, detail=f"{key} must be a boolean")
+
+
 def _requires_wildcard_allow_confirmation(body: dict[str, Any]) -> bool:
     if str(body.get("effect") or "").strip().lower() != "allow":
         return False
@@ -155,6 +171,16 @@ async def set_privacy_mode(request: Request, body: dict[str, Any]) -> JSONRespon
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("privacy_mode", body)
     return _json_mutation_result(request, "privacy_mode", _guardian()._dashboard_privacy_mode_action(str(body.get("mode") or "")))
+
+
+@router.patch("/security/rules/{rule_id}")
+async def update_security_rule(request: Request, rule_id: str, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    return _json_mutation_result(
+        request,
+        "security_rule",
+        _guardian()._dashboard_security_rule_action(rule_id, _body_bool(body, "enabled")),
+    )
 
 
 @router.post("/rules")
