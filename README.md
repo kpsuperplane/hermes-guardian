@@ -85,35 +85,7 @@ enabled      git      3.0.0    hermes-guardian
 Guardian registers a `/guardian` slash command and an integrated dashboard tab
 at `/guardian`.
 
-## Why Guardian?
-
-Modern agents need private context to be useful. They also have many outbound
-surfaces: messages, MCP writes, browser forms, URLs, search queries, terminal
-commands, code execution, model APIs, cron jobs, and final responses.
-
-Guardian treats those surfaces as egress. Once a session has observed private
-data, the active privacy mode evaluates classified outbound actions before they
-run. Some actions are auto-approved, some are blocked immediately, and some
-fall back to manual approval. Security-sensitive content is stricter: it is
-blocked or suppressed outright, even if privacy mode is off.
-
-Use Guardian when you want:
-
-- Private data available for reasoning, not blindly stripped from context.
-- Strong default egress behavior without needing to write custom rules first.
-- Optional declassification rules by action family, destination, purpose,
-  pseudonymous recipient identity, data class, owner, session, and cron scope.
-- Mobile-friendly approvals for blocked actions.
-- Fail-closed behavior when private data could leak.
-- Sanitized dashboard and history views that do not store raw private content.
-- A plugin-only layer that works through documented Hermes hooks.
-
-Guardian is not a sandbox. It complements Hermes process isolation, credential
-scoping, SSRF protection, gateway authorization, and dangerous-command controls.
-
 ## Features
-
-Guardian can:
 
 - Block or suppress credentials, OTPs, reset links, magic links, account
   verification links, security alerts, private keys, bearer tokens, JWTs,
