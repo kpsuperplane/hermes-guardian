@@ -5,6 +5,26 @@ from __future__ import annotations
 _PRIVACY_RULE_FILE_VERSION = 1
 _DEFAULT_PRIVACY_MODE = "llm"
 _PRIVACY_MODES = {"strict", "read-only", "llm", "off"}
+_DEFAULT_UNKNOWN_TOOLS = "gate"
+_UNKNOWN_TOOLS_MODES = {"gate", "allow"}
+# Action families a user may assign to a custom/unknown tool via a tool override.
+# "ignore" marks a tool as a safe non-sink; "gate" forces tool_unknown gating.
+_TOOL_OVERRIDE_EGRESS_FAMILIES = {
+    "message_send",
+    "web_api",
+    "mcp_write",
+    "mcp_read_query",
+    "local_write",
+    "terminal_exec",
+    "model_api",
+    "tool_write",
+    "delegate_task",
+    "computer_use",
+    "kanban_write",
+    "cron_write",
+    "homeassistant_write",
+}
+_TOOL_OVERRIDE_EGRESS_VALUES = {"ignore", "gate"} | _TOOL_OVERRIDE_EGRESS_FAMILIES
 _SECURITY_RULE_DEFINITIONS = {
     "account_security_content": {
         "label": "Account security content",
@@ -56,7 +76,9 @@ def _default_privacy_config() -> dict[str, Any]:
         "version": _PRIVACY_RULE_FILE_VERSION,
         "privacy": {
             "mode": _DEFAULT_PRIVACY_MODE,
+            "unknown_tools": _DEFAULT_UNKNOWN_TOOLS,
             "rules": [],
+            "tools": [],
         },
         "security": {
             "rules": _default_security_rules(),
@@ -87,6 +109,74 @@ def _normalize_rule_classes(raw: Any, *, allow_star: bool = True) -> list[str]:
         if text in _ALL_PRIVACY_CLASSES and text not in classes:
             classes.append(text)
     return sorted(classes)
+
+
+def _normalize_unknown_tools_mode(value: Any) -> str:
+    mode = str(value or _DEFAULT_UNKNOWN_TOOLS).strip().lower().replace("_", "-").replace("-", "")
+    if mode in {"gate", "secure", "block"}:
+        return "gate"
+    if mode in {"allow", "permissive", "off", "legacy"}:
+        return "allow"
+    return _DEFAULT_UNKNOWN_TOOLS
+
+
+def _normalize_tool_match(value: Any) -> str:
+    """Normalize a tool override matcher: exact name or single trailing-* prefix."""
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    star = text.endswith("*")
+    base = text[:-1] if star else text
+    base = re.sub(r"[^a-z0-9_.:-]+", "", base)
+    if not base:
+        return ""
+    return f"{base}*" if star else base
+
+
+def _normalize_tool_override(entry: Any) -> dict[str, Any] | None:
+    if not isinstance(entry, dict):
+        return None
+    match = _normalize_tool_match(
+        entry.get("match") or entry.get("tool") or entry.get("tool_name")
+    )
+    if not match:
+        return None
+    taints = _normalize_rule_classes(entry.get("taints", entry.get("taint", [])), allow_star=False)
+    egress_raw = str(entry.get("egress") or "").strip().lower()
+    egress = egress_raw if egress_raw in _TOOL_OVERRIDE_EGRESS_VALUES else ""
+    destination = (
+        _safe_policy_token(entry.get("destination"), default="", limit=80)
+        if entry.get("destination")
+        else ""
+    )
+    note = re.sub(r"\s+", " ", str(entry.get("note") or "")).strip()[:200]
+    override_id = str(entry.get("id") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", override_id):
+        override_id = f"tool_{secrets.token_hex(4)}"
+    return {
+        "id": override_id,
+        "match": match,
+        "taints": taints,
+        "egress": egress,
+        "destination": destination,
+        "enabled": _config_bool(entry.get("enabled"), default=True),
+        "note": note,
+    }
+
+
+def _normalize_tool_overrides(raw: Any) -> list[dict[str, Any]]:
+    items = raw if isinstance(raw, list) else []
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in items:
+        normalized = _normalize_tool_override(entry)
+        if normalized is None:
+            continue
+        if normalized["id"] in seen:
+            normalized["id"] = f"tool_{secrets.token_hex(4)}"
+        seen.add(normalized["id"])
+        out.append(normalized)
+    return out
 
 
 def _default_security_rules() -> list[dict[str, Any]]:
@@ -247,7 +337,9 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
         "version": _PRIVACY_RULE_FILE_VERSION,
         "privacy": {
             "mode": _normalize_privacy_mode(privacy.get("mode")),
+            "unknown_tools": _normalize_unknown_tools_mode(privacy.get("unknown_tools")),
             "rules": normalized_rules,
+            "tools": _normalize_tool_overrides(privacy.get("tools")),
         },
         "security": {
             "rules": _normalize_security_rules(security.get("rules")),
@@ -268,6 +360,12 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
             raise ValueError("privacy rule file has invalid privacy mode")
     if "rules" in privacy and not isinstance(privacy.get("rules"), list):
         raise ValueError("privacy rule file privacy.rules must be a list")
+    if "unknown_tools" in privacy:
+        raw_unknown = str(privacy.get("unknown_tools") or "").strip().lower().replace("_", "-").replace("-", "")
+        if raw_unknown not in {"gate", "secure", "block", "allow", "permissive", "off", "legacy"}:
+            raise ValueError("privacy rule file has invalid privacy.unknown_tools")
+    if "tools" in privacy and not isinstance(privacy.get("tools"), list):
+        raise ValueError("privacy rule file privacy.tools must be a list")
     security = parsed.get("security")
     if security is not None:
         if not isinstance(security, dict):
@@ -340,12 +438,11 @@ def _set_privacy_mode(mode: str) -> tuple[bool, str]:
     if normalized != str(mode or "").strip().lower().replace("_", "-"):
         return False, "Privacy mode must be one of: strict, read-only, llm, off."
     data = _load_privacy_config()
+    privacy = dict(data.get("privacy") or {})
+    privacy["mode"] = normalized
     data = {
         "version": _PRIVACY_RULE_FILE_VERSION,
-        "privacy": {
-            "mode": normalized,
-            "rules": list(data.get("privacy", {}).get("rules", [])),
-        },
+        "privacy": privacy,
         "security": dict(data.get("security") or {}),
         "language_packs": dict(data.get("language_packs") or {}),
     }
@@ -360,12 +457,12 @@ def _persistent_privacy_rules() -> list[dict[str, Any]]:
 
 def _save_persistent_privacy_rules(rules: list[dict[str, Any]]) -> bool:
     data = _load_privacy_config()
+    privacy = dict(data.get("privacy") or {})
+    privacy["mode"] = _privacy_mode()
+    privacy["rules"] = rules
     return _save_privacy_config({
         "version": _PRIVACY_RULE_FILE_VERSION,
-        "privacy": {
-            "mode": _privacy_mode(),
-            "rules": rules,
-        },
+        "privacy": privacy,
         "security": dict(data.get("security") or {}),
         "language_packs": dict(data.get("language_packs") or {}),
     })
@@ -427,6 +524,173 @@ def _set_security_rule(rule_id: str, enabled: bool) -> tuple[bool, str]:
         return False, "Failed to save security rule; Guardian remains unchanged."
     label = _SECURITY_RULE_DEFINITIONS[normalized_id]["label"]
     return True, f"{'Enabled' if desired else 'Disabled'} security rule {normalized_id} ({label})."
+
+
+def _unknown_tools_mode() -> str:
+    return _normalize_unknown_tools_mode(
+        _load_privacy_config().get("privacy", {}).get("unknown_tools")
+    )
+
+
+def _set_unknown_tools_mode(mode: str) -> tuple[bool, str]:
+    requested = str(mode or "").strip().lower()
+    normalized = _normalize_unknown_tools_mode(requested)
+    if requested not in {"gate", "allow"}:
+        return False, "Unknown-tools mode must be one of: gate, allow."
+    data = _load_privacy_config()
+    privacy = dict(data.get("privacy") or {})
+    privacy["unknown_tools"] = normalized
+    next_data = {
+        "version": _PRIVACY_RULE_FILE_VERSION,
+        "privacy": privacy,
+        "security": dict(data.get("security") or {}),
+        "language_packs": dict(data.get("language_packs") or {}),
+    }
+    if not _save_privacy_config(next_data):
+        return False, "Failed to save unknown-tools mode; Guardian remains unchanged."
+    return True, f"Unknown-tools mode set to {normalized}."
+
+
+def _tool_overrides() -> list[dict[str, Any]]:
+    return list(_load_privacy_config().get("privacy", {}).get("tools", []))
+
+
+def _tool_overrides_snapshot() -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for override in _tool_overrides():
+        out.append({
+            "id": str(override.get("id") or ""),
+            "match": str(override.get("match") or ""),
+            "taints": sorted(override.get("taints") or []),
+            "egress": str(override.get("egress") or ""),
+            "destination": str(override.get("destination") or ""),
+            "enabled": bool(override.get("enabled", True)),
+            "note": str(override.get("note") or ""),
+        })
+    return out
+
+
+def _save_tool_overrides(overrides: list[dict[str, Any]]) -> bool:
+    data = _load_privacy_config()
+    privacy = dict(data.get("privacy") or {})
+    privacy["tools"] = overrides
+    return _save_privacy_config({
+        "version": _PRIVACY_RULE_FILE_VERSION,
+        "privacy": privacy,
+        "security": dict(data.get("security") or {}),
+        "language_packs": dict(data.get("language_packs") or {}),
+    })
+
+
+def _set_tool_override(
+    match: str,
+    *,
+    taints: Any = None,
+    egress: Any = None,
+    destination: Any = None,
+    note: Any = None,
+    enabled: Any = None,
+) -> tuple[bool, str]:
+    normalized_match = _normalize_tool_match(match)
+    if not normalized_match:
+        return False, "Tool match must be a tool name or a prefix like mcp_acme_*."
+    if egress is not None:
+        egress_text = str(egress).strip().lower()
+        if egress_text and egress_text not in _TOOL_OVERRIDE_EGRESS_VALUES:
+            return False, (
+                "egress must be one of: ignore, gate, or a known action family "
+                f"({', '.join(sorted(_TOOL_OVERRIDE_EGRESS_FAMILIES))})."
+            )
+    if taints is not None:
+        requested = taints if isinstance(taints, list) else [taints]
+        invalid = [
+            str(cls).strip()
+            for cls in requested
+            if str(cls).strip() and str(cls).strip() not in _ALL_PRIVACY_CLASSES
+        ]
+        if invalid:
+            return False, "Unknown data class(es): " + ", ".join(sorted(set(invalid))) + "."
+    overrides = _tool_overrides()
+    existing = next((o for o in overrides if o.get("match") == normalized_match), None)
+    payload = dict(existing) if existing else {"match": normalized_match}
+    payload["match"] = normalized_match
+    if taints is not None:
+        payload["taints"] = taints
+    if egress is not None:
+        payload["egress"] = egress
+    if destination is not None:
+        payload["destination"] = destination
+    if note is not None:
+        payload["note"] = note
+    if enabled is not None:
+        payload["enabled"] = enabled
+    normalized = _normalize_tool_override(payload)
+    if normalized is None:
+        return False, "Invalid tool override."
+    if existing:
+        normalized["id"] = existing.get("id") or normalized["id"]
+        overrides = [normalized if o.get("id") == existing.get("id") else o for o in overrides]
+    else:
+        overrides.append(normalized)
+    if not _save_tool_overrides(overrides):
+        return False, "Failed to save tool override; Guardian remains unchanged."
+    return True, f"Saved tool override {normalized['id']} for {normalized_match}."
+
+
+def _delete_tool_override(match_or_id: str) -> tuple[bool, str]:
+    target = str(match_or_id or "").strip()
+    target_match = _normalize_tool_match(target)
+    overrides = _tool_overrides()
+    remaining = [
+        o
+        for o in overrides
+        if o.get("id") != target and o.get("match") != target_match
+    ]
+    if len(remaining) == len(overrides):
+        return False, f"No matching tool override found for {match_or_id}."
+    if not _save_tool_overrides(remaining):
+        return False, "Failed to save tool overrides; Guardian remains unchanged."
+    return True, f"Deleted tool override {match_or_id}."
+
+
+def _set_tool_override_enabled(override_id: str, enabled: bool) -> tuple[bool, str]:
+    target = str(override_id or "").strip()
+    target_match = _normalize_tool_match(target)
+    desired = _config_bool(enabled, default=True)
+    overrides = _tool_overrides()
+    found = False
+    for override in overrides:
+        if override.get("id") == target or override.get("match") == target_match:
+            override["enabled"] = desired
+            found = True
+            break
+    if not found:
+        return False, f"No matching tool override found for {override_id}."
+    if not _save_tool_overrides(overrides):
+        return False, "Failed to save tool override; Guardian remains unchanged."
+    return True, f"{'Enabled' if desired else 'Disabled'} tool override {target}."
+
+
+def _tool_override_for(tool_name: str) -> dict[str, Any] | None:
+    name = str(tool_name or "").strip().lower()
+    if not name:
+        return None
+    best: dict[str, Any] | None = None
+    best_len = -1
+    for override in _tool_overrides():
+        if not override.get("enabled", True):
+            continue
+        match = str(override.get("match") or "")
+        if not match:
+            continue
+        if match.endswith("*"):
+            prefix = match[:-1]
+            if name.startswith(prefix) and len(prefix) > best_len:
+                best = override
+                best_len = len(prefix)
+        elif name == match:
+            return override
+    return best
 
 
 def _language_pack_ids() -> list[str]:

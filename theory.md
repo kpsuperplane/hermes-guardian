@@ -146,6 +146,10 @@ Examples include:
 
 The security property depends on correct sink classification. Unknown or open-ended tool ecosystems, especially MCP, are structurally harder to classify than closed built-in tool sets.
 
+Guardian therefore classifies conservatively in both directions. A tool that matches no known built-in family is treated as an unrecognized sink and gated under taint (the `tool_unknown` family), mirroring the treatment of unknown MCP tools, rather than being allowed by default. This removes an earlier asymmetry in which unrecognized non-MCP tools failed open. The operator can revert to permissive handling globally, but that choice is explicit and surfaced as a runtime risk.
+
+Because conservative classification produces false positives for genuinely benign custom tools, Guardian pairs it with an operator-managed tool override registry. An override is a trusted operator declaration about a specific tool or tool-name prefix: which private classes its results carry (a source declaration), and whether it is a safe non-sink, a forced-gate sink, or a specific action family (a sink declaration). Overrides are trusted for classification but are not declassification of access-sensitive content: they never bypass the non-approvable Security Module or the intrinsic same-call hard blocks.
+
 ### Declassification
 
 Approvals and allow rules act as declassification decisions. A declassification
@@ -409,6 +413,64 @@ Microsoft Copilot Studio documents prompt-injection protections, cross-domain pr
 
 Guardian sits in the same general family as enterprise runtime action inspection, but it is lighter-weight, local, and personal-agent oriented.
 
+## Comparison with open-source agent guards
+
+The industry comparisons above are mostly managed or enterprise products. Guardian also shares a quadrant with several open-source tools aimed at the same personal/self-hosted agent operator. These are the most directly comparable systems, and the two axes used elsewhere in this document — detection versus flow enforcement, and managed/enterprise versus local-first — separate them cleanly.
+
+### Invariant Guardrails / Gateway
+
+Invariant Labs' Guardrails (with its companion Gateway proxy) is the closest policy-model analog to Guardian. It is a contextual guardrail layer that sits as a proxy between an agent and its MCP servers or LLM provider, evaluating rules before and after each LLM and MCP request. Its defining feature is a Python-inspired DSL that expresses data-flow rules over the agent trace, including ordered tool-to-tool flow constraints. A canonical example raises a violation when a `send_email` call follows a `get_inbox` call, i.e. the `(ToolOutput) -> (ToolCall)` shape that Guardian approximates with coarse session taint. Invariant also ships `mcp-scan` (a scanner for prompt injection in tool descriptions, tool poisoning, and cross-origin escalation) and Explorer (a trace storage and visualization surface). Invariant Labs, an ETH Zurich spin-off, was acquired by Snyk in 2025; it coined widely used terminology such as "tool poisoning" and "MCP rug pulls."
+
+| Dimension | Invariant Guardrails / Gateway | Hermes + Guardian |
+|---|---|---|
+| Policy expression | Explicit DSL with ordered tool-flow rules over the trace | Fixed taint/sink/declassification model; no user-authored flow DSL |
+| Flow granularity | Rule can name specific source and sink tools in sequence | Coarse session taint with volatile copied-phrase provenance |
+| Deployment shape | Proxy in front of MCP servers and the LLM provider | In-process Hermes hooks; no separate proxy |
+| Observability | Explorer trace viewer and incident data | Metadata-only activity trail; no trace visualization |
+| Locality and telemetry | Self-hostable, but `mcp-scan`'s remote scanning shares tool names and descriptions with the vendor's servers (invariantlabs.ai historically, Snyk after the acquisition) | Local-first; classification and policy evaluation do not call out to a vendor service |
+| Track record | Published vulnerability research and named attack classes | No comparable public CVE or attack-discovery record |
+
+Invariant is more mature and more expressive than Guardian on the policy axis: it offers a real flow DSL, a trace viewer, and a research and CVE track record Guardian does not have. Guardian's narrower contributions are that it is fully local-first with no vendor-telemetry path, and that it is integrated directly into Hermes hooks rather than relying on a separate proxy.
+
+### Pipelock
+
+Pipelock (by PipeLab) is an Apache-2.0 agent firewall distributed as a single Go binary. Its design is structural rather than detection-led: it separates capabilities so that the agent process holds secrets but has no direct network access, while a proxy holds network connectivity but stores no secrets, with a scanning boundary (including a DLP layer covering credential patterns) between the two. Isolation is enforced with network namespaces, iptables, Docker internal networks, or Kubernetes NetworkPolicy. Because the agent cannot reach the network directly, a compromised tool call cannot exfiltrate a secret without crossing the proxy's inspection.
+
+| Dimension | Pipelock | Hermes + Guardian |
+|---|---|---|
+| Primary mechanism | Capability separation: secrets and network split across processes | Semantic taint and egress policy over mediated actions |
+| Same-call source/sink | Structurally defended: the secret-holding process has no network path | Deferred to the Hermes/OS layer; Guardian does not itself break this case |
+| Enforcement point | Network boundary between agent and proxy | Hermes hook layer above tool dispatch |
+| Layer | Lower-layer containment | Upper-layer information-flow policy |
+
+Pipelock directly addresses the same-call source-and-sink exfiltration shape that Guardian explicitly defers to the host runtime (see "Same-call source and sink"). It is best read as a complementary lower layer — a concrete implementation of the network-isolation assumption Guardian depends on — not a substitute for Guardian's semantic declassification, which Pipelock does not attempt.
+
+### LLM Guard
+
+Protect AI's LLM Guard is an MIT-licensed, self-hosted toolkit of roughly 35 input and output scanners (15 input, 20 output) covering prompt injection, PII, secrets, toxicity, malicious URLs, and data-leakage detection. It runs locally, like Guardian, but operates by a different mechanism: it scans and sanitizes individual prompts and responses rather than tracking information flow across a session or enforcing source-to-sink policy.
+
+| Dimension | LLM Guard | Hermes + Guardian |
+|---|---|---|
+| Mechanism | Per-message input/output scanning and sanitization | Session taint, sink classification, and declassification policy |
+| State | Largely stateless per request | Session-scoped taint and policy state |
+| Flow enforcement | None; detection and sanitization only | Blocks or approval-gates classified egress under taint |
+| Locality | Local, self-hosted, offline-capable | Local-first, in-process |
+
+LLM Guard and Guardian share the local-first axis but sit on opposite ends of the detection-versus-enforcement axis. LLM Guard's scanner breadth exceeds Guardian's deterministic and language-pack detectors, and the two are composable: scanners as pre-ingestion hygiene, Guardian as post-ingestion flow control. Neither replaces the other.
+
+### OpenClaw PRISM
+
+OpenClaw PRISM is the closest research analog to Guardian for a personal-agent gateway. It is described as a zero-fork runtime security layer for tool-augmented agents that operates as an in-process plugin with optional accompanying services, distributing security checks across roughly ten decision points across the agent lifecycle. It combines hybrid heuristic-and-LLM scanning, risk accumulation with time-based decay, and policy-enforced restrictions on tools, file paths, network access, and secret patterns, and it explicitly targets real-world deployment with an evaluation framework over security effectiveness, false positives, and overhead.
+
+| Dimension | OpenClaw PRISM | Hermes + Guardian |
+|---|---|---|
+| Position | Research system with deployment focus | Deployed Hermes plugin |
+| Risk model | Accumulated risk score with time decay across lifecycle points | Per-action taint-and-policy decision at the hook |
+| Scope of checks | Injection, unsafe tool execution, credential leakage, control-file tampering | Confidentiality egress and declassification over mediated sinks |
+| Integration | In-process, zero-fork plugin | In-process Hermes hooks |
+
+PRISM and Guardian occupy nearly the same niche — an in-process, local-first security layer for a tool-augmented personal agent — and overlap on several mechanisms (LLM-assisted scanning, policy-enforced restrictions). PRISM's risk-accumulation model and broader lifecycle coverage are more ambitious than Guardian's per-action egress focus; Guardian's contribution is the specific taint-and-declassification treatment of confidentiality flows rather than a general risk score.
+
 ## Comparison with theoretical systems
 
 ### CaMeL
@@ -487,6 +549,10 @@ The two layers are complementary: low-level confinement controls capabilities; G
 | Guardian only | Taint and egress approval for mediated tools | Low-medium | Medium-high | Hard containment, complete mediation, same-call source/sink |
 | Hermes + Guardian | Containment below, semantic policy above | Medium to medium-high for mediated flows | Medium-high | Configuration dependence and lack of formal noninterference |
 | OpenAI / Anthropic / Microsoft managed stacks | Product-level sandboxing, runtime inspection, source/sink controls, governance | Medium | High | Lower transparency; platform-dependent details |
+| Invariant Guardrails / Gateway | DSL flow rules over a proxy trace, plus MCP scanning and trace viz | Medium for stated flows | High | Not local-only; remote-scan telemetry path |
+| Pipelock | Capability separation: secrets and network split across processes | Medium-high for the same-call case | Medium-high | No semantic declassification; structural-only |
+| LLM Guard | ~35 local input/output scanners | Low | High | Detection/sanitization only; no flow enforcement |
+| OpenClaw PRISM | In-process risk accumulation plus policy-enforced restrictions | Medium for stated model | Medium | Research maturity; broad scope over deep confidentiality proof |
 | CaMeL / RTBAS / GAAP | Formal or semi-formal control/data-flow or IFC architecture | High in stated model | Lower today | General-purpose product deployability |
 | OS sandbox + formal IFC + contextual policy | Hard boundary plus precise flow control | Highest | Low today | Complexity and usability |
 
@@ -511,6 +577,11 @@ Guardian is not accurately described as a complete prompt-injection solution or 
 - Microsoft Copilot Studio external security provider: <https://learn.microsoft.com/en-us/microsoft-copilot-studio/external-security-provider>
 - Microsoft Copilot Studio tool execution webhook: <https://learn.microsoft.com/en-us/microsoft-copilot-studio/external-security-webhooks-interface-developers>
 - Microsoft, “Detecting and mitigating common agent misconfigurations”: <https://www.microsoft.com/en-us/security/blog/2026/02/12/copilot-studio-agent-security-top-10-risks-detect-prevent/>
+- Invariant Labs, Guardrails / Gateway / mcp-scan: <https://github.com/invariantlabs-ai/invariant>
+- Snyk, “Snyk Acquires Invariant Labs to Accelerate Agentic AI Security Innovation”: <https://snyk.io/news/snyk-acquires-invariant-labs-to-accelerate-agentic-ai-security-innovation/>
+- Pipelock (PipeLab), open-source AI agent firewall: <https://www.helpnetsecurity.com/2026/05/04/pipelock-open-source-ai-agent-firewall/>
+- LLM Guard (Protect AI): <https://github.com/protectai/llm-guard>
+- OpenClaw PRISM, “zero-fork runtime security for tool-augmented agents”: <https://arxiv.org/abs/2603.11853>
 - CaMeL, “Defeating Prompt Injections by Design”: <https://arxiv.org/abs/2503.18813>
 - RTBAS, “Defending LLM Agents Against Prompt Injection and Privacy Leakage”: <https://arxiv.org/abs/2502.08966>
 - GAAP, “An AI Agent Execution Environment to Safeguard User Data”: <https://arxiv.org/abs/2604.19657>

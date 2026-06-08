@@ -18,6 +18,11 @@ _GUARDIAN_HELP_LINES = [
     "/guardian rule enable|disable <rule_id>",
     "/guardian rule move <rule_id> before|after <other_rule_id>",
     "/guardian privacy mode strict|read-only|llm|off",
+    "/guardian privacy unknown-tools gate|allow",
+    "/guardian tools",
+    "/guardian tool set <match> [taints=a+b] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]",
+    "/guardian tool delete <match_or_id>",
+    "/guardian tool enable|disable <id_or_match>",
     "/guardian security",
     "/guardian security enable|disable <rule_id>",
     "/guardian language-packs",
@@ -52,6 +57,15 @@ _RULE_ADD_KEYS = {
     "cron_job_name",
     "remaining",
     "remaining_invocations",
+}
+
+_TOOL_SET_KEYS = {
+    "taints",
+    "taint",
+    "egress",
+    "destination",
+    "dest",
+    "note",
 }
 
 _DEBUG_KEYS = {
@@ -320,6 +334,10 @@ def _handle_guardian_command(raw_args: str = "") -> str:
         return _guardian_privacy_command(owner_hash, tokens)
     if command == "security":
         return _guardian_security_command(owner_hash, tokens)
+    if command == "tools":
+        return _guardian_tools_command()
+    if command == "tool":
+        return _guardian_tool_command(owner_hash, tokens)
     if command in {"language-packs", "language-pack", "languages"}:
         return _guardian_language_packs_command(owner_hash, tokens)
     if command == "rule":
@@ -341,13 +359,90 @@ def _handle_guardian_command(raw_args: str = "") -> str:
 
 def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
     if len(tokens) == 1:
-        return f"Privacy mode: {_privacy_policy()}"
+        return f"Privacy mode: {_privacy_policy()}\nUnknown-tools mode: {_unknown_tools_mode()}"
     if len(tokens) == 3 and tokens[1].lower() == "mode":
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
         ok, message = _set_privacy_mode(tokens[2])
         return message
-    return "Usage: /guardian privacy mode strict|read-only|llm|off"
+    if len(tokens) == 3 and tokens[1].lower() in {"unknown-tools", "unknown_tools"}:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        ok, message = _set_unknown_tools_mode(tokens[2])
+        return message
+    return (
+        "Usage: /guardian privacy mode strict|read-only|llm|off | "
+        "/guardian privacy unknown-tools gate|allow"
+    )
+
+
+def _guardian_tools_command() -> str:
+    overrides = _tool_overrides_snapshot()
+    lines = [
+        "Hermes Guardian tool overrides",
+        f"Unknown-tools mode: {_unknown_tools_mode()}",
+    ]
+    if not overrides:
+        lines.append("No tool overrides configured.")
+    for override in overrides:
+        state = "enabled" if override.get("enabled") else "disabled"
+        bits = [f"match={override.get('match', '')}", state]
+        if override.get("egress"):
+            bits.append(f"egress={override['egress']}")
+        if override.get("destination"):
+            bits.append(f"destination={override['destination']}")
+        if override.get("taints"):
+            bits.append(f"taints={','.join(override['taints'])}")
+        note = override.get("note") or ""
+        suffix = f" - {note}" if note else ""
+        lines.append(f"- {override.get('id', '')}: " + " ".join(bits) + suffix)
+    lines.append(
+        "Use /guardian tool set|delete|enable|disable and "
+        "/guardian privacy unknown-tools gate|allow."
+    )
+    return "\n".join(lines)
+
+
+def _guardian_tool_command(owner_hash: str, tokens: list[str]) -> str:
+    sub = tokens[1].lower() if len(tokens) > 1 else ""
+    usage = (
+        "Usage: /guardian tool set <match> [taints=a+b] [egress=ignore|gate|<family>] "
+        "[destination=<dest>] [note=<text>] | /guardian tool delete <match_or_id> | "
+        "/guardian tool enable|disable <id_or_match>"
+    )
+    if sub == "set" and len(tokens) >= 3:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        match = tokens[2]
+        params, errors = _parse_key_value_args(tokens[3:], allowed_keys=_TOOL_SET_KEYS)
+        if errors:
+            return "Invalid tool override arguments: " + "; ".join(errors) + f"\n{usage}"
+        kwargs: dict[str, Any] = {}
+        raw_taints = params.get("taints") or params.get("taint")
+        if raw_taints is not None:
+            kwargs["taints"] = [cls.strip() for cls in re.split(r"[,+]", raw_taints) if cls.strip()]
+        if "egress" in params:
+            kwargs["egress"] = params["egress"]
+        raw_destination = params.get("destination") or params.get("dest")
+        if raw_destination is not None:
+            kwargs["destination"] = raw_destination
+        if "note" in params:
+            kwargs["note"] = params["note"]
+        if not kwargs:
+            return "Provide at least one of: taints=, egress=, destination=, note=.\n" + usage
+        ok, message = _set_tool_override(match, **kwargs)
+        return message
+    if sub in {"delete", "remove"} and len(tokens) == 3:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        ok, message = _delete_tool_override(tokens[2])
+        return message
+    if sub in {"enable", "disable"} and len(tokens) == 3:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        ok, message = _set_tool_override_enabled(tokens[2], sub == "enable")
+        return message
+    return usage
 
 
 def _guardian_security_command(owner_hash: str, tokens: list[str]) -> str:
@@ -548,6 +643,7 @@ def _guardian_status(owner_hash: str) -> str:
     lines = [
         "Hermes Guardian status",
         f"Privacy mode: {_privacy_policy()}",
+        f"Unknown tools: {_unknown_tools_mode()} ({len(_tool_overrides())} override(s))",
         f"Security rules: {len(_SECURITY_RULE_IDS) - len(disabled_security)} enabled, {len(disabled_security)} disabled",
         f"Language packs: {', '.join(pack.get('id', '') for pack in enabled_language_packs) or 'none'}",
         f"Taint classes: {', '.join(taint) if taint else 'none'}",

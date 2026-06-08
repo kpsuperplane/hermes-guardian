@@ -317,15 +317,16 @@ def _taint_classes_for_tool_result(
 ) -> set[str]:
     if str(status or "").lower() == "error":
         return set()
+    override_taints = _tool_override_taint_classes(tool_name)
     if _is_local_system_tool(tool_name):
         classes = _classes_from_content(result_value)
         policy = local_system_policy if local_system_policy is not None else _consume_local_system_result_policy(session_id, tool_name)
         classes.update(set(policy.get("taint") or []))
-        return classes
+        return classes | override_taints
     classes = _classes_from_tool_name(tool_name)
     if classes:
-        return classes
-    return _classes_from_content(result_value)
+        return classes | override_taints
+    return _classes_from_content(result_value) | override_taints
 
 
 def _taint_reason_for_tool_result(tool_name: str, classes: set[str]) -> str:
@@ -624,9 +625,121 @@ def _read_arg_classes(args: Any) -> set[str]:
     return _classes_from_content(args)
 
 
+# Outbound-verb hints used to deny "recognized safe" status to private-source tools
+# whose names also imply an export/send. Such tools fall through to unknown-sink
+# gating instead of being treated as harmless reads.
+_OUTBOUND_HINT_RE = re.compile(
+    r"(^|_)(send|post|publish|share|upload|download|export|import|sync|transmit|"
+    r"emit|dispatch|deliver|transfer|push|copy|exfiltrate|leak|dump|forward|relay|"
+    r"webhook|notify)(_|$)",
+    re.I,
+)
+
+
+def _safe_tool_destination(name: str) -> str:
+    token = re.sub(r"[^a-z0-9_.:-]+", "_", str(name or "").strip().lower())[:64]
+    return token or "tool"
+
+
+def _tool_override_taint_classes(tool_name: str) -> set[str]:
+    override = _tool_override_for(tool_name)
+    if not override:
+        return set()
+    return {cls for cls in (override.get("taints") or []) if cls in _ALL_PRIVACY_CLASSES}
+
+
+_KNOWN_BUILTIN_TOOL_NAMES = frozenset({
+    "send_message",
+    "cronjob",
+    "todo",
+    "memory",
+    "skill_manage",
+    "ha_call_service",
+    "computer_use",
+    "delegate_task",
+})
+
+
+def _recognized_builtin_tool(lower: str, args: Any) -> bool:
+    """True when Guardian recognizes this as a known built-in tool.
+
+    Used only at the classifier fallback, after all sink rules have missed, to tell a
+    recognized built-in whose specific call is a read/no-op (e.g. ``cronjob`` list)
+    apart from a genuinely unknown tool. A tool matching a private-source name but
+    also carrying an outbound verb is NOT treated as recognized-safe; it falls through
+    to unknown-sink gating.
+    """
+    if lower.startswith("mcp_") or lower.startswith("browser_"):
+        return True
+    if _WEB_READ_TOOL_RE.match(lower):
+        return True
+    if lower in _KNOWN_BUILTIN_TOOL_NAMES:
+        return True
+    if (
+        _MESSAGE_TOOL_RE.search(lower)
+        or _TERMINAL_TOOL_RE.match(lower)
+        or _MODEL_EGRESS_TOOL_RE.match(lower)
+        or _WEB_EGRESS_TOOL_RE.search(lower)
+        or _LOCAL_WRITE_TOOL_RE.match(lower)
+        or _MNEMOSYNE_WRITE_TOOL_RE.match(lower)
+        or _KANBAN_WRITE_TOOL_RE.match(lower)
+        or _GENERIC_WRITE_TOOL_RE.search(lower)
+    ):
+        return True
+    if _read_activity_for_tool(lower, args) is not None:
+        return True
+    if _classes_from_tool_name(lower) and not _OUTBOUND_HINT_RE.search(lower):
+        return True
+    return False
+
+
+def _tool_override_action(
+    override: dict[str, Any] | None,
+    lower: str,
+    args: Any,
+    session_id: str | None,
+) -> tuple[bool, ToolAction | None]:
+    """Resolve a tool override's egress directive.
+
+    Returns (decided, action). ``decided`` False means the override has no egress
+    directive (or none exists) and normal classification should continue. ``taints``
+    are handled separately on result observation, not here.
+    """
+    if not override:
+        return (False, None)
+    egress = str(override.get("egress") or "")
+    if not egress:
+        return (False, None)
+    if egress == "ignore":
+        return (True, None)
+    if egress == "gate":
+        if _session_taint(session_id):
+            return (True, ToolAction("tool_unknown", _safe_tool_destination(lower)))
+        return (True, None)
+    destination = str(override.get("destination") or "") or _safe_tool_destination(lower)
+    if egress == "message_send":
+        return (
+            True,
+            ToolAction(
+                "message_send",
+                "messaging",
+                purpose=_purpose_from_args(args),
+                recipient_identity=_recipient_identity_from_args(args),
+                legacy_destination=_safe_destination_from_args(args, default=destination),
+            ),
+        )
+    return (True, ToolAction(egress, destination))
+
+
 def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> ToolAction | None:
     name = str(tool_name or "")
     lower = name.lower()
+
+    decided, override_action = _tool_override_action(
+        _tool_override_for(lower), lower, args, session_id
+    )
+    if decided:
+        return override_action
 
     def read_private_action() -> ToolAction:
         action_family, destination = _read_activity_for_tool(lower, args, session_id) or ("web_read", lower)
@@ -696,6 +809,12 @@ def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> To
     for matches, build_action in rules:
         if matches:
             return build_action()
+    # Secure-by-default: an unrecognized non-MCP tool is gated like mcp_unknown when
+    # the session is tainted, unless the operator reverted to legacy permissive mode.
+    if _recognized_builtin_tool(lower, args):
+        return None
+    if _unknown_tools_mode() == "gate" and _session_taint(session_id):
+        return ToolAction("tool_unknown", _safe_tool_destination(lower))
     return None
 
 

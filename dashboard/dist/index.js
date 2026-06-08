@@ -9,7 +9,19 @@
   const h = React.createElement;
   const API = "/api/plugins/hermes-guardian";
 
-  const ACTIONS = ["*", "browser_console", "browser_read", "browser_type", "cron_write", "final_response", "local_write", "mcp_read_query", "mcp_unknown", "mcp_write", "message_send", "terminal_exec", "web_api", "web_read"];
+  const ACTIONS = ["*", "browser_console", "browser_read", "browser_type", "cron_write", "final_response", "local_write", "mcp_read_query", "mcp_unknown", "mcp_write", "message_send", "terminal_exec", "tool_unknown", "web_api", "web_read"];
+  const TOOL_EGRESS_OPTIONS = ["", "ignore", "gate", "message_send", "web_api", "mcp_write", "mcp_read_query", "local_write", "terminal_exec", "model_api", "tool_write", "delegate_task", "computer_use", "kanban_write", "cron_write", "homeassistant_write"];
+  const DEFAULT_PRIVACY_CLASSES = ["browser_private_input", "calendar", "contacts", "documents", "email", "local_system", "memory"];
+  const DEFAULT_OVERRIDE_FORM = {
+    id: "",
+    match: "",
+    egress: "",
+    destination: "",
+    taints: [],
+    note: "",
+    enabled: true,
+    isEdit: false,
+  };
   const HISTORY_PAGE_SIZES = [25, 50, 100];
   const DEFAULT_FORM = {
     id: "",
@@ -290,6 +302,102 @@
     );
   }
 
+  function OverrideModal(props) {
+    const policy = props.policy || {};
+    const allClasses = policy.all_privacy_classes || DEFAULT_PRIVACY_CLASSES;
+    const egressOptions = policy.tool_override_egress_options
+      ? [""].concat(policy.tool_override_egress_options)
+      : TOOL_EGRESS_OPTIONS;
+    const matchSuggestions = policy.tool_name_suggestions
+      || (policy.suggestions && policy.suggestions.tool_names)
+      || [];
+    const form = props.form;
+    const setForm = props.setForm;
+    const taintSet = new Set(form.taints || []);
+    const concreteEgress = form.egress && form.egress !== "ignore" && form.egress !== "gate";
+
+    function update(key, value) {
+      setForm(Object.assign({}, form, { [key]: value }));
+    }
+
+    function toggleTaint(cls) {
+      const next = new Set(taintSet);
+      if (next.has(cls)) next.delete(cls);
+      else next.add(cls);
+      update("taints", Array.from(next).sort());
+    }
+
+    return h("div", { className: "hermes-guardian-modal-backdrop", role: "presentation", onMouseDown: function (event) {
+      if (event.target === event.currentTarget) props.onCancel();
+    } },
+      h("form", { className: "hermes-guardian-modal", onSubmit: props.onSubmit },
+        h("div", { className: "hermes-guardian-card-head" },
+          h("div", null,
+            h("h2", { className: "hermes-guardian-title" }, form.isEdit ? "Edit tool override" : "New tool override"),
+            h("div", { className: "hermes-guardian-subtitle" }, form.isEdit ? text(form.match) : "Tell Guardian how to treat a specific tool"),
+          ),
+          h(Button, { variant: "secondary", onClick: props.onCancel }, "Close"),
+        ),
+        h("div", { className: "hermes-guardian-modal-body" },
+          h("datalist", { id: "hermes-guardian-override-match-options" }, matchSuggestions.map(function (value) {
+            return h("option", { key: value, value: value });
+          })),
+          h("div", { className: "hermes-guardian-form-grid" },
+            h(Field, { label: "Tool match" }, h("input", {
+              className: "hermes-guardian-input",
+              list: "hermes-guardian-override-match-options",
+              value: form.match,
+              placeholder: "tool_name or prefix_*",
+              disabled: form.isEdit,
+              onChange: function (event) { update("match", event.target.value); },
+            })),
+            h(Field, { label: "Egress Type" }, h("select", { className: "hermes-guardian-select", value: form.egress, onChange: function (event) { update("egress", event.target.value); } },
+              egressOptions.map(function (value) {
+                const label = value === "" ? "Default (taints only)" : (value === "ignore" ? "No egress" : value);
+                return h("option", { key: value || "none", value: value }, label);
+              }),
+            )),
+            concreteEgress ? h(Field, { label: "Destination" }, h("input", {
+              className: "hermes-guardian-input",
+              value: form.destination,
+              placeholder: "optional",
+              onChange: function (event) { update("destination", event.target.value); },
+            })) : null,
+          ),
+          h("div", { className: "hermes-guardian-field" },
+            "Taints applied when this tool's results are read",
+            h("div", { className: "hermes-guardian-check-grid" },
+              allClasses.map(function (cls) {
+                return h("label", { key: cls, className: "hermes-guardian-check" },
+                  h("input", { type: "checkbox", checked: taintSet.has(cls), onChange: function () { toggleTaint(cls); } }),
+                  cls,
+                );
+              }),
+            ),
+          ),
+          h("div", { className: "hermes-guardian-form-grid" },
+            h(Field, { label: "Note" }, h("input", {
+              className: "hermes-guardian-input",
+              value: form.note,
+              placeholder: "optional note",
+              onChange: function (event) { update("note", event.target.value); },
+            })),
+            h(Field, { label: "Enabled" }, h("label", { className: "hermes-guardian-check" },
+              h("input", { type: "checkbox", checked: form.enabled !== false, onChange: function (event) { update("enabled", event.target.checked); } }),
+              "Override is active",
+            )),
+          ),
+          form.egress === "ignore" ? h("div", { className: "hermes-guardian-banner" }, "\"No egress\" marks this tool as a safe non-sink: it will be allowed even under taint. This weakens egress protection and requires confirmation.") : null,
+          props.formError ? h("div", { className: "hermes-guardian-banner" }, props.formError) : null,
+          h("div", { className: "hermes-guardian-actions" },
+            h(Button, { type: "submit" }, form.isEdit ? "Save changes" : "Create override"),
+            h(Button, { variant: "secondary", onClick: props.onCancel }, "Cancel"),
+          ),
+        ),
+      ),
+    );
+  }
+
   function GuardianPage() {
     const useState = hooks.useState;
     const useEffect = hooks.useEffect;
@@ -347,6 +455,21 @@
     const stateFormError = useState("");
     const formError = stateFormError[0];
     const setFormError = stateFormError[1];
+    const stateUnknownTools = useState("gate");
+    const unknownTools = stateUnknownTools[0];
+    const setUnknownTools = stateUnknownTools[1];
+    const stateUnknownToolsSaving = useState(false);
+    const unknownToolsSaving = stateUnknownToolsSaving[0];
+    const setUnknownToolsSaving = stateUnknownToolsSaving[1];
+    const stateOverrideModal = useState(false);
+    const showOverrideModal = stateOverrideModal[0];
+    const setShowOverrideModal = stateOverrideModal[1];
+    const stateOverrideForm = useState(Object.assign({}, DEFAULT_OVERRIDE_FORM));
+    const overrideForm = stateOverrideForm[0];
+    const setOverrideForm = stateOverrideForm[1];
+    const stateOverrideFormError = useState("");
+    const overrideFormError = stateOverrideFormError[0];
+    const setOverrideFormError = stateOverrideFormError[1];
 
     function dismissToast(id) {
       const timers = toastTimers.current || {};
@@ -411,6 +534,7 @@
       return api("/policy").then(function (value) {
         setPolicy(value);
         setPrivacyMode(value.privacy_mode || value.privacy_policy || "llm");
+        setUnknownTools(value.unknown_tools || "gate");
       }).catch(function (err) {
         setError(String(err.message || err));
       }).finally(function () {
@@ -447,6 +571,105 @@
           showToast(String(err.message || err), "error");
         })
         .finally(function () { setModeSaving(false); });
+    }
+
+    function saveUnknownTools(nextMode) {
+      nextMode = text(nextMode, unknownTools);
+      if (nextMode === unknownTools) return;
+      const previousMode = unknownTools;
+      const body = { mode: nextMode };
+      if (nextMode === "allow") {
+        if (!window.confirm("Allow unrecognized tools to run untracked under taint? This restores the legacy fail-open behavior and reduces protection.")) return;
+        body.confirm = "unknown-tools-allow";
+      }
+      setUnknownTools(nextMode);
+      setUnknownToolsSaving(true);
+      api("/privacy/unknown-tools", { method: "POST", body: JSON.stringify(body) })
+        .then(function (payload) {
+          showToast(payload.message || "Saved.");
+          return load();
+        })
+        .catch(function (err) {
+          setUnknownTools(previousMode);
+          showToast(String(err.message || err), "error");
+        })
+        .finally(function () { setUnknownToolsSaving(false); });
+    }
+
+    function openCreateOverride() {
+      setOverrideForm(Object.assign({}, DEFAULT_OVERRIDE_FORM));
+      setOverrideFormError("");
+      setShowOverrideModal(true);
+    }
+
+    function openEditOverride(override) {
+      setOverrideForm({
+        id: text(override.id),
+        match: text(override.match),
+        egress: text(override.egress),
+        destination: text(override.destination),
+        taints: Array.isArray(override.taints) ? override.taints.slice() : [],
+        note: text(override.note),
+        enabled: override.enabled !== false,
+        isEdit: true,
+      });
+      setOverrideFormError("");
+      setShowOverrideModal(true);
+    }
+
+    function submitOverride(event) {
+      event.preventDefault();
+      const current = overrideForm;
+      if (!text(current.match)) {
+        setOverrideFormError("Provide a tool name or prefix (e.g. mcp_acme_*).");
+        return;
+      }
+      const payload = {
+        match: current.match,
+        egress: current.egress || "",
+        destination: current.destination || "",
+        taints: current.taints || [],
+        note: current.note || "",
+        enabled: current.enabled !== false,
+      };
+      if (current.egress === "ignore") {
+        if (!window.confirm("Mark '" + current.match + "' as a safe non-sink (No egress)? It will be allowed even under taint.")) return;
+        payload.confirm = "tool-ignore";
+      }
+      setOverrideFormError("");
+      api("/tools", { method: "POST", body: JSON.stringify(payload) })
+        .then(function (result) {
+          showToast(result.message || "Override saved.");
+          setShowOverrideModal(false);
+          return load();
+        })
+        .catch(function (err) {
+          setOverrideFormError(String(err.message || err));
+        });
+    }
+
+    function toggleOverride(override) {
+      const enabled = override.enabled !== false;
+      api("/tools/" + encodeURIComponent(override.id), { method: "PATCH", body: JSON.stringify({ enabled: !enabled }) })
+        .then(function (result) {
+          showToast(result.message || "Updated.");
+          return load();
+        })
+        .catch(function (err) {
+          showToast(String(err.message || err), "error");
+        });
+    }
+
+    function deleteOverride(override) {
+      if (!window.confirm("Delete the tool override for '" + text(override.match) + "'?")) return;
+      api("/tools/" + encodeURIComponent(override.id), { method: "DELETE" })
+        .then(function (result) {
+          showToast(result.message || "Deleted.");
+          return load();
+        })
+        .catch(function (err) {
+          showToast(String(err.message || err), "error");
+        });
     }
 
     function openCreate() {
@@ -669,6 +892,62 @@
           );
         }),
       ) : null;
+    }
+
+    function renderTools() {
+      const toolOverrides = (policy && policy.tool_overrides) || [];
+      return h("div", { className: "hermes-guardian-grid" },
+        h("div", { className: "hermes-guardian-card" },
+          h("div", { className: "hermes-guardian-card-head" },
+            h("div", null,
+              h("div", { className: "hermes-guardian-card-title" }, "Unknown tools"),
+              h("div", { className: "hermes-guardian-muted" }, "Unrecognized tools (custom or third-party) are gated under taint by default. 'allow' restores the legacy permissive behavior and is not recommended."),
+            ),
+            h("div", { className: "hermes-guardian-actions" },
+              h("select", { className: "hermes-guardian-select", value: unknownTools, disabled: unknownToolsSaving, onChange: function (event) { saveUnknownTools(event.target.value); } },
+                ["gate", "allow"].map(function (mode) { return h("option", { key: mode, value: mode }, mode); }),
+              ),
+            ),
+          ),
+        ),
+        h("div", { className: "hermes-guardian-card" },
+          h("div", { className: "hermes-guardian-card-head" },
+            h("div", null,
+              h("div", { className: "hermes-guardian-card-title" }, "Tool overrides"),
+              h("div", { className: "hermes-guardian-muted" }, "Declare how Guardian treats specific tools: which private classes they read (taints) and whether they are a safe non-sink (No egress), forced to gate, or a specific action family. Overrides never bypass the Security Module."),
+            ),
+            h(Button, { onClick: openCreateOverride }, "New override"),
+          ),
+          toolOverrides.length ? h("div", { className: "hermes-guardian-grid" },
+            toolOverrides.map(function (override) {
+              const disabled = override.enabled === false;
+              const cardClasses = ["hermes-guardian-card"];
+              if (disabled) cardClasses.push("hermes-guardian-rule-disabled");
+              return h("div", { key: override.id, className: cardClasses.join(" ") },
+                h("div", { className: "hermes-guardian-rule-head" },
+                  h("div", { className: "hermes-guardian-rule-main" },
+                    h("div", { className: "hermes-guardian-rule-title" }, text(override.match)),
+                    h("div", { className: "hermes-guardian-rule-subline" },
+                      h("span", { className: "hermes-guardian-rule-id" }, text(override.id)),
+                      override.egress ? h("span", { className: "hermes-guardian-pill" }, "egress " + (override.egress === "ignore" ? "none" : override.egress)) : null,
+                      override.destination ? h("span", { className: "hermes-guardian-pill" }, "dest " + override.destination) : null,
+                    ),
+                  ),
+                  h("div", { className: "hermes-guardian-actions" },
+                    h(Button, { variant: "secondary", onClick: function () { openEditOverride(override); } }, "Edit"),
+                    h(Button, { variant: "secondary", onClick: function () { toggleOverride(override); } }, disabled ? "Enable" : "Disable"),
+                    h(Button, { variant: "danger", onClick: function () { deleteOverride(override); } }, "Delete"),
+                  ),
+                ),
+                (override.taints && override.taints.length) ? h("div", { className: "hermes-guardian-chips" }, override.taints.map(function (cls) {
+                  return h("span", { key: cls, className: "hermes-guardian-chip" }, cls);
+                })) : null,
+                override.note ? h("div", { className: "hermes-guardian-muted" }, text(override.note)) : null,
+              );
+            }),
+          ) : h("div", { className: "hermes-guardian-muted" }, "No tool overrides. Unrecognized tools follow the unknown-tools mode above."),
+        ),
+      );
     }
 
     function renderSettings() {
@@ -927,11 +1206,12 @@
       renderRiskBanners(),
       h(ToastRegion, { toasts: toasts, onDismiss: dismissToast }),
       h("div", { className: "hermes-guardian-tabs", role: "tablist" },
-        [["settings", "Settings"], ["rules", "Egress Rules"], ["blocks", "Recent Blocks"], ["history", "History"]].map(function (item) {
+        [["settings", "Settings"], ["tools", "Tools"], ["rules", "Egress Rules"], ["blocks", "Recent Blocks"], ["history", "History"]].map(function (item) {
           return h("button", { key: item[0], type: "button", className: "hermes-guardian-tab " + (tab === item[0] ? "hermes-guardian-tab-active" : ""), onClick: function () { setTab(item[0]); } }, item[1]);
         }),
       ),
       tab === "settings" ? renderSettings() : null,
+      tab === "tools" ? renderTools() : null,
       tab === "rules" ? renderRules() : null,
       tab === "blocks" ? renderBlocks() : null,
       tab === "history" ? renderHistory() : null,
@@ -942,6 +1222,14 @@
         formError: formError,
         onSubmit: submitRule,
         onCancel: function () { setShowModal(false); },
+      }) : null,
+      showOverrideModal ? h(OverrideModal, {
+        policy: policy || {},
+        form: overrideForm,
+        setForm: setOverrideForm,
+        formError: overrideFormError,
+        onSubmit: submitOverride,
+        onCancel: function () { setShowOverrideModal(false); },
       }) : null,
     );
   }

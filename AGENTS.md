@@ -113,8 +113,12 @@ When editing this code:
 Preserve these invariants unless the user explicitly asks for a model change and
 the tests/docs are updated accordingly:
 
-- Security-sensitive content is non-approvable. Privacy allow rules and approval
-  commands must not bypass Security Module blocks/suppression.
+- Security-sensitive content is non-approvable. Privacy allow rules, approval
+  commands, and `privacy.tools` overrides must not bypass Security Module
+  blocks/suppression or intrinsic same-call hard blocks.
+- Unrecognized non-MCP tools fail closed under taint by default (`unknown_tools`
+  = `gate`, classified `tool_unknown`). Do not regress this to an allow fallback;
+  the only opt-out is the explicit `allow` mode, which raises a risk banner.
 - Hook failures that could leak private or sensitive data fail closed:
   `pre_tool_call` blocks, `transform_tool_result` suppresses, and tainted final
   output errors suppress when appropriate.
@@ -152,7 +156,19 @@ the tests/docs are updated accordingly:
   "version": 1,
   "privacy": {
     "mode": "strict",
-    "rules": []
+    "unknown_tools": "gate",
+    "rules": [],
+    "tools": [
+      {
+        "id": "tool_ab12cd34",
+        "match": "mcp_acme_*",
+        "taints": ["email"],
+        "egress": "ignore",
+        "destination": "",
+        "enabled": true,
+        "note": "acme MCP server is a trusted read"
+      }
+    ]
   },
   "security": {
     "rules": [
@@ -166,8 +182,21 @@ the tests/docs are updated accordingly:
 }
 ```
 
-Rule mutation helpers must preserve both privacy rules and security rule
-settings. This is covered by `tests/test_security_rules_config.py`.
+`privacy.unknown_tools` is `gate` (default) or `allow`. In `gate`, an unrecognized
+tool (not a known built-in, not covered by a `privacy.tools` override) is classified
+as `tool_unknown` and gated under taint, mirroring `mcp_unknown`. `allow` restores
+the legacy permissive behavior and raises a runtime risk banner.
+
+`privacy.tools` is the user-managed tool override registry. Each entry has a `match`
+(exact tool name or a single trailing-`*` prefix), optional `taints` (source classes
+applied when the tool's result is observed), and optional `egress`: `ignore` (treat
+as a safe non-sink), `gate` (force `tool_unknown` gating), or a concrete action
+family. Overrides take precedence over built-in classification but are privacy-layer
+only: they never bypass the Security Module or intrinsic same-call hard blocks.
+
+Rule mutation helpers must preserve privacy rules, security rule settings, the
+`unknown_tools` mode, and `tools` overrides. This is covered by
+`tests/test_security_rules_config.py` and `tests/test_tool_overrides.py`.
 
 `activity.sqlite3` has two logical roles:
 
@@ -191,7 +220,14 @@ Important classifier families include:
 - `terminal_exec`, `local_write`, `cron_write`, `kanban_write`,
   `homeassistant_write`, `tool_write`, `computer_use`
 - `web_read`, `web_api`, `model_api`, `delegate_task`
+- `tool_unknown` (secure-by-default fallback for unrecognized non-MCP tools under
+  taint; see `_recognized_builtin_tool` and `_unknown_tools_mode`)
 - `final_response`
+
+`_recognized_builtin_tool` separates a known built-in whose specific call is a
+read/no-op (which stays allowed) from a genuinely unknown tool (gated under taint).
+When you add a new built-in tool family, also add it there so its read/no-op calls
+are not mistaken for unknown sinks.
 
 When adding a new Hermes tool family:
 
@@ -223,8 +259,13 @@ Keep `dashboard/plugin_api.py` as a thin adapter:
   `HERMES_GUARDIAN_DASHBOARD_MUTATIONS=0` disables mutations, and
   `HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN` requires
   `x-hermes-guardian-token`.
-- It should require explicit confirmation for privacy mode `off` and global
-  wildcard allow rules.
+- It should require explicit confirmation for the weakening actions: privacy mode
+  `off` (`privacy-off`), global wildcard allow rules (`wildcard-allow`),
+  `unknown_tools=allow` (`unknown-tools-allow`), and `egress:ignore` tool overrides
+  (`tool-ignore`).
+- Tool override and unknown-tools routes (`POST /tools`, `PATCH /tools/{id}`,
+  `DELETE /tools/{id}`, `POST /privacy/unknown-tools`) are thin adapters over the
+  `privacy/rules.py` mutators, like the other `_dashboard_*` actions.
 
 The static dashboard files are checked in under `dashboard/dist/`. There is no
 frontend source build pipeline in this repository. If editing those files,
@@ -261,6 +302,11 @@ Important user-facing commands:
 /guardian rules
 /guardian rule add|delete|enable|disable|move ...
 /guardian privacy mode strict|read-only|llm|off
+/guardian privacy unknown-tools gate|allow
+/guardian tools
+/guardian tool set <match> [taints=a+b] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]
+/guardian tool delete <match_or_id>
+/guardian tool enable|disable <id_or_match>
 /guardian security enable|disable <rule_id>
 /guardian history [limit]
 /guardian failures [limit]

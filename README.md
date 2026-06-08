@@ -344,11 +344,67 @@ These action families normally require approval when private data is in scope:
 - Web/search/navigation/API calls whose arguments can carry private data.
 - Model/media tools that may send context to another model or generation
   service.
+- Unrecognized tools (custom or third-party) under taint, unless declared safe by
+  a tool override (see [Tool Classification And Overrides](#tool-classification-and-overrides)).
 - Final responses to group, cron, or unknown destinations.
 
 Read-only browsing and search are allowed only when arguments do not send
 private-looking or tainted session-derived text outward. Content returned from
 those tools may still taint the session.
+
+## Tool Classification And Overrides
+
+Guardian recognizes Hermes built-in tools and classifies their calls. Any tool it
+does **not** recognize — a third-party MCP tool, a custom integration, or a tool
+Guardian simply has no rule for — is treated as a potential sink and gated under
+taint, exactly like unknown MCP tools. This is the `unknown_tools` mode:
+
+- `gate` (default): unrecognized tools require approval once private data is in
+  scope. Untainted sessions are unaffected.
+- `allow`: restores the older permissive behavior (unrecognized non-MCP tools are
+  not gated). This is a footgun and surfaces a risk banner in `/guardian status`
+  and the dashboard.
+
+```text
+/guardian privacy unknown-tools gate|allow
+```
+
+When the default is too strict for a tool you trust, declare it with a **tool
+override** instead of weakening the global mode. Overrides let you tell Guardian
+what a tool actually does, and Guardian trusts your declaration:
+
+```text
+# An MCP server you trust: its reads carry email, and it is not a sink.
+/guardian tool set mcp_acme_* taints=email egress=ignore note="trusted acme server"
+
+# A custom tool that really sends messages: classify it so it gates correctly.
+/guardian tool set send_widget egress=message_send
+
+# A custom tool that is just a safe read:
+/guardian tool set lookup_widget egress=ignore
+
+# Force an unrecognized tool to require approval under taint:
+/guardian tool set risky_tool egress=gate
+
+/guardian tools                       # list overrides + current unknown-tools mode
+/guardian tool enable|disable <id>
+/guardian tool delete <match_or_id>
+```
+
+Override fields:
+
+- `match`: exact tool name, or a single trailing-`*` prefix (e.g. `mcp_acme_*`) to
+  cover every tool from one MCP server.
+- `taints`: data classes applied when the tool's result is observed (the "this tool
+  reads my email" case). Independent of egress.
+- `egress`: `ignore` (safe non-sink, allowed under taint), `gate` (force approval
+  under taint), or a concrete action family such as `message_send` or `web_api`.
+
+Overrides are a privacy-layer convenience. They never bypass the Security Module
+(credentials, OTPs, sensitive links) or the intrinsic same-call exfiltration hard
+blocks, which always run first. Editing overrides requires CLI or configured-owner
+privileges, and the dashboard requires explicit confirmation for the weakening
+`egress=ignore` and `unknown-tools=allow` actions.
 
 ## Browser And Terminal Behavior
 
@@ -391,6 +447,11 @@ Use these from a Hermes gateway interface:
 /guardian rule enable|disable <rule_id>
 /guardian rule move <rule_id> before|after <other_rule_id>
 /guardian privacy mode strict|read-only|llm|off
+/guardian privacy unknown-tools gate|allow
+/guardian tools
+/guardian tool set <match> [taints=class+class] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]
+/guardian tool delete <match_or_id>
+/guardian tool enable|disable <id_or_match>
 /guardian security
 /guardian security enable|disable <rule_id>
 /guardian language-packs
@@ -421,8 +482,8 @@ Guardian appears in the main Hermes dashboard at `/guardian` via
 
 Dashboard tabs:
 
-- **Settings**: edit privacy mode, toggle Security Module rules, and manage
-  language packs.
+- **Settings**: edit privacy mode, set the unknown-tools mode, manage tool
+  overrides, toggle Security Module rules, and manage language packs.
 - **Rules**: create, edit, delete, enable/disable, and reorder privacy rules.
 - **Recent Blocks**: inspect privacy/security blocks, approve pending actions,
   and dismiss approvals.
@@ -435,11 +496,15 @@ GET /api/plugins/hermes-guardian/policy
 GET /api/plugins/hermes-guardian/activity
 GET /api/plugins/hermes-guardian/activity/datatables
 POST /api/plugins/hermes-guardian/privacy/mode
+POST /api/plugins/hermes-guardian/privacy/unknown-tools
 PATCH /api/plugins/hermes-guardian/security/rules/{rule_id}
 PATCH /api/plugins/hermes-guardian/language-packs/{pack_id}
 POST /api/plugins/hermes-guardian/rules
 PATCH /api/plugins/hermes-guardian/rules/{rule_id}
 DELETE /api/plugins/hermes-guardian/rules/{rule_id}
+POST /api/plugins/hermes-guardian/tools
+PATCH /api/plugins/hermes-guardian/tools/{override_id}
+DELETE /api/plugins/hermes-guardian/tools/{override_id}
 POST /api/plugins/hermes-guardian/approvals/{approval_id}/approve
 POST /api/plugins/hermes-guardian/approvals/{approval_id}/dismiss
 ```
@@ -664,14 +729,73 @@ exfiltration, filename/upload shapes, supported same-call terminal exfiltration,
 multilingual auth-code/security phrasing, sensitive auth links, and benign
 controls. DNS-label-only exfiltration is tracked as a non-gating known gap.
 
-An optional AgentDojo adapter exists for separate local research runs:
+### AgentDojo adapter (optional, local research)
+
+[AgentDojo](https://github.com/ethz-spylab/agentdojo) is the common
+prompt-injection-against-tool-use benchmark used by LlamaFirewall and Invariant.
+The optional adapter drives Guardian's real Security + Privacy hooks over
+AgentDojo's ground-truth tool-call traces and reports Guardian-specific
+egress-monitor metrics. AgentDojo is intentionally a lazy optional import and is
+not installed by CI or required for normal Guardian development:
 
 ```bash
-python -m benchmarks.agentdojo_guardian
+python3 -m venv .venv-agentdojo
+.venv-agentdojo/bin/pip install --break-system-packages agentdojo
+.venv-agentdojo/bin/python -m benchmarks.agentdojo_guardian --summary
+.venv-agentdojo/bin/python -m benchmarks.agentdojo_guardian --pretty --out agentdojo_metrics.json
 ```
 
-AgentDojo is intentionally a lazy optional import and is not installed by CI or
-required for normal Guardian development.
+If AgentDojo is not installed the adapter prints install instructions and exits
+non-zero **without fabricating numbers**.
+
+**What it measures.** Guardian is an *egress monitor*, not an agent. The adapter
+does not run AgentDojo's agent pipeline or any LLM and cannot score end-to-end
+task success. For each task it takes the canonical `ground_truth` tool-call
+sequence and asks whether Guardian's deterministic gate fires on any egress call:
+
+- `prevented_rate` — fraction of *injection* (attack) tasks whose attacker
+  tool-call sequence Guardian gates.
+- `false_positive_rate` — fraction of *user* (utility) tasks whose benign
+  sequence Guardian gates. Guardian's gate is a human-approval prompt, so a
+  benign gate is friction (a prompt the operator approves), not a hard failure.
+
+Current results (AgentDojo `v1.2.1`, `strict` mode, deterministic verifier):
+
+| Suite | prevented_rate | false_positive_rate |
+|---|---|---|
+| banking | 1.00 (9/9) | 0.75 (12/16) |
+| slack | 0.80 (4/5) | 0.95 (20/21) |
+| travel | 1.00 (6/6) | 0.30 (6/20) |
+| workspace | 1.00 (6/6) | 0.62 (25/40) |
+| **overall** | **0.962 (25/26)** | **0.649 (63/97)** |
+
+Nine injection tasks have no ground-truth trace and are reported as
+unmeasurable, not scored. The one un-prevented injection (`slack
+injection_task_3`) only navigates to an attacker URL — a read, not an egress —
+so it is outside an egress monitor's scope by construction. The high benign
+false-positive rate is expected and honest: Guardian gates *all* tainted egress
+(payments, messages, file writes) for human approval and cannot autonomously
+tell a legitimate payment from an attacker payment — that decision is the
+operator's. Read-only utility tasks (most of `travel`) pass clean, which is why
+its FP rate is far lower.
+
+**Modeling assumptions** (all emitted in the metrics JSON and bounding the
+numbers): (1) AgentDojo's tools are unknown to Guardian, so the adapter supplies
+an explicit, auditable source/sink mapping via Guardian's `privacy.tools`
+override registry — without it the run would only measure "AgentDojo's vocabulary
+is unknown to Guardian"; (2) every session is tainted, reflecting AgentDojo's
+threat model in which the agent has read attacker-controlled content before
+acting; (3) runs use `strict` mode with the deterministic verifier.
+
+> **Caveat — no real-LLM judgment, and limited comparability.** These figures
+> use Guardian's *deterministic* gating only; no number here reflects real-model
+> (`llm` mode) judgment. Only label a Guardian number as a real-model result if
+> it was produced with an actual verifier, not the deterministic benchmark path.
+> The numbers are also **not directly comparable** to LlamaFirewall or Invariant
+> AgentDojo scores: those tools measure *attack success / utility under a live
+> agent rollout*, whereas Guardian measures *whether its egress gate fires on the
+> canonical ground-truth trace*. The denominators, the unit of evaluation, and
+> the meaning of "prevented" all differ.
 
 GitHub Actions runs `python -m pytest -q` on Python 3.11, 3.12, and 3.13.
 
@@ -698,8 +822,12 @@ systemctl restart hermes-gateway.service
 - Session taint is intentionally coarse. Volatile provenance can narrow copied
   phrase classes, but it is not a complete dependency proof and never makes
   missing provenance safe.
-- Tool classification is heuristic. Unknown MCP tools, browser actions, or
-  future Hermes tools should be classified conservatively until reviewed.
+- Tool classification is heuristic. Unrecognized tools (unknown MCP tools, custom
+  integrations, future Hermes tools) are gated conservatively under taint by
+  default; declare trusted ones with tool overrides rather than disabling the
+  secure default. A tool whose name matches a private-source pattern but is also a
+  non-standard sink may still be treated as a recognized read — review and add an
+  `egress=gate` override if needed.
 - URL paths, URL queries, search queries, redirects, image loads, DNS, and final
   responses can all be egress channels.
 - Terminal, code execution, browser console/CDP, and some MCP servers can act as

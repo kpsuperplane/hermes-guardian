@@ -139,6 +139,12 @@ def _require_dashboard_confirmation(action: str, body: dict[str, Any]) -> None:
     if action in {"create_rule", "update_rule"} and "move" not in body:
         if _requires_wildcard_allow_confirmation(body) and _confirmation_value(body) != "wildcard-allow":
             raise HTTPException(status_code=400, detail="wildcard allow rule requires confirmation")
+    if action == "unknown_tools" and str(body.get("mode") or "").strip().lower() == "allow":
+        if _confirmation_value(body) != "unknown-tools-allow":
+            raise HTTPException(status_code=400, detail="unknown-tools allow mode requires confirmation")
+    if action == "tool_override" and str(body.get("egress") or "").strip().lower() == "ignore":
+        if _confirmation_value(body) != "tool-ignore":
+            raise HTTPException(status_code=400, detail="ignore tool override requires confirmation")
 
 
 def _json_mutation_result(request: Request, action: str, result: tuple[dict[str, Any], int]) -> JSONResponse:
@@ -229,3 +235,46 @@ async def approve(request: Request, approval_id: str, body: dict[str, Any]) -> J
 async def dismiss(request: Request, approval_id: str) -> JSONResponse:
     _require_dashboard_admin(request)
     return _json_mutation_result(request, "dismiss", _guardian()._dashboard_approval_action(approval_id, "dismiss", ""))
+
+
+@router.post("/privacy/unknown-tools")
+async def set_unknown_tools(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    _require_dashboard_confirmation("unknown_tools", body)
+    return _json_mutation_result(
+        request,
+        "unknown_tools",
+        _guardian()._dashboard_unknown_tools_mode_action(str(body.get("mode") or "")),
+    )
+
+
+@router.post("/tools")
+async def create_tool_override(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    _require_dashboard_confirmation("tool_override", body)
+    return _json_mutation_result(
+        request,
+        "tool_override",
+        _guardian()._dashboard_tool_override_create_action(body),
+    )
+
+
+@router.patch("/tools/{override_id}")
+async def update_tool_override(request: Request, override_id: str, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    _require_dashboard_confirmation("tool_override", body)
+    return _json_mutation_result(
+        request,
+        "tool_override",
+        _guardian()._dashboard_tool_override_update_action(override_id, body),
+    )
+
+
+@router.delete("/tools/{override_id}")
+async def delete_tool_override(request: Request, override_id: str) -> JSONResponse:
+    _require_dashboard_admin(request)
+    return _json_mutation_result(
+        request,
+        "delete_tool_override",
+        _guardian()._dashboard_tool_override_delete_action(override_id),
+    )

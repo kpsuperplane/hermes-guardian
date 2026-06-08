@@ -152,6 +152,53 @@ def _dashboard_language_pack_action(pack_id: str, enabled: Any) -> tuple[dict[st
     return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
 
 
+def _dashboard_unknown_tools_mode_action(mode: str) -> tuple[dict[str, Any], int]:
+    ok, message = _set_unknown_tools_mode(mode)
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+
+
+def _dashboard_tool_override_create_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    match = payload.get("match") or payload.get("tool") or payload.get("tool_name") or ""
+    ok, message = _set_tool_override(
+        match,
+        taints=payload.get("taints"),
+        egress=payload.get("egress"),
+        destination=payload.get("destination"),
+        note=payload.get("note"),
+        enabled=payload.get("enabled"),
+    )
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+
+
+def _dashboard_tool_override_update_action(override_id: str, payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    target = str(override_id or "").strip()
+    existing = next((o for o in _tool_overrides() if o.get("id") == target), None)
+    if existing is None:
+        return {
+            "ok": False,
+            "message": f"No matching tool override found for {override_id}.",
+            "policy": _policy_snapshot(),
+        }, 404
+    if set(payload.keys()) <= {"enabled"} and "enabled" in payload:
+        ok, message = _set_tool_override_enabled(target, _config_bool(payload.get("enabled"), default=True))
+    else:
+        ok, message = _set_tool_override(
+            existing.get("match"),
+            taints=payload.get("taints"),
+            egress=payload.get("egress"),
+            destination=payload.get("destination"),
+            note=payload.get("note"),
+            enabled=payload.get("enabled"),
+        )
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+
+
+def _dashboard_tool_override_delete_action(match_or_id: str) -> tuple[dict[str, Any], int]:
+    ok, message = _delete_tool_override(match_or_id)
+    status = 200 if ok else (404 if message.startswith("No matching tool override") else 400)
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
+
+
 def _dashboard_rule_create_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     rule = _normalize_privacy_rule(payload)
     if rule is None:

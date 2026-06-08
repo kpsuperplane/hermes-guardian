@@ -628,6 +628,14 @@ def _runtime_risk_banners() -> list[dict[str, str]]:
                 "message": "Security rule intrinsic_exfiltration is disabled; same-call source-and-sink hard blocks are not active.",
             }
         )
+    if _unknown_tools_mode() == "allow":
+        banners.append(
+            {
+                "id": "unknown_tools_allow",
+                "severity": "high",
+                "message": "Unknown-tools mode is allow; unrecognized tools are not gated under taint (legacy fail-open).",
+            }
+        )
     return banners
 
 
@@ -686,6 +694,10 @@ def _policy_snapshot() -> dict[str, Any]:
     return {
         "privacy_policy": _privacy_policy(),
         "privacy_mode": _privacy_policy(),
+        "unknown_tools": _unknown_tools_mode(),
+        "tool_overrides": _tool_overrides_snapshot(),
+        "tool_override_egress_options": sorted(_TOOL_OVERRIDE_EGRESS_VALUES),
+        "all_privacy_classes": sorted(_ALL_PRIVACY_CLASSES),
         "risk_banners": risk_banners,
         "security_rules": _security_rules_snapshot(),
         "language_packs": _language_packs_snapshot(),

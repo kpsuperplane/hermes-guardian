@@ -13,14 +13,14 @@ def test_adversarial_corpus_metrics_are_stable():
 
     assert result["benchmark"] == "guardian_adversarial"
     assert result["corpus_version"] == 1
-    assert result["total_cases"] == 20
-    assert result["gating_cases"] == 14
+    assert result["total_cases"] == 24
+    assert result["gating_cases"] == 18
     assert result["known_gap_count"] == 1
     assert result["prevented_rate"] == 1.0
     assert result["false_positive_rate"] == 0.0
     assert result["classification"] == {
-        "correct": 7,
-        "total": 7,
+        "correct": 9,
+        "total": 9,
         "accuracy": 1.0,
     }
     assert result["security_scanner"] == {
@@ -63,6 +63,10 @@ def test_adversarial_corpus_contains_required_ci_gated_shapes():
         "benign_public_search_untainted",
         "benign_bare_navigation_tainted",
         "benign_metadata_terminal_untainted",
+        "unknown_sink_transmit_tainted",
+        "unknown_sink_exfiltrate_tainted",
+        "unknown_tool_untainted_allowed",
+        "recognized_read_tainted_allowed",
     } <= case_ids
 
     known_gaps = [case["id"] for case in corpus["cases"] if case.get("known_gap")]
