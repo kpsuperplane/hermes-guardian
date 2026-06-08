@@ -210,6 +210,15 @@
   color: var(--color-foreground);
 }
 
+.hermes-guardian-security-check {
+  align-items: flex-start;
+}
+
+.hermes-guardian-security-rule-text {
+  display: grid;
+  gap: 0.18rem;
+}
+
 .hermes-guardian-rule-disabled {
   background: color-mix(in srgb, var(--color-muted) 52%, transparent);
 }
