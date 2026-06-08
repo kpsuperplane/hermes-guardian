@@ -599,9 +599,24 @@ runtime safe by itself.
 
 ## Development
 
-There is no package manager lockfile or build system in this repository. The
-plugin is primarily standard-library Python. Optional runtime integrations may
-import FastAPI or Telegram libraries, but tests run without those dependencies.
+Guardian is distributed as a Hermes user plugin (loaded by path), not as a
+pip-installable package, so there is no build step. Project metadata and the
+optional-dependency manifest live in `pyproject.toml`; the core plugin is pure
+standard-library Python with no runtime dependencies.
+
+Install the pinned dev/CI dependencies (currently just `pytest`):
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+Optional integrations are declared as extras and imported lazily, so tests run
+without them. Install one only to exercise that integration locally:
+
+```bash
+pip install fastapi            # dashboard plugin API routes
+pip install python-telegram-bot  # Telegram cron notifications
+```
 
 Run the full test suite:
 
@@ -658,7 +673,7 @@ python -m benchmarks.agentdojo_guardian
 AgentDojo is intentionally a lazy optional import and is not installed by CI or
 required for normal Guardian development.
 
-GitHub Actions runs `python -m pytest -q` on Python 3.11 and 3.12.
+GitHub Actions runs `python -m pytest -q` on Python 3.11, 3.12, and 3.13.
 
 ## Updating
 
@@ -701,3 +716,7 @@ systemctl restart hermes-gateway.service
   comparisons.
 - [Hermes security guide](https://hermes-agent.nousresearch.com/docs/user-guide/security)
 - [Hermes security policy](https://github.com/NousResearch/hermes-agent/blob/main/SECURITY.md)
+
+## License
+
+Hermes Guardian is released under the [BSD 3-Clause License](./LICENSE).

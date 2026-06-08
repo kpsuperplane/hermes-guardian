@@ -20,17 +20,26 @@ changes that preserve fail-closed behavior and metadata-only storage.
 
 ## Current Project Shape
 
-There is no `pyproject.toml`, package manager lockfile, or build system in this
-repo. CI installs only `pytest` and runs:
+The plugin is distributed as a Hermes user plugin (cloned into
+`~/.hermes/plugins/hermes-guardian` and loaded by absolute path), not as a
+pip-installable package, so there is no `[build-system]` and no build step.
+
+`pyproject.toml` provides project metadata, a manifest of optional dependencies
+(`dashboard`, `telegram`, `dev` extras), and pytest configuration. The core
+plugin is pure standard-library Python with no runtime dependencies.
+`requirements-dev.txt` pins the dev/CI dependencies (currently just `pytest`).
+There is no full transitive lockfile.
+
+CI installs `requirements-dev.txt` and runs:
 
 ```bash
 python -m pytest -q
 ```
 
-GitHub Actions runs the test suite on Python 3.11 and 3.12. The plugin itself is
-primarily standard-library Python. Optional runtime integrations may import
-FastAPI or Telegram libraries, but `dashboard/plugin_api.py` includes import-only
-fallbacks for tests without FastAPI installed.
+GitHub Actions runs the test suite on Python 3.11, 3.12, and 3.13. Optional
+runtime integrations may import FastAPI or Telegram libraries, but
+`dashboard/plugin_api.py` includes import-only fallbacks for tests without
+FastAPI installed.
 
 Important local/runtime files are intentionally ignored by git:
 

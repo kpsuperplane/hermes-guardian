@@ -1,0 +1,10 @@
+# Pinned developer / CI dependencies for Hermes Guardian.
+#
+# The Guardian plugin itself has no runtime dependencies (pure standard-library
+# Python); optional integrations are declared as extras in pyproject.toml. This
+# file pins only what is needed to run the test suite and benchmarks reproducibly
+# in CI and locally.
+#
+# Install with:
+#   pip install -r requirements-dev.txt
+pytest==8.3.4

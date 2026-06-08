@@ -1,0 +1,62 @@
+# Hermes Guardian project metadata and tooling configuration.
+#
+# Guardian is distributed as a Hermes *user plugin*: it is cloned into
+# ~/.hermes/plugins/hermes-guardian and loaded by Hermes at runtime by absolute
+# path (see __init__.py and core.py). It is intentionally NOT a pip-installable
+# package, so this file deliberately omits a [build-system] table. Its purpose is
+# to provide project metadata, a manifest of optional dependencies, and tool
+# configuration (pytest). For a pinned, reproducible developer/CI install, use
+# requirements-dev.txt.
+
+[project]
+name = "hermes-guardian"
+version = "3.0.0"
+description = "Hermes Guardian security and egress policy enforcement for personal Hermes agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [{ name = "Kevin Pei", email = "hello@kevinpei.com" }]
+keywords = [
+    "hermes",
+    "agent",
+    "security",
+    "privacy",
+    "prompt-injection",
+    "information-flow",
+    "egress",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+]
+
+# The core plugin is pure standard-library Python and has no runtime
+# dependencies. The extras below document the optional integrations. They are
+# imported lazily with fallbacks, so Guardian (and its test suite) runs without
+# them; install an extra only when you exercise that integration.
+[project.optional-dependencies]
+# Dashboard plugin API adapter (dashboard/plugin_api.py). In a normal deployment
+# FastAPI is provided by the host Hermes dashboard service; install this only to
+# exercise the real API routes locally.
+dashboard = ["fastapi>=0.110"]
+# Telegram copy-button cron notification delivery
+# (integrations/cron_notifications.py).
+telegram = ["python-telegram-bot>=21"]
+# Developer / CI tooling. See requirements-dev.txt for exact pins.
+dev = ["pytest>=8,<9"]
+
+[project.urls]
+Homepage = "https://github.com/kpsuperplane/hermes-guardian"
+Repository = "https://github.com/kpsuperplane/hermes-guardian"
+Issues = "https://github.com/kpsuperplane/hermes-guardian/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
