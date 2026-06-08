@@ -298,8 +298,8 @@ and MCP private-source tools paired with webhook/share sinks.
 Disabling a security rule weakens non-approvable hardening. Privacy checks still
 apply to classified private egress, but the disabled security category no
 longer categorically blocks matching content or action shapes. `/guardian
-status` and the dashboard policy snapshot surface risk banners when runtime
-network containment is unknown and when `intrinsic_exfiltration` is disabled.
+status` and the dashboard policy snapshot surface a risk banner when
+`intrinsic_exfiltration` is disabled.
 
 ## Data Classes
 

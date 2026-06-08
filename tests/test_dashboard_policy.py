@@ -32,7 +32,7 @@ def test_dashboard_policy_snapshot_includes_risk_banners():
     policy = plugin._policy_snapshot()
     banner_ids = {banner["id"] for banner in policy["risk_banners"]}
 
-    assert {"unknown_network_containment", "intrinsic_exfiltration_disabled"} <= banner_ids
+    assert banner_ids == {"intrinsic_exfiltration_disabled"}
 
 
 def test_dashboard_static_renders_risk_banners():

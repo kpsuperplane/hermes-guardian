@@ -162,14 +162,12 @@ def test_security_slash_command_lists_and_toggles_rules():
     assert "Enabled security rule sensitive_links" in enabled
 
 
-def test_policy_snapshot_includes_runtime_risk_banners():
+def test_policy_snapshot_has_no_risk_banners_by_default():
     plugin = load_plugin()
 
     policy = plugin._policy_snapshot()
-    banners = {banner["id"]: banner for banner in policy["risk_banners"]}
 
-    assert "unknown_network_containment" in banners
-    assert "network containment is not verified" in banners["unknown_network_containment"]["message"]
+    assert policy["risk_banners"] == []
 
 
 def test_policy_snapshot_warns_when_intrinsic_rule_disabled():

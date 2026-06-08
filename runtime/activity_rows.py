@@ -619,13 +619,7 @@ def _cron_job_choices_for_dashboard() -> list[dict[str, Any]]:
 
 
 def _runtime_risk_banners() -> list[dict[str, str]]:
-    banners = [
-        {
-            "id": "unknown_network_containment",
-            "severity": "info",
-            "message": "Runtime network containment is not verified by Guardian; unknown or ambiguous network sinks are classified conservatively.",
-        }
-    ]
+    banners = []
     if not _security_rule_enabled("intrinsic_exfiltration"):
         banners.append(
             {

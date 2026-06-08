@@ -53,13 +53,12 @@ def test_non_owner_slash_cannot_change_global_privacy_mode():
     assert plugin._privacy_policy() == "llm"
 
 
-def test_guardian_status_surfaces_runtime_risk_banners():
+def test_guardian_status_surfaces_concrete_risk_banners():
     plugin = load_plugin()
     assert plugin._set_security_rule("intrinsic_exfiltration", False)[0]
 
     response = plugin._handle_guardian_command("status")
 
-    assert "Risk: Runtime network containment is not verified" in response
     assert "Risk: Security rule intrinsic_exfiltration is disabled" in response
 
 
