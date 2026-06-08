@@ -78,7 +78,8 @@ def _dashboard_rule_form_suggestions(
     }
 
 
-_RECENT_BLOCK_DECISIONS = ("blocked", "denied", "security_blocked")
+_RECENT_BLOCK_DECISIONS = ("blocked", "security_blocked")
+_RESOLVED_APPROVAL_DECISIONS = ("denied", "manual_approved")
 
 
 def _activity_data_classes_list(value: Any) -> list[str]:
@@ -146,6 +147,41 @@ def _stored_pending_approval_expirations(approval_ids: set[str]) -> dict[str, in
     }
 
 
+def _resolved_approval_times(approval_ids: set[str]) -> dict[str, int]:
+    ids = sorted(
+        approval_id
+        for approval_id in (str(item or "").strip() for item in approval_ids)
+        if re.fullmatch(r"[0-9]{4}", approval_id)
+    )
+    if not ids:
+        return {}
+    try:
+        _ensure_activity_db()
+        with _activity_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT approval_id, MAX(ts) AS ts
+                FROM activity
+                WHERE approval_id IN (
+                """ + ",".join("?" for _ in ids) + """
+                )
+                AND decision IN (
+                """ + ",".join("?" for _ in _RESOLVED_APPROVAL_DECISIONS) + """
+                )
+                GROUP BY approval_id
+                """,
+                ids + list(_RESOLVED_APPROVAL_DECISIONS),
+            ).fetchall()
+    except Exception as exc:
+        logger.debug("%s: failed to load resolved approval times: %s", _PLUGIN_NAME, exc)
+        return {}
+    return {
+        str(row["approval_id"]): int(float(row["ts"] or 0))
+        for row in rows
+        if str(row["approval_id"] or "")
+    }
+
+
 def _dashboard_recent_blocks(pending: list[dict[str, Any]], *, limit: int = 5) -> list[dict[str, Any]]:
     pending_by_id = {
         str(item.get("id") or ""): item
@@ -153,19 +189,26 @@ def _dashboard_recent_blocks(pending: list[dict[str, Any]], *, limit: int = 5) -
         if str(item.get("id") or "")
     }
     rows = _activity_rows({"decisions": ",".join(_RECENT_BLOCK_DECISIONS)}, limit=max(limit * 4, limit))
-    stored_expirations = _stored_pending_approval_expirations({
+    row_approval_ids = {
         str(row.get("approval_id") or "")
         for row in rows
         if str(row.get("approval_id") or "")
-    })
+    }
+    stored_expirations = _stored_pending_approval_expirations(row_approval_ids)
+    resolved_approval_times = _resolved_approval_times(row_approval_ids)
     blocks: list[dict[str, Any]] = []
     seen: set[str] = set()
 
     for row in rows:
         approval_id = str(row.get("approval_id") or "")
         pending_approval = pending_by_id.get(approval_id)
+        row_ts = int(row.get("ts") or 0)
+        if approval_id and not pending_approval and resolved_approval_times.get(approval_id, 0) >= row_ts:
+            continue
         historical_approval_id = approval_id if approval_id and not pending_approval else ""
         expires_at = int((pending_approval or {}).get("expires_at") or stored_expirations.get(approval_id, 0) or 0)
+        if historical_approval_id and not expires_at:
+            continue
         if pending_approval:
             approval_status = "pending"
         elif str(row.get("decision") or "") == "denied":

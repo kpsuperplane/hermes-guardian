@@ -247,6 +247,25 @@ def test_policy_snapshot_marks_stored_expired_approval_as_dismissible(monkeypatc
     assert block["expires_at"] == expires_at
 
 
+def test_policy_snapshot_omits_orphaned_historical_approval_blocks():
+    plugin = load_plugin()
+
+    plugin._emit_activity(
+        "blocked",
+        session_id="s1",
+        tool_name="send_message",
+        action_family="message_send",
+        destination="friend",
+        data_classes={"email"},
+        reason="requires approval",
+        approval_id="1234",
+    )
+
+    policy = plugin._policy_snapshot()
+
+    assert policy["recent_blocks"] == []
+
+
 def test_dashboard_dismiss_action_handles_stored_expired_approval(monkeypatch):
     plugin = load_plugin()
     now = {"value": 1000}
@@ -265,9 +284,7 @@ def test_dashboard_dismiss_action_handles_stored_expired_approval(monkeypatch):
     assert status == 200
     assert payload["ok"] is True
     assert payload["message"] == f"Dismissed expired guardian approval {approval_id}."
-    assert payload["policy"]["recent_blocks"][0]["decision"] == "denied"
-    assert payload["policy"]["recent_blocks"][0]["approval_status"] == "dismissed"
-    assert payload["policy"]["recent_blocks"][0]["dismiss_id"] == ""
+    assert payload["policy"]["recent_blocks"] == []
     with plugin._activity_connect() as conn:
         count = conn.execute(
             "SELECT COUNT(*) FROM pending_approvals WHERE id = ?",
@@ -313,8 +330,7 @@ def test_dashboard_approval_actions_remove_pending_blocks():
     assert status == 200
     assert payload["ok"] is True
     assert approval_id not in plugin._PENDING_APPROVALS
-    assert payload["policy"]["recent_blocks"][0]["pending"] is False
-    assert payload["policy"]["recent_blocks"][0]["approval_id"] == ""
+    assert payload["policy"]["recent_blocks"] == []
     assert len(payload["policy"]["rules"]) == 1
     rule = payload["policy"]["rules"][0]
     assert rule["action_family"] == "message_send"
@@ -331,9 +347,7 @@ def test_dashboard_approval_actions_remove_pending_blocks():
     assert status == 200
     assert payload["ok"] is True
     assert approval_id not in plugin._PENDING_APPROVALS
-    assert payload["policy"]["recent_blocks"][0]["pending"] is False
-    assert payload["policy"]["recent_blocks"][0]["approval_id"] == ""
-    assert payload["policy"]["recent_blocks"][0]["decision"] == "denied"
+    assert payload["policy"]["recent_blocks"] == []
 
 
 def test_datatables_payload_labels_terminal_taint_as_result():

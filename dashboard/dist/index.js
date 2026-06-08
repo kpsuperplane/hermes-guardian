@@ -315,6 +315,9 @@
     const stateModeSaving = useState(false);
     const modeSaving = stateModeSaving[0];
     const setModeSaving = stateModeSaving[1];
+    const stateLanguagePacksSaving = useState(false);
+    const languagePacksSaving = stateLanguagePacksSaving[0];
+    const setLanguagePacksSaving = stateLanguagePacksSaving[1];
     const stateModal = useState(false);
     const showModal = stateModal[0];
     const setShowModal = stateModal[1];
@@ -403,19 +406,26 @@
       if (tab === "history") loadHistory(historyPage, historyPageSize);
     }, [tab, historyPage, historyPageSize]);
 
-    function saveMode() {
-      const body = { mode: privacyMode };
-      if (privacyMode === "off") {
+    function saveMode(nextMode) {
+      nextMode = text(nextMode, privacyMode);
+      if (nextMode === privacyMode) return;
+      const previousMode = privacyMode;
+      const body = { mode: nextMode };
+      if (nextMode === "off") {
         if (!window.confirm("Turn Guardian privacy egress checks off? Security-sensitive blocking remains active.")) return;
         body.confirm = "privacy-off";
       }
+      setPrivacyMode(nextMode);
       setModeSaving(true);
       api("/privacy/mode", { method: "POST", body: JSON.stringify(body) })
         .then(function (payload) {
           showToast(payload.message || "Saved.");
           return load();
         })
-        .catch(function (err) { showToast(String(err.message || err), "error"); })
+        .catch(function (err) {
+          setPrivacyMode(previousMode);
+          showToast(String(err.message || err), "error");
+        })
         .finally(function () { setModeSaving(false); });
     }
 
@@ -476,13 +486,41 @@
     }
 
     function patchLanguagePack(packId, enabled) {
+      setLanguagePacksSaving(true);
       return api("/language-packs/" + encodeURIComponent(packId), { method: "PATCH", body: JSON.stringify({ enabled: enabled }) })
         .then(function (result) {
           showToast(result.message || "Updated.");
           return load();
         }).catch(function (err) {
           showToast(String(err.message || err), "error");
+        }).finally(function () { setLanguagePacksSaving(false); });
+    }
+
+    function setAllLanguagePacks(enabled) {
+      const currentLanguagePacks = (policy && policy.language_packs) || [];
+      const targets = currentLanguagePacks.filter(function (pack) {
+        return pack.required !== true && (pack.enabled !== false) !== enabled;
+      });
+      if (!targets.length) {
+        showToast(enabled ? "All language packs are already enabled." : "Optional language packs are already disabled.");
+        return;
+      }
+      setLanguagePacksSaving(true);
+      let request = Promise.resolve(null);
+      targets.forEach(function (pack) {
+        request = request.then(function () {
+          return api("/language-packs/" + encodeURIComponent(pack.id), {
+            method: "PATCH",
+            body: JSON.stringify({ enabled: enabled }),
+          });
         });
+      });
+      request.then(function () {
+        showToast(enabled ? "Enabled all optional language packs." : "Disabled all optional language packs.");
+        return load();
+      }).catch(function (err) {
+        showToast(String(err.message || err), "error");
+      }).finally(function () { setLanguagePacksSaving(false); });
     }
 
     function deleteRule(ruleId) {
@@ -601,6 +639,11 @@
     function renderSettings() {
       const securityRules = (policy && policy.security_rules) || [];
       const languagePacks = (policy && policy.language_packs) || [];
+      const optionalLanguagePacks = languagePacks.filter(function (pack) { return pack.required !== true; });
+      const enabledLanguagePacks = languagePacks.filter(function (pack) { return pack.enabled !== false; });
+      const enabledOptionalLanguagePacks = optionalLanguagePacks.filter(function (pack) { return pack.enabled !== false; });
+      const allOptionalLanguagePacksEnabled = optionalLanguagePacks.length ? enabledOptionalLanguagePacks.length === optionalLanguagePacks.length : true;
+      const languagePackSummary = enabledLanguagePacks.length + " of " + languagePacks.length + " enabled";
       return h("div", { className: "hermes-guardian-grid" },
         h("div", { className: "hermes-guardian-card" },
           h("div", { className: "hermes-guardian-card-head" },
@@ -609,10 +652,9 @@
               h("div", { className: "hermes-guardian-muted" }, "Security filtering remains active in every privacy mode."),
             ),
             h("div", { className: "hermes-guardian-actions" },
-              h("select", { className: "hermes-guardian-select", value: privacyMode, onChange: function (event) { setPrivacyMode(event.target.value); } },
+              h("select", { className: "hermes-guardian-select", value: privacyMode, disabled: modeSaving, onChange: function (event) { saveMode(event.target.value); } },
                 ["strict", "read-only", "llm", "off"].map(function (mode) { return h("option", { key: mode, value: mode }, mode); }),
               ),
-              h(Button, { onClick: saveMode, disabled: modeSaving }, modeSaving ? "Saving" : "Save"),
             ),
           ),
         ),
@@ -636,18 +678,48 @@
         ),
         h("div", { className: "hermes-guardian-card" },
           h("div", { className: "hermes-guardian-card-title" }, "Language packs"),
-          languagePacks.length ? h("div", { className: "hermes-guardian-grid" },
+          h("div", { className: "hermes-guardian-muted hermes-guardian-section-description" },
+            "Language packs extend Guardian detection for security-sensitive phrases, private field labels, browser private-context hints, and sensitive links across languages.",
+          ),
+          languagePacks.length ? h("div", { className: "hermes-guardian-language-grid" },
+            h("label", {
+              key: "select-all",
+              className: "hermes-guardian-language-card hermes-guardian-language-card-all" + (allOptionalLanguagePacksEnabled ? " hermes-guardian-language-card-active" : ""),
+              title: allOptionalLanguagePacksEnabled ? "Disable all optional language packs" : "Enable all language packs",
+            },
+              h("input", {
+                type: "checkbox",
+                checked: allOptionalLanguagePacksEnabled,
+                disabled: languagePacksSaving || !optionalLanguagePacks.length,
+                onChange: function (event) { setAllLanguagePacks(event.target.checked); },
+              }),
+              h("span", { className: "hermes-guardian-language-card-body" },
+                h("span", { className: "hermes-guardian-language-card-top" },
+                  h("span", { className: "hermes-guardian-language-name" }, "Select all"),
+                  h("span", { className: "hermes-guardian-language-code" }, "bulk"),
+                ),
+                h("span", { className: "hermes-guardian-muted" }, languagePackSummary),
+              ),
+            ),
             languagePacks.map(function (pack) {
-              return h("label", { key: pack.id, className: "hermes-guardian-check hermes-guardian-security-check" },
+              const enabled = pack.enabled !== false;
+              const required = pack.required === true;
+              const classes = ["hermes-guardian-language-card"];
+              if (enabled) classes.push("hermes-guardian-language-card-active");
+              if (required) classes.push("hermes-guardian-language-card-required");
+              return h("label", { key: pack.id, className: classes.join(" ") },
                 h("input", {
                   type: "checkbox",
-                  checked: pack.enabled !== false,
-                  disabled: pack.required === true,
+                  checked: enabled,
+                  disabled: languagePacksSaving || required,
                   onChange: function (event) { patchLanguagePack(pack.id, event.target.checked); },
                 }),
-                h("span", { className: "hermes-guardian-language-pack-text" },
-                  h("span", null, text(pack.name || pack.id)),
-                  h("span", { className: "hermes-guardian-muted" }, text(pack.id) + (pack.required ? " · required" : "")),
+                h("span", { className: "hermes-guardian-language-card-body" },
+                  h("span", { className: "hermes-guardian-language-card-top" },
+                    h("span", { className: "hermes-guardian-language-name" }, text(pack.name || pack.id)),
+                    h("span", { className: "hermes-guardian-language-code" }, text(pack.id) + (required ? " · required" : "")),
+                  ),
+                  h("span", { className: "hermes-guardian-muted" }, required ? "Always on" : (enabled ? "Enabled" : "Disabled")),
                 ),
               );
             }),
@@ -667,7 +739,9 @@
     function renderRules() {
       return h("div", { className: "hermes-guardian-grid" },
         h("div", { className: "hermes-guardian-topbar" },
-          h("div", null),
+          h("p", { className: "hermes-guardian-muted hermes-guardian-rule-description" },
+            "Egress rules decide which tainted private data can leave Guardian by matching action, destination, data class, and owner/session or cron scope.",
+          ),
           h(Button, { onClick: openCreate }, "New rule"),
         ),
         rules.length ? rules.map(function (rule, index) {
@@ -730,10 +804,6 @@
                 approvalButton(block, "approve-once", "Approve once", true, staleTitle),
                 approvalButton(block, "approve-always", "Approve always", true, staleTitle),
                 h(Button, { key: "dismiss", variant: "secondary", title: staleTitle, onClick: function () { approvalAction(block, "dismiss"); } }, "Dismiss"),
-              ) : staleApproval ? h("div", { className: "hermes-guardian-actions" },
-                approvalButton(block, "approve-once", "Approve once", true, staleTitle),
-                approvalButton(block, "approve-always", "Approve always", true, staleTitle),
-                disabledActionButton("dismiss", "Dismiss", staleTitle, "secondary"),
               ) : null,
             ),
             h("div", { className: "hermes-guardian-block-meta" },
@@ -817,7 +887,7 @@
       error ? h("div", { className: "hermes-guardian-banner" }, error) : null,
       h(ToastRegion, { toasts: toasts, onDismiss: dismissToast }),
       h("div", { className: "hermes-guardian-tabs", role: "tablist" },
-        [["settings", "Settings"], ["rules", "Rules"], ["blocks", "Recent Blocks"], ["history", "History"]].map(function (item) {
+        [["settings", "Settings"], ["rules", "Egress Rules"], ["blocks", "Recent Blocks"], ["history", "History"]].map(function (item) {
           return h("button", { key: item[0], type: "button", className: "hermes-guardian-tab " + (tab === item[0] ? "hermes-guardian-tab-active" : ""), onClick: function () { setTab(item[0]); } }, item[1]);
         }),
       ),

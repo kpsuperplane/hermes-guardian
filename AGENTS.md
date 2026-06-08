@@ -200,6 +200,11 @@ When adding a new Hermes tool family:
 The dashboard is integrated through `dashboard/manifest.json` at `/guardian`.
 API routes are mounted under `/api/plugins/hermes-guardian/`.
 
+`guardian.hermes.kevinpei.com` and the standalone
+`hermes-guardian-dashboard.service` are retired. Do not use, restart, or debug
+that standalone service for normal dashboard work. The supported UI surface is
+the Hermes dashboard plugin tab served by `hermes-dashboard.service`.
+
 Keep `dashboard/plugin_api.py` as a thin adapter:
 
 - It should load the plugin facade by absolute path.
