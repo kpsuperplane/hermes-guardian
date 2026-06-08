@@ -526,6 +526,16 @@
       );
     }
 
+    function historyReasonCell(row) {
+      const full = text(row.reason || row.reason_short);
+      const short = text(row.reason_short || row.reason);
+      if (!full || full === short) return full;
+      return h("details", { className: "hermes-guardian-history-reason", title: full },
+        h("summary", null, short),
+        h("div", { className: "hermes-guardian-history-reason-full" }, full),
+      );
+    }
+
     const rules = (policy && policy.rules) || [];
     const blocks = (policy && policy.recent_blocks) || [];
 
@@ -693,7 +703,7 @@
                 h("td", null, text(row.time, timeText(row.ts))),
                 h("td", null, historyTargetCell(row)),
                 h("td", null, text(row.data_classes)),
-                h("td", null, text(row.reason_short || row.reason)),
+                h("td", null, historyReasonCell(row)),
               );
             }) : h("tr", null, h("td", { colSpan: 5, className: "hermes-guardian-muted" }, historyLoading ? "Loading history..." : "No history yet."))),
           ),

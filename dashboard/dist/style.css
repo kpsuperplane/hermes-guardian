@@ -458,6 +458,22 @@
   line-height: 1.35;
 }
 
+.hermes-guardian-history-reason {
+  min-width: 0;
+}
+
+.hermes-guardian-history-reason summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.hermes-guardian-history-reason-full {
+  margin-top: 0.35rem;
+  color: var(--color-muted-foreground);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 720px) {
   .hermes-guardian-card,
   .hermes-guardian-modal {
