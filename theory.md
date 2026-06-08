@@ -122,14 +122,19 @@ Language packs improve detection coverage but do not create a universal natural-
 
 When a private source is observed, Guardian records taint on the session. Session taint is coarse: it marks the session as having seen private data, without proving which exact output strings depend on which exact source objects.
 
+Guardian also keeps a volatile, metadata-only approximation of object-level provenance for copied text. For non-security-sensitive, medium-length strings in tainting tool results, it records keyed HMAC fingerprints with source labels and data classes in session memory only. When later tool arguments or final responses structurally contain a matching copied phrase, the policy can narrow the classes in scope to the matched source classes plus any private-looking argument classes. If there is no match, the text is too short, the output is paraphrased, the phrase was security-sensitive, or provenance is absent, Guardian falls back to the full session taint. Provenance is cleared on session reset and intentionally not persisted to activity, approvals, rules, or LLM verifier payloads.
+
 This is conservative in one direction and imprecise in another:
 
-- It can block flows even when the outgoing content is harmless.
+- It can block flows even when the outgoing content is harmless, especially
+  when volatile provenance cannot match a copied phrase.
 - It can miss flows when the sink is not classified or when a tool reads and exfiltrates data internally before taint is recorded.
 
 ### Sink classification
 
-Guardian classifies tool calls by action family and destination. Examples include:
+Guardian classifies tool calls by action family and destination, with additive
+context fields for purpose and pseudonymous recipient identity where available.
+Examples include:
 
 - Sending a message.
 - Posting to a service.
@@ -143,7 +148,11 @@ The security property depends on correct sink classification. Unknown or open-en
 
 ### Declassification
 
-Approvals and allow rules act as declassification decisions. A declassification decision means that a particular class of private information is allowed to flow to a particular destination through a particular kind of action under a particular scope.
+Approvals and allow rules act as declassification decisions. A declassification
+decision means that a particular class of private information is allowed to flow
+to a particular route, and optionally a particular purpose or pseudonymous
+recipient identity, through a particular kind of action under a particular
+scope.
 
 A typical decision includes:
 
@@ -151,6 +160,8 @@ A typical decision includes:
 - Session or cron scope.
 - Action family.
 - Destination.
+- Purpose token.
+- Pseudonymous recipient identity.
 - Data classes.
 - Expiration or remaining-use limits.
 - Decision reason and metadata.
@@ -170,15 +181,15 @@ Guardian distinguishes ordinary private context from access-sensitive content. C
 
 These are treated differently from ordinary private information. In the Guardian model, they are candidates for categorical blocking or suppression rather than normal approval-based declassification.
 
-The Security Module is configured through high-level rules that are enabled by default. These rules cover semantic account-security content, credential-shaped content, sensitive links, intrinsic same-call exfiltration shapes, and terminal remote-read shortcuts targeting private-network or metadata hosts. When an enabled Security Module rule produces a finding, the action, tool result, or final response is blocked or suppressed without an approval path. Privacy allow rules, privacy mode changes, and approval commands do not declassify Security Module findings.
+The Security Module is configured through high-level rules that are enabled by default. These rules cover semantic account-security content, credential-shaped content, sensitive links, intrinsic same-call exfiltration shapes, and terminal remote-read shortcuts targeting private-network or metadata hosts. Intrinsic same-call detection is structural: it looks for local/code secret reads, browser console/CDP state reads, or obvious MCP private-source tools combined with network, webhook, or share sinks. When an enabled Security Module rule produces a finding, the action, tool result, or final response is blocked or suppressed without an approval path. Privacy allow rules, privacy mode changes, and approval commands do not declassify Security Module findings.
 
-Security-rule toggles are administrative model changes, not declassification decisions. Disabling a Security Module rule means Guardian no longer categorically blocks that matching content or action shape. The privacy taint-and-egress layer can still gate classified private egress, but it is no substitute for the disabled non-approvable hardening category.
+Security-rule toggles are administrative model changes, not declassification decisions. Disabling a Security Module rule means Guardian no longer categorically blocks that matching content or action shape. The privacy taint-and-egress layer can still gate classified private egress, but it is no substitute for the disabled non-approvable hardening category. Runtime policy snapshots, `/guardian status`, and the dashboard surface risk banners for unknown network containment and for disabled intrinsic same-call hardening.
 
 ### Metadata and control surfaces
 
 Guardian's operational surfaces are designed to preserve the same policy semantics across slash commands, CLI helpers, and the dashboard. Dashboard mutation routes call the same policy mutation functions used by the command surfaces, and dashboard mutations can be disabled or guarded by an admin token.
 
-The activity and dashboard model is metadata-only. Activity rows, approval records, policy snapshots, dashboard payloads, cron notifications, and LLM-verifier inputs should not contain raw private bodies, typed browser text, document contents, credentials, tokenized URL paths or queries, full command payloads carrying secrets, or other raw content-bearing arguments. Action details are reduced to bounded summaries such as action family, destination host, data classes, sanitized reason, and redaction notes.
+The activity and dashboard model is metadata-only. Activity rows, approval records, policy snapshots, dashboard payloads, cron notifications, and LLM-verifier inputs should not contain raw private bodies, typed browser text, document contents, credentials, tokenized URL paths or queries, full command payloads carrying secrets, raw message recipients, or other raw content-bearing arguments. Intrinsic same-call blocks persist only bounded metadata such as action family, destination host or network class, purpose token, pseudonymous recipient identity, data classes, and sanitized reason; other action details are reduced to bounded summaries and redaction notes.
 
 ## The mediated-flow property
 
@@ -190,8 +201,8 @@ More formally:
 
 - Let `L` be a set of private labels.
 - Let `T(session)` be the set of labels observed in a session.
-- Let `A(tool, args, session)` classify a proposed action as either no egress or an egress tuple `(action_family, destination)`.
-- Let `P(actor, session, action_family, destination, labels, context)` represent allow, deny, and declassification policy.
+- Let `A(tool, args, session)` classify a proposed action as either no egress or an egress tuple `(action_family, destination, purpose, recipient_identity)`.
+- Let `P(actor, session, action_family, destination, purpose, recipient_identity, labels, context)` represent allow, deny, and declassification policy.
 - An action, result, or final response with an enabled Security Module finding is blocked or suppressed before ordinary privacy declassification applies.
 - A mediated action is allowed when it is not classified as egress, when no private labels are in scope, or when policy allows the flow.
 - A mediated action is blocked or routed to approval when it is classified as egress, private labels are in scope, and no policy allows the flow.
@@ -303,11 +314,11 @@ Shells, code execution, browser console/CDP, and some MCP servers fall into this
 
 ### Coarse taint
 
-Session-level taint is not object-level provenance. It records that private data has entered the session, not that a specific outbound value depends on a specific private source.
+Session-level taint is not complete object-level provenance. It records that private data has entered the session, and Guardian's volatile copied-phrase provenance can sometimes narrow which source classes are implicated, but it does not prove semantic dependency.
 
 This creates predictable tradeoffs:
 
-- Benign outbound actions may require approval because the session has private taint.
+- Benign outbound actions may require approval because the session has private taint and no copied-phrase provenance match.
 - Encoded or indirect flows can evade policy when the sink is not recognized.
 - Approvals operate over action/destination/data-class context rather than a full proof of dependency.
 
@@ -319,10 +330,10 @@ For that reason, language packs are not the primary confidentiality boundary. So
 
 ### Coarse declassification context
 
-Guardian’s policy model primarily reasons over actor, session, action family, destination, data class, and scope. Human privacy norms often depend on richer context:
+Guardian’s policy model primarily reasons over actor, session, action family,
+destination, a safe purpose token, a stable pseudonymous recipient identity,
+data class, and scope. Human privacy norms often depend on richer context:
 
-- Purpose.
-- Recipient identity.
 - Recipient visibility.
 - Destination entity.
 - Data subject.
@@ -443,7 +454,11 @@ GAAP is a broader confidentiality architecture. Guardian is focused on egress an
 
 Contextual-integrity analyses argue that instruction/data separation alone is insufficient because the legitimacy of an information flow depends on context: who sends what, to whom, for what purpose, under what norm.
 
-Guardian’s policy tuple captures some of this context through actor, session, action family, destination, data class, and scope. It does not encode the full richness of contextual privacy norms. This makes it practical but less expressive than a full contextual-integrity policy system.
+Guardian’s policy tuple captures some of this context through actor, session,
+action family, destination, purpose, pseudonymous recipient identity, data
+class, and scope. It does not encode the full richness of contextual privacy
+norms. This makes it practical but less expressive than a full
+contextual-integrity policy system.
 
 ### Design-pattern approaches
 

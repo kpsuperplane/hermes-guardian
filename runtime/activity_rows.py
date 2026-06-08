@@ -28,7 +28,7 @@ def _dashboard_suggestion_value(value: Any, *, limit: int = 160) -> str:
 
 
 def _activity_distinct_values(column: str, *, limit: int = 40) -> list[str]:
-    if column not in {"destination", "tool_name"}:
+    if column not in {"destination", "tool_name", "purpose", "recipient_identity"}:
         return []
     _ensure_activity_db()
     sql = (
@@ -54,6 +54,8 @@ def _dashboard_rule_form_suggestions(
 ) -> dict[str, list[str]]:
     destinations: list[str] = []
     tool_names: list[str] = []
+    purposes: list[str] = []
+    recipient_identities: list[str] = []
 
     def add(target: list[str], value: Any, *, limit: int = 160) -> None:
         cleaned = _dashboard_suggestion_value(value, limit=limit)
@@ -64,17 +66,27 @@ def _dashboard_rule_form_suggestions(
         match = rule.get("match") or {}
         add(destinations, match.get("destination"))
         add(tool_names, match.get("tool_name"), limit=120)
+        add(purposes, match.get("purpose"), limit=80)
+        add(recipient_identities, match.get("recipient_identity"), limit=120)
     for approval in pending:
         add(destinations, approval.get("destination"))
         add(tool_names, approval.get("tool_name"), limit=120)
+        add(purposes, approval.get("purpose"), limit=80)
+        add(recipient_identities, approval.get("recipient_identity"), limit=120)
     for value in _activity_distinct_values("destination"):
         add(destinations, value)
     for value in _activity_distinct_values("tool_name", limit=60):
         add(tool_names, value, limit=120)
+    for value in _activity_distinct_values("purpose", limit=60):
+        add(purposes, value, limit=80)
+    for value in _activity_distinct_values("recipient_identity", limit=60):
+        add(recipient_identities, value, limit=120)
 
     return {
         "destinations": destinations[:80],
         "tool_names": tool_names[:80],
+        "purposes": purposes[:80],
+        "recipient_identities": recipient_identities[:80],
     }
 
 
@@ -101,6 +113,9 @@ def _pending_approval_rule_coverage(approval: dict[str, Any]) -> dict[str, Any]:
         "tool_name": str(approval.get("tool_name") or ""),
         "action_family": str(approval.get("action_family") or ""),
         "destination": str(approval.get("destination") or ""),
+        "purpose": str(approval.get("purpose") or "unknown"),
+        "recipient_identity": str(approval.get("recipient_identity") or "none"),
+        "legacy_destination": str(approval.get("legacy_destination") or ""),
         "data_classes": _activity_data_classes_list(approval.get("data_classes")),
         "fingerprint": str(approval.get("fingerprint") or ""),
     }
@@ -243,6 +258,8 @@ def _dashboard_recent_blocks(pending: list[dict[str, Any]], *, limit: int = 5) -
             "tool_name": str(row.get("tool_name") or (pending_approval or {}).get("tool_name") or ""),
             "action_family": str(row.get("action_family") or (pending_approval or {}).get("action_family") or ""),
             "destination": str(row.get("destination") or (pending_approval or {}).get("destination") or ""),
+            "purpose": str(row.get("purpose") or (pending_approval or {}).get("purpose") or "unknown"),
+            "recipient_identity": str(row.get("recipient_identity") or (pending_approval or {}).get("recipient_identity") or "none"),
             "data_classes": sorted(data_classes),
             "action_detail": str(row.get("action_detail") or (pending_approval or {}).get("action_detail") or ""),
             "reason": str(row.get("reason") or (pending_approval or {}).get("reason") or ""),
@@ -279,6 +296,8 @@ _DATATABLES_SORT_COLUMNS = {
     "mode": "mode",
     "reason": "reason",
     "reason_short": "reason",
+    "purpose": "purpose",
+    "recipient_identity": "recipient_identity",
 }
 _DATATABLES_SEARCH_COLUMNS = (
     "decision",
@@ -286,6 +305,8 @@ _DATATABLES_SEARCH_COLUMNS = (
     "tool_name",
     "action_family",
     "destination",
+    "purpose",
+    "recipient_identity",
     "data_classes",
     "reason",
     "approval_id",
@@ -301,11 +322,11 @@ _DATATABLES_SEARCH_COLUMNS = (
 def _activity_filter_clauses(filters: dict[str, str]) -> tuple[list[str], list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
-    for key in ("decision", "action_family", "destination", "tool_name", "mode", "session_hash"):
+    for key in ("decision", "action_family", "destination", "tool_name", "mode", "session_hash", "purpose", "recipient_identity"):
         value = str(filters.get(key) or "").strip()
         if not value:
             continue
-        if key in {"destination", "tool_name"}:
+        if key in {"destination", "tool_name", "purpose", "recipient_identity"}:
             clauses.append(f"{key} LIKE ?")
             params.append(f"%{value}%")
         else:
@@ -356,6 +377,8 @@ def _activity_row_from_sql(row: sqlite3.Row) -> dict[str, Any]:
         "tool_name": row["tool_name"],
         "action_family": row["action_family"],
         "destination": row["destination"],
+        "purpose": row["purpose"],
+        "recipient_identity": row["recipient_identity"],
         "data_classes": row["data_classes"],
         "reason": row["reason"],
         "approval_id": row["approval_id"],
@@ -391,6 +414,8 @@ def _activity_datatables_row(row: dict[str, Any]) -> dict[str, Any]:
         "tool_name": str(row.get("tool_name") or ""),
         "action_family": str(row.get("action_family") or ""),
         "destination": str(row.get("destination") or ""),
+        "purpose": str(row.get("purpose") or ""),
+        "recipient_identity": str(row.get("recipient_identity") or ""),
         "data_classes": str(row.get("data_classes") or ""),
         "reason_short": _activity_plain_reason_line(row),
         "reason": _activity_display_reason(row),
@@ -434,6 +459,8 @@ def _activity_datatables_payload(params: dict[str, str]) -> dict[str, Any]:
         "tool_name": params.get("tool_name", ""),
         "action_family": params.get("action_family", ""),
         "destination": params.get("destination", ""),
+        "purpose": params.get("purpose", ""),
+        "recipient_identity": params.get("recipient_identity", ""),
         "search": params.get("search[value]", ""),
     }
     clauses, query_params = _activity_filter_clauses(filters)
@@ -476,6 +503,8 @@ def _activity_group_key(row: dict[str, Any]) -> tuple[str, ...]:
         str(row.get("tool_name") or ""),
         str(row.get("action_family") or ""),
         str(row.get("destination") or ""),
+        str(row.get("purpose") or ""),
+        str(row.get("recipient_identity") or ""),
         str(row.get("data_classes") or ""),
         str(row.get("reason") or ""),
         str(row.get("rule_source") or ""),
@@ -589,6 +618,25 @@ def _cron_job_choices_for_dashboard() -> list[dict[str, Any]]:
     return choices
 
 
+def _runtime_risk_banners() -> list[dict[str, str]]:
+    banners = [
+        {
+            "id": "unknown_network_containment",
+            "severity": "info",
+            "message": "Runtime network containment is not verified by Guardian; unknown or ambiguous network sinks are classified conservatively.",
+        }
+    ]
+    if not _security_rule_enabled("intrinsic_exfiltration"):
+        banners.append(
+            {
+                "id": "intrinsic_exfiltration_disabled",
+                "severity": "high",
+                "message": "Security rule intrinsic_exfiltration is disabled; same-call source-and-sink hard blocks are not active.",
+            }
+        )
+    return banners
+
+
 def _policy_snapshot() -> dict[str, Any]:
     with _LOCK:
         _prune_expired()
@@ -611,6 +659,8 @@ def _policy_snapshot() -> dict[str, Any]:
                     "tool_name": approval.get("tool_name"),
                     "action_family": approval.get("action_family"),
                     "destination": approval.get("destination"),
+                    "purpose": approval.get("purpose", "unknown"),
+                    "recipient_identity": approval.get("recipient_identity", "none"),
                     "data_classes": sorted(approval.get("data_classes") or []),
                     "action_detail": approval.get("action_detail", ""),
                     "reason": approval.get("reason", ""),
@@ -638,9 +688,11 @@ def _policy_snapshot() -> dict[str, Any]:
         rules = _persistent_privacy_rules()
     suggestions = _dashboard_rule_form_suggestions(rules, pending)
     recent_blocks = _dashboard_recent_blocks(pending)
+    risk_banners = _runtime_risk_banners()
     return {
         "privacy_policy": _privacy_policy(),
         "privacy_mode": _privacy_policy(),
+        "risk_banners": risk_banners,
         "security_rules": _security_rules_snapshot(),
         "language_packs": _language_packs_snapshot(),
         "activity_db": str(_ACTIVITY_DB_PATH),
@@ -654,6 +706,8 @@ def _policy_snapshot() -> dict[str, Any]:
         "suggestions": suggestions,
         "destination_suggestions": suggestions["destinations"],
         "tool_name_suggestions": suggestions["tool_names"],
+        "purpose_suggestions": suggestions["purposes"],
+        "recipient_identity_suggestions": suggestions["recipient_identities"],
         "rules": [
             {
                 "rule_id": rule.get("id", ""),
@@ -663,6 +717,8 @@ def _policy_snapshot() -> dict[str, Any]:
                 "enabled": bool(rule.get("enabled", True)),
                 "action_family": (rule.get("match") or {}).get("action_family", ""),
                 "destination": (rule.get("match") or {}).get("destination", ""),
+                "purpose": (rule.get("match") or {}).get("purpose", ""),
+                "recipient_identity": (rule.get("match") or {}).get("recipient_identity", ""),
                 "tool_name": (rule.get("match") or {}).get("tool_name", ""),
                 "data_classes": sorted((rule.get("match") or {}).get("data_classes") or []),
                 "scope": _rule_scope_label(rule),

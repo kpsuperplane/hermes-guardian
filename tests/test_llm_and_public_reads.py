@@ -70,6 +70,35 @@ def test_llm_privacy_denial_falls_back_to_manual_approval(monkeypatch):
     assert any("llm high" in row["reason"] for row in rows)
 
 
+def test_llm_verifier_input_includes_safe_contextual_metadata_without_raw_recipient():
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    fake_llm = FakeSecurityLlm({
+        "outcome": "deny",
+        "risk_level": "medium",
+        "authorization_level": "unknown",
+        "rationale": "needs manual approval",
+    })
+    plugin._PLUGIN_LLM = fake_llm
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+
+    plugin._on_pre_tool_call(
+        "send_message",
+        {"to": "friend@example.com", "text": "private summary", "purpose": "Support Followup"},
+        session_id="s1",
+    )
+
+    payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
+    planned = payload["planned_action"]
+    encoded = json.dumps(payload, sort_keys=True)
+    assert planned["destination"] == "messaging"
+    assert planned["purpose"] == "support_followup"
+    assert planned["recipient_identity"].startswith("recipient_")
+    assert "friend@example.com" not in encoded
+    assert "private summary" not in encoded
+
+
 def test_llm_privacy_hard_block_skips_model_and_pending_approval(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")

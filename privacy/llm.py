@@ -34,6 +34,8 @@ def _approval_fingerprint(
     tool_name: str,
     action_family: str,
     destination: str,
+    purpose: str,
+    recipient_identity: str,
     data_classes: set[str],
     args: Any,
 ) -> str:
@@ -42,6 +44,8 @@ def _approval_fingerprint(
         "tool_name": tool_name,
         "action_family": action_family,
         "destination": destination,
+        "purpose": _normalize_rule_purpose(purpose, allow_star=False),
+        "recipient_identity": _normalize_rule_recipient_identity(recipient_identity, allow_star=False),
         "data_classes": sorted(data_classes),
         "arg_keys": arg_keys,
         "args_hmac": _args_hmac(args),
@@ -56,22 +60,32 @@ def _approval_shape(
     tool_name: str,
     action_family: str,
     destination: str,
+    purpose: str = "unknown",
+    recipient_identity: str = "none",
+    legacy_destination: str = "",
     data_classes: set[str],
     args: Any,
 ) -> dict[str, Any]:
     state = _ensure_session(session_id)
+    safe_purpose = _normalize_rule_purpose(purpose, allow_star=False)
+    safe_recipient_identity = _normalize_rule_recipient_identity(recipient_identity, allow_star=False)
     return {
         "session_id": _normalize_session_id(session_id),
         "owner_hash": state.get("owner_hash") or "",
         "tool_name": tool_name,
         "action_family": action_family,
         "destination": destination,
+        "purpose": safe_purpose,
+        "recipient_identity": safe_recipient_identity,
+        "legacy_destination": str(legacy_destination or ""),
         "data_classes": sorted(data_classes),
         "action_detail": _activity_action_detail(tool_name, args, action_family, destination),
         "fingerprint": _approval_fingerprint(
             tool_name=tool_name,
             action_family=action_family,
             destination=destination,
+            purpose=safe_purpose,
+            recipient_identity=safe_recipient_identity,
             data_classes=data_classes,
             args=args,
         ),
@@ -209,6 +223,8 @@ def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:
             "tool_name": shape.get("tool_name", ""),
             "action_family": shape.get("action_family", ""),
             "destination": shape.get("destination", ""),
+            "purpose": shape.get("purpose", "unknown"),
+            "recipient_identity": shape.get("recipient_identity", "none"),
             "data_classes": sorted(shape.get("data_classes") or []),
             "argument_shape_fingerprint": shape.get("fingerprint", ""),
         },
@@ -219,6 +235,39 @@ def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:
             "security_sensitive_content_already_hard_blocked": True,
             "manual_approval_available_if_denied": True,
         },
+    }
+
+
+def _validated_llm_security_verdict(parsed: Any) -> dict[str, str]:
+    if not isinstance(parsed, dict):
+        raise ValueError("verdict was not a JSON object")
+    allowed_outcomes = set(_LLM_VERDICT_SCHEMA["properties"]["outcome"]["enum"])
+    allowed_risks = set(_LLM_VERDICT_SCHEMA["properties"]["risk_level"]["enum"])
+    allowed_auth = set(_LLM_VERDICT_SCHEMA["properties"]["authorization_level"]["enum"])
+    missing = [key for key in _LLM_VERDICT_SCHEMA["required"] if key not in parsed]
+    if missing:
+        raise ValueError(f"verdict missing required fields: {', '.join(missing)}")
+    outcome = str(parsed.get("outcome") or "").strip().lower()
+    risk_level = str(parsed.get("risk_level") or "").strip().lower()
+    authorization_level = str(parsed.get("authorization_level") or "").strip().lower()
+    rationale = str(parsed.get("rationale") or "").strip()
+    if outcome not in allowed_outcomes:
+        raise ValueError("verdict outcome was invalid")
+    if risk_level not in allowed_risks:
+        raise ValueError("verdict risk_level was invalid")
+    if authorization_level not in allowed_auth:
+        raise ValueError("verdict authorization_level was invalid")
+    if not rationale:
+        raise ValueError("verdict rationale was empty")
+    if outcome == "allow" and risk_level == "critical":
+        raise ValueError("critical-risk allow verdict is invalid")
+    if outcome == "allow" and risk_level == "high" and authorization_level not in {"explicit", "substantive"}:
+        raise ValueError("high-risk allow verdict lacked sufficient authorization")
+    return {
+        "outcome": outcome,
+        "risk_level": risk_level[:32],
+        "authorization_level": authorization_level[:32],
+        "rationale": rationale[:1000],
     }
 
 
@@ -248,15 +297,7 @@ def _llm_security_verdict(shape: dict[str, Any], args: Any) -> dict[str, str]:
         parsed = getattr(result, "parsed", None)
         if parsed is None and getattr(result, "text", ""):
             parsed = json.loads(str(result.text))
-        if not isinstance(parsed, dict):
-            raise ValueError("verdict was not a JSON object")
-        outcome = str(parsed.get("outcome") or "deny").strip().lower()
-        return {
-            "outcome": "allow" if outcome == "allow" else "deny",
-            "risk_level": str(parsed.get("risk_level") or "unknown")[:32],
-            "authorization_level": str(parsed.get("authorization_level") or "unknown")[:32],
-            "rationale": str(parsed.get("rationale") or "no rationale")[:1000],
-        }
+        return _validated_llm_security_verdict(parsed)
     except Exception as exc:
         logger.warning("%s: LLM security verifier failed closed: %s", _PLUGIN_NAME, exc)
         return {

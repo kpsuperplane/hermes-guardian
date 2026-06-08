@@ -121,6 +121,8 @@ def _dashboard_dismiss_expired_approval(approval_id: str) -> tuple[bool, str]:
         tool_name=approval.get("tool_name", ""),
         action_family=approval.get("action_family", ""),
         destination=approval.get("destination", ""),
+        purpose=approval.get("purpose", "unknown"),
+        recipient_identity=approval.get("recipient_identity", "none"),
         data_classes=approval.get("data_classes") or [],
         reason=approval.get("reason") or "expired approval dismissed",
         approval_id=approval_id,

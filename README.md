@@ -87,23 +87,45 @@ at `/guardian`.
 
 ## Features
 
-- Blocks or suppresses credentials, OTPs, reset links, magic links, account
+Modern agents need private context to be useful. They also have many outbound
+surfaces: messages, MCP writes, browser forms, URLs, search queries, terminal
+commands, code execution, model APIs, cron jobs, and final responses.
+
+Guardian treats those surfaces as egress. Once a session has observed private
+data, the active privacy mode evaluates classified outbound actions before they
+run. Some actions are auto-approved, some are blocked immediately, and some
+fall back to manual approval. Security-sensitive content is stricter: it is
+blocked or suppressed outright, even if privacy mode is off.
+
+Use Guardian when you want:
+
+- Private data available for reasoning, not blindly stripped from context.
+- Strong default egress behavior without needing to write custom rules first.
+- Optional declassification rules by action family, destination, purpose,
+  pseudonymous recipient identity, data class, owner, session, and cron scope.
+- Mobile-friendly approvals for blocked actions.
+- Fail-closed behavior when private data could leak.
+- Sanitized dashboard and history views that do not store raw private content.
+- A plugin-only layer that works through documented Hermes hooks.
+
+Guardian is not a sandbox. It complements Hermes process isolation, credential
+scoping, SSRF protection, gateway authorization, and dangerous-command controls.
+
+Guardian can:
+
+- Block or suppress credentials, OTPs, reset links, magic links, account
   verification links, security alerts, private keys, bearer tokens, JWTs,
   cookies, and known upstream redaction placeholders.
-- Taints sessions after private sources are read, including email, contacts,
+- Taint sessions after private sources are read, including email, contacts,
   memory, documents, calendar, local system output, and private browser input.
-- Classifies common Hermes egress families such as messaging, MCP writes,
-  browser typing/submission, terminal execution, local writes, cron writes,
-  web/API calls, model APIs, delegated tasks, and final responses.
-- Uses `strict`, `read-only`, and `llm` privacy modes as the core egress policy
-  engine, with `llm` as the default.
-- Supports optional allow/deny rules for explicit user customization and
-  declassification.
-- Stores sanitized activity rows and pending approvals in local SQLite.
-- Binds one-time approvals to an HMAC fingerprint of the exact tool arguments.
-- Provides slash commands, CLI maintenance commands, and a Hermes dashboard tab.
-- Sends sanitized cron failure notifications at most once per cron run.
-- Uses declarative multilingual language packs for semantic security detection.
+- Classify common Hermes egress families such as messaging, MCP writes, browser
+  typing/submission, terminal execution, local writes, cron writes, web/API
+  calls, model APIs, delegated tasks, and final responses.
+- Store sanitized activity rows and pending approvals in local SQLite.
+- Bind one-time approvals to an HMAC fingerprint of the exact tool arguments.
+- Provide slash commands, CLI maintenance commands, and a Hermes dashboard tab.
+- Send sanitized cron failure notifications at most once per cron run.
+- Use declarative multilingual language packs for semantic security detection.
 
 ## How It Works
 
@@ -224,8 +246,18 @@ Privacy rules are optional custom policy. Use them when the default privacy
 mode is too broad or too conservative for a known workflow.
 
 Rules are ordered allow/deny overrides evaluated before the mode fallback for a
-matching action. They match egress by tool, action family, destination, data
-class, owner, session, and cron scope.
+matching action. They match egress by tool, action family, destination,
+optional purpose, optional pseudonymous recipient identity, data class, owner,
+session, and cron scope. `purpose` defaults to the safe token `unknown` on
+actions and to wildcard `*` on rules. `recipient_identity` defaults to `none`
+on actions and wildcard `*` on rules.
+
+For message sends, Guardian now classifies the route as
+`action_family=message_send` and `destination=messaging`, with the concrete
+recipient represented as a stable `recipient_<hash>` value. Existing legacy
+rules that used the recipient string as `destination` still match live
+message-send calls, but new approvals and rules prefer the route plus hashed
+recipient form.
 
 Example persistent allow rule:
 
@@ -238,6 +270,8 @@ Example persistent allow rule:
     "tool_name": "*",
     "action_family": "mcp_write",
     "destination": "mcp:notion",
+    "purpose": "*",
+    "recipient_identity": "*",
     "data_classes": ["*"]
   },
   "scope": {
@@ -268,7 +302,7 @@ High-level Security Module protections are enabled by default:
 | `account_security_content` | Password reset/recovery, auth codes, magic links, account verification, security alerts, and similar semantic account-security content. |
 | `credential_content` | Private keys, OAuth/session/cloud/API tokens, bearer tokens, JWTs, cookies, and `.env`-style secret assignments. |
 | `sensitive_links` | Reset, recovery, verification, confirmation, magic-link, OTP, and 2FA URLs. |
-| `intrinsic_exfiltration` | Same-call local/browser secret reads combined with network sinks before session taint exists. |
+| `intrinsic_exfiltration` | Same-call local, code, browser console/CDP, or obvious MCP private-source reads combined with network/share sinks before session taint exists. |
 | `private_network_reads` | Terminal remote-read shortcuts targeting localhost, private IPs, link-local/metadata hosts, or `.local` hosts. |
 
 Toggle rules with:
@@ -279,9 +313,19 @@ Toggle rules with:
 /guardian security enable sensitive_links
 ```
 
+The intrinsic exfiltration rule is structural and metadata-only: blocked rows
+record the action family, destination host or network class, data classes, and
+reason, not raw commands, browser expressions, URL paths/queries, or MCP
+payloads. It covers shapes such as local secret reads sent through
+`requests.post`, GET query construction from local files, browser DOM/cookie
+reads sent with `fetch` or `sendBeacon`, CDP `Runtime.evaluate` exfiltration,
+and MCP private-source tools paired with webhook/share sinks.
+
 Disabling a security rule weakens non-approvable hardening. Privacy checks still
 apply to classified private egress, but the disabled security category no
-longer categorically blocks matching content or action shapes.
+longer categorically blocks matching content or action shapes. `/guardian
+status` and the dashboard policy snapshot surface risk banners when runtime
+network containment is unknown and when `intrinsic_exfiltration` is disabled.
 
 ## Data Classes
 
@@ -300,6 +344,17 @@ Guardian tracks private context with these data classes:
 Source-based taint wins over content detection for known private sources. For
 example, reading email taints the session as `email` even if the returned email
 text contains no obvious PII pattern.
+
+Guardian also keeps volatile, metadata-only provenance for some copied text
+inside the active session. It indexes non-security-sensitive, medium-length
+phrases from tainting tool results as keyed HMAC fingerprints with source data
+classes. If later tool arguments or a final response structurally contain a
+matching copied phrase, Guardian can narrow the data classes in scope to the
+matched source classes plus any private-looking argument classes. If there is no
+match, if the text is too short, if it is paraphrased, or if provenance is
+missing, Guardian falls back to the full session taint. Raw source text is not
+stored in provenance, activity rows, approval records, or LLM verifier input,
+and security-sensitive strings are not indexed.
 
 ## Egress Surfaces
 
@@ -357,7 +412,7 @@ Use these from a Hermes gateway interface:
 /guardian deny <id>
 /guardian clear-taint
 /guardian rules
-/guardian rule add allow|deny action=<family|*> destination=<dest|*> classes=<class+class|*> [tool=<tool_name|*>]
+/guardian rule add allow|deny action=<family|*> destination=<dest|*> classes=<class+class|*> [tool=<tool_name|*>] [purpose=<token|*>] [recipient=<id|raw|*>]
 /guardian rule delete <rule_id>
 /guardian rule enable|disable <rule_id>
 /guardian rule move <rule_id> before|after <other_rule_id>
@@ -369,7 +424,7 @@ Use these from a Hermes gateway interface:
 /guardian history [limit]
 /guardian failures [limit]
 /guardian failed [limit]
-/guardian debug action=<family> destination=<dest> classes=<class+class> [tool=<tool_name>]
+/guardian debug action=<family> destination=<dest> classes=<class+class> [tool=<tool_name>] [purpose=<token>] [recipient=<id|raw>]
 ```
 
 Helpful commands:
@@ -379,6 +434,7 @@ Helpful commands:
 /guardian history 20
 /guardian failures
 /guardian debug action=mcp_write destination=mcp:notion classes=email
+/guardian debug action=message_send destination=messaging classes=email purpose=support recipient=recipient_...
 ```
 
 `/guardian deny` is an alias for dismiss. `/guardian failed` is an alias for
@@ -425,7 +481,8 @@ include that value in `x-hermes-guardian-token`.
 
 The dashboard stores and displays sanitized metadata only. It does not store
 raw tool arguments, email bodies, typed text, tokenized URLs, file contents, or
-message content.
+message content. Recipient context is displayed as a stable pseudonymous
+`recipient_<hash>` identity rather than the raw recipient value.
 
 ## Language Packs
 
@@ -524,9 +581,13 @@ The implementation is split by responsibility:
 | `language_packs/` | Declarative semantic detection packs. |
 | `tests/` | Behavior-focused pytest suite. |
 
-`core.py` exec-loads most modules into one shared global namespace. Avoid adding
-normal relative imports between exec-loaded modules unless doing a deliberate
-loader refactor.
+`core.py` exec-loads most modules into one shared global namespace. The ordered
+module list is `_CORE_LOGIC_MODULES`; update that tuple and
+`tests/test_loader_contract.py` together when changing loader order or adding
+exec-loaded files. Avoid adding normal relative imports between exec-loaded
+modules unless doing a deliberate loader refactor. Duplicate top-level
+definitions in exec-loaded modules must be intentional and listed in
+`_CORE_LOGIC_ALLOWED_REBINDS`.
 
 Guardian registers these Hermes hooks:
 
@@ -581,7 +642,47 @@ python -m pytest -q tests/test_security.py tests/test_security_rules_config.py
 python -m pytest -q tests/test_privacy_egress.py tests/test_privacy_modes.py
 python -m pytest -q tests/test_dashboard_policy.py tests/test_dashboard_activity.py
 python -m pytest -q tests/test_language_packs.py tests/test_multilingual_security.py
+python -m pytest -q tests/test_loader_contract.py tests/test_hooks_registration.py
+python -m pytest -q tests/test_approval_fatigue_benchmark.py
+python -m pytest -q tests/test_adversarial_corpus.py
 ```
+
+Run the additive approval-fatigue benchmark:
+
+```bash
+python -m benchmarks.approval_fatigue --pretty
+```
+
+The benchmark loads the plugin facade into temporary Guardian state, drives the
+real hooks through synthetic email-to-Notion, browsing/booking, and cron digest
+workflows, and compares `strict`, `read-only`, and `llm` mode metrics. It uses a
+deterministic fake LLM and reports approvals, false-positive prompt rate,
+auto/manual approvals, security blocks, unsafe auto approvals, completion, LLM
+calls/fallbacks, cron notifications, and sanitization violations.
+
+Run the additive adversarial corpus benchmark:
+
+```bash
+python -m benchmarks.guardian_adversarial --pretty
+```
+
+The adversarial benchmark loads the plugin facade into temporary Guardian state
+and exercises hook, classifier, scanner, and result-suppression cases from
+`tests/fixtures/adversarial_corpus.json`. It reports prevented rate,
+false-positive rate, classification accuracy, security scanner accuracy,
+sanitization violations, and known-gap count. CI gates URL path/query/base64
+exfiltration, filename/upload shapes, supported same-call terminal exfiltration,
+multilingual auth-code/security phrasing, sensitive auth links, and benign
+controls. DNS-label-only exfiltration is tracked as a non-gating known gap.
+
+An optional AgentDojo adapter exists for separate local research runs:
+
+```bash
+python -m benchmarks.agentdojo_guardian
+```
+
+AgentDojo is intentionally a lazy optional import and is not installed by CI or
+required for normal Guardian development.
 
 GitHub Actions runs `python -m pytest -q` on Python 3.11 and 3.12.
 
@@ -605,8 +706,9 @@ systemctl restart hermes-gateway.service
   Data that bypasses Hermes hooks is out of scope.
 - Blocked tool calls are not paused and resumed; the agent must retry after
   approval.
-- Session taint is intentionally coarse. It is safer than regex-only detection,
-  but it is not object-level provenance.
+- Session taint is intentionally coarse. Volatile provenance can narrow copied
+  phrase classes, but it is not a complete dependency proof and never makes
+  missing provenance safe.
 - Tool classification is heuristic. Unknown MCP tools, browser actions, or
   future Hermes tools should be classified conservatively until reviewed.
 - URL paths, URL queries, search queries, redirects, image loads, DNS, and final

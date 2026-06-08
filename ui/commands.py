@@ -13,7 +13,7 @@ _GUARDIAN_HELP_LINES = [
     "/guardian dismiss <id> (alias: deny)",
     "/guardian clear-taint",
     "/guardian rules",
-    "/guardian rule add allow|deny action=<family|*> destination=<dest|*> classes=<class+class|*> [tool=<tool_name|*>]",
+    "/guardian rule add allow|deny action=<family|*> destination=<dest|*> classes=<class+class|*> [tool=<tool_name|*>] [purpose=<token|*>] [recipient=<id|raw|*>]",
     "/guardian rule delete <rule_id>",
     "/guardian rule enable|disable <rule_id>",
     "/guardian rule move <rule_id> before|after <other_rule_id>",
@@ -39,6 +39,9 @@ _RULE_ADD_KEYS = {
     "tool_name",
     "classes",
     "data_classes",
+    "purpose",
+    "recipient",
+    "recipient_identity",
     "owner",
     "owner_hash",
     "session",
@@ -62,6 +65,9 @@ _DEBUG_KEYS = {
     "classes",
     "data_classes",
     "class",
+    "purpose",
+    "recipient",
+    "recipient_identity",
 }
 
 
@@ -191,6 +197,11 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
         or ""
     ).strip().lower()
     destination = (params.get("destination") or params.get("dest") or "").strip().lower()
+    purpose = _normalize_rule_purpose(params.get("purpose", "unknown"), allow_star=False)
+    recipient_identity = _normalize_rule_recipient_identity(
+        params.get("recipient_identity", params.get("recipient", "none")),
+        allow_star=False,
+    )
     tool_name = (params.get("tool") or params.get("tool_name") or "").strip()
     raw_classes = params.get("classes") or params.get("data_classes") or params.get("class") or ""
     classes = sorted({
@@ -204,6 +215,8 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
         "tool_name": tool_name,
         "action_family": action_family,
         "destination": destination,
+        "purpose": purpose,
+        "recipient_identity": recipient_identity,
         "data_classes": classes,
         "fingerprint": "debug",
     }
@@ -215,6 +228,8 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
             "source": {"source": "privacy_off", "rule_id": ""},
             "action_family": action_family,
             "destination": destination,
+            "purpose": purpose,
+            "recipient_identity": recipient_identity,
             "data_classes": classes,
             "tool_name": tool_name,
             "reason": "privacy policy is off",
@@ -228,6 +243,8 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
             "source": source,
             "action_family": action_family,
             "destination": destination,
+            "purpose": purpose,
+            "recipient_identity": recipient_identity,
             "data_classes": classes,
             "tool_name": tool_name,
             "reason": "matched deny rule" if denied else "matched allow rule",
@@ -238,6 +255,8 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
         "source": None,
         "action_family": action_family,
         "destination": destination,
+        "purpose": purpose,
+        "recipient_identity": recipient_identity,
         "data_classes": classes,
         "tool_name": tool_name,
         "reason": "no matching allow rule; would require approval if session is tainted",
@@ -266,6 +285,8 @@ def _guardian_debug_command(tokens: list[str]) -> str:
         f"Privacy policy: {result['privacy_policy']}\n"
         f"Action: {result['action_family'] or '(missing)'}\n"
         f"Destination: {result['destination'] or '(missing)'}\n"
+        f"Purpose: {result.get('purpose') or 'unknown'}\n"
+        f"Recipient identity: {result.get('recipient_identity') or 'none'}\n"
         f"Data classes: {classes}\n"
         f"Reason: {result['reason']}"
         f"{source_text}"
@@ -369,7 +390,7 @@ def _guardian_language_packs_command(owner_hash: str, tokens: list[str]) -> str:
 
 
 def _rule_add_usage() -> str:
-    return "Usage: /guardian rule add allow|deny action=<family|*> destination=<dest|*> classes=<class+class|*> [tool=<tool_name|*>]"
+    return "Usage: /guardian rule add allow|deny action=<family|*> destination=<dest|*> classes=<class+class|*> [tool=<tool_name|*>] [purpose=<token|*>] [recipient=<id|raw|*>]"
 
 
 def _rule_add_error(message: str) -> tuple[dict[str, Any] | None, str]:
@@ -393,6 +414,10 @@ def _new_privacy_rule_from_params(
 
     action_family = raw_action
     destination = raw_destination
+    purpose = _normalize_rule_purpose(params.get("purpose", "*"))
+    recipient_identity = _normalize_rule_recipient_identity(
+        params.get("recipient_identity", params.get("recipient", "*"))
+    )
     tool_name = params.get("tool") or params.get("tool_name") or "*"
     if raw_classes.strip() == "*":
         classes = ["*"]
@@ -430,6 +455,8 @@ def _new_privacy_rule_from_params(
             "tool_name": tool_name,
             "action_family": action_family,
             "destination": destination,
+            "purpose": purpose,
+            "recipient_identity": recipient_identity,
             "data_classes": classes or ["*"],
         },
         "scope": {
@@ -460,6 +487,7 @@ def _guardian_rule_command(owner_hash: str, tokens: list[str]) -> str:
         return (
             f"Added privacy {rule['effect']} rule {rule['id']}.\n"
             f"Match: {match.get('action_family', '*')} -> {match.get('destination', '*')}\n"
+            f"Context: purpose={match.get('purpose', '*')} recipient={match.get('recipient_identity', '*')}\n"
             f"Scope: {_rule_scope_text(rule)}\n"
             f"{_rule_classes_line(match.get('data_classes') or [])}"
         )
@@ -516,6 +544,7 @@ def _guardian_status(owner_hash: str) -> str:
             for pack in _language_packs_snapshot()
             if bool(pack.get("enabled"))
         ]
+    risk_banners = _runtime_risk_banners()
     lines = [
         "Hermes Guardian status",
         f"Privacy mode: {_privacy_policy()}",
@@ -525,6 +554,8 @@ def _guardian_status(owner_hash: str) -> str:
         f"Pending approvals: {len(pending)}",
         f"Privacy rules: {len(rules)}",
     ]
+    for banner in risk_banners:
+        lines.append(f"Risk: {banner.get('message', '')}")
     for approval in pending[:10]:
         classes = ",".join(approval.get("data_classes") or [])
         lines.append(
@@ -543,6 +574,8 @@ def _guardian_rules(owner_hash: str) -> str:
         effect = str(rule.get("effect") or "allow").strip().lower()
         action = _rule_match_text(match.get("action_family"), "Any action")
         destination = _rule_match_text(match.get("destination"), "Any destination")
+        purpose = _rule_match_text(match.get("purpose"), "Any purpose")
+        recipient_identity = _rule_match_text(match.get("recipient_identity"), "Any recipient")
         tool = _rule_match_text(match.get("tool_name"), "")
         disabled = not bool(rule.get("enabled", True))
         icon = "⏸️" if disabled else ("⛔" if effect == "deny" else "✅")
@@ -561,6 +594,7 @@ def _guardian_rules(owner_hash: str) -> str:
         ])
         if tool:
             lines.append(f"Tool: `{tool}`")
+        lines.append(f"Context: purpose=`{purpose}` recipient=`{recipient_identity}`")
         lines.append(_rule_classes_line(match.get("data_classes") or []))
     return "\n".join(lines)
 
@@ -620,6 +654,7 @@ def _guardian_clear_taint(owner_hash: str) -> str:
             if state:
                 state["taint"].clear()
                 state["browser_private_hosts"].clear()
+                state.pop("provenance", None)
             _SESSION_APPROVALS.pop(sid, None)
             _ONCE_APPROVALS.pop(sid, None)
     return "Cleared Guardian taint and session approvals for your active Guardian sessions."
@@ -655,6 +690,8 @@ def _guardian_dismiss(owner_hash: str, approval_id: str) -> str:
         tool_name=approval.get("tool_name", ""),
         action_family=approval.get("action_family", ""),
         destination=approval.get("destination", ""),
+        purpose=approval.get("purpose", "unknown"),
+        recipient_identity=approval.get("recipient_identity", "none"),
         data_classes=approval.get("data_classes") or [],
         reason=approval.get("reason") or "requires approval",
         approval_id=approval_id,
@@ -709,6 +746,8 @@ def _guardian_approve(owner_hash: str, approval_id: str, scope: str) -> str:
         tool_name=approval.get("tool_name", ""),
         action_family=approval.get("action_family", ""),
         destination=approval.get("destination", ""),
+        purpose=approval.get("purpose", "unknown"),
+        recipient_identity=approval.get("recipient_identity", "none"),
         data_classes=approval.get("data_classes") or [],
         reason=f"approved {scope}",
         approval_id=approval_id,

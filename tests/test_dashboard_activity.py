@@ -30,6 +30,38 @@ def test_dashboard_payload_filters_activity_by_decision():
     assert all(row["decision"] == "blocked" for row in payload["activity"])
 
 
+def test_activity_rows_and_datatables_include_contextual_metadata():
+    plugin = load_plugin()
+    recipient_identity = plugin._recipient_identity_from_value("friend")
+
+    plugin._emit_activity(
+        "blocked",
+        session_id="s1",
+        tool_name="send_message",
+        action_family="message_send",
+        destination="messaging",
+        purpose="support",
+        recipient_identity=recipient_identity,
+        data_classes={"email"},
+        reason="requires approval",
+    )
+
+    row = plugin._activity_rows({}, limit=1)[0]
+    payload = plugin._activity_datatables_payload({
+        "draw": "1",
+        "start": "0",
+        "length": "25",
+        "purpose": "support",
+        "recipient_identity": recipient_identity,
+    })
+
+    assert row["purpose"] == "support"
+    assert row["recipient_identity"] == recipient_identity
+    assert payload["recordsFiltered"] == 1
+    assert payload["data"][0]["purpose"] == "support"
+    assert payload["data"][0]["recipient_identity"] == recipient_identity
+
+
 def test_datatables_payload_paginates_and_counts(monkeypatch):
     plugin = load_plugin()
     now = {"value": 1000}

@@ -53,6 +53,16 @@ def test_non_owner_slash_cannot_change_global_privacy_mode():
     assert plugin._privacy_policy() == "llm"
 
 
+def test_guardian_status_surfaces_runtime_risk_banners():
+    plugin = load_plugin()
+    assert plugin._set_security_rule("intrinsic_exfiltration", False)[0]
+
+    response = plugin._handle_guardian_command("status")
+
+    assert "Risk: Runtime network containment is not verified" in response
+    assert "Risk: Security rule intrinsic_exfiltration is disabled" in response
+
+
 def test_guardian_rule_add_defaults_platform_slash_to_caller_scope(tmp_path):
     plugin = load_plugin()
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
@@ -67,6 +77,26 @@ def test_guardian_rule_add_defaults_platform_slash_to_caller_scope(tmp_path):
     rule = data["privacy"]["rules"][0]
     assert rule["scope"]["owner_hash"] == plugin._hash_identity("telegram", "kevin")
     assert rule["match"]["data_classes"] == ["email"]
+    assert rule["match"]["purpose"] == "*"
+    assert rule["match"]["recipient_identity"] == "*"
+
+
+def test_guardian_rule_add_accepts_contextual_fields_and_rules_display_them():
+    plugin = load_plugin()
+    recipient_identity = plugin._recipient_identity_from_value("friend")
+
+    response = plugin._handle_guardian_command(
+        "rule add allow action=message_send destination=messaging classes=email "
+        f"purpose=support recipient={recipient_identity}"
+    )
+    rules_text = plugin._handle_guardian_command("rules")
+
+    assert "Added privacy allow rule" in response
+    rule = plugin._persistent_privacy_rules()[0]
+    assert rule["match"]["purpose"] == "support"
+    assert rule["match"]["recipient_identity"] == recipient_identity
+    assert "purpose=`support`" in rules_text
+    assert f"recipient=`{recipient_identity}`" in rules_text
 
 
 def test_guardian_rule_add_rejects_invalid_classes_and_malformed_args(tmp_path):

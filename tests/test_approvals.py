@@ -179,8 +179,10 @@ def test_approval_always_persists_narrow_rule(tmp_path):
     data = json.loads((tmp_path / "rules.json").read_text())
     assert len(data["privacy"]["rules"]) == 1
     rule = data["privacy"]["rules"][0]
-    assert rule["match"]["destination"] == "friend"
+    assert rule["match"]["destination"] == "messaging"
     assert rule["match"]["action_family"] == "message_send"
+    assert rule["match"]["purpose"] == "unknown"
+    assert rule["match"]["recipient_identity"] == plugin._recipient_identity_from_value("friend")
     assert rule["effect"] == "allow"
     assert rule["remaining_invocations"] == -1
     assert "hello" not in json.dumps(rule)
@@ -294,7 +296,8 @@ def test_cron_approval_can_be_approved_from_separate_process(monkeypatch, tmp_pa
         ).fetchone()[0]
     assert count == 0
     data = json.loads(rules_path.read_text())
-    assert data["privacy"]["rules"][0]["match"]["destination"] == "friend"
+    assert data["privacy"]["rules"][0]["match"]["destination"] == "messaging"
+    assert data["privacy"]["rules"][0]["match"]["recipient_identity"] == creator._recipient_identity_from_value("friend")
 
 
 def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):

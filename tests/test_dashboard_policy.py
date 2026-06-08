@@ -25,6 +25,23 @@ def test_policy_snapshot_compacts_all_class_privacy_rule(monkeypatch):
     assert policy["rules"][0]["data_classes"] == ["*"]
 
 
+def test_dashboard_policy_snapshot_includes_risk_banners():
+    plugin = load_plugin()
+    assert plugin._set_security_rule("intrinsic_exfiltration", False)[0]
+
+    policy = plugin._policy_snapshot()
+    banner_ids = {banner["id"] for banner in policy["risk_banners"]}
+
+    assert {"unknown_network_containment", "intrinsic_exfiltration_disabled"} <= banner_ids
+
+
+def test_dashboard_static_renders_risk_banners():
+    static_js = (Path(__file__).resolve().parents[1] / "dashboard" / "dist" / "index.js").read_text()
+
+    assert "risk_banners" in static_js
+    assert "renderRiskBanners" in static_js
+
+
 def test_policy_snapshot_includes_cron_rule_scope(tmp_path):
     plugin = load_plugin()
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
@@ -71,6 +88,8 @@ def test_policy_snapshot_includes_persistent_rule_metadata(tmp_path):
     assert rule["rule_id"] == "rule_delete_me"
     assert rule["action_family"] == "message_send"
     assert rule["destination"] == "friend"
+    assert rule["purpose"] == "*"
+    assert rule["recipient_identity"] == "*"
     assert rule["data_classes"] == ["email"]
     assert rule["owner_hash"] == "cli"
 
@@ -104,6 +123,37 @@ def test_policy_snapshot_includes_rule_form_suggestions(tmp_path):
     assert "*" not in policy["destination_suggestions"]
     assert policy["suggestions"]["destinations"] == policy["destination_suggestions"]
     assert policy["suggestions"]["tool_names"] == policy["tool_name_suggestions"]
+
+
+def test_dashboard_policy_exposes_contextual_rule_and_pending_fields():
+    plugin = load_plugin()
+    recipient_identity = plugin._recipient_identity_from_value("friend")
+    save_privacy_config(plugin, rules=[
+        privacy_rule(
+            rule_id="rule_context",
+            action_family="message_send",
+            destination="messaging",
+            purpose="support",
+            recipient_identity=recipient_identity,
+            data_classes=["email"],
+        )
+    ])
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+    plugin._on_pre_tool_call(
+        "send_message",
+        {"to": "other", "text": "hello", "purpose": "marketing"},
+        session_id="s1",
+    )
+
+    policy = plugin._policy_snapshot()
+
+    assert policy["rules"][0]["purpose"] == "support"
+    assert policy["rules"][0]["recipient_identity"] == recipient_identity
+    assert policy["pending"][0]["purpose"] == "marketing"
+    assert policy["pending"][0]["recipient_identity"] == plugin._recipient_identity_from_value("other")
+    assert "support" in policy["purpose_suggestions"]
+    assert recipient_identity in policy["recipient_identity_suggestions"]
 
 
 def test_dashboard_rule_delete_action_removes_persistent_rule(tmp_path):
@@ -172,11 +222,13 @@ def test_policy_snapshot_marks_pending_block_covered_by_new_allow_rule(tmp_path)
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
+    recipient_identity = plugin._PENDING_APPROVALS[approval_id]["recipient_identity"]
     save_privacy_config(plugin, rules=[
         privacy_rule(
             rule_id="rule_cover_friend",
             action_family="message_send",
-            destination="friend",
+            destination="messaging",
+            recipient_identity=recipient_identity,
             data_classes=["email"],
             remaining_invocations=1,
         )
@@ -334,7 +386,8 @@ def test_dashboard_approval_actions_remove_pending_blocks():
     assert len(payload["policy"]["rules"]) == 1
     rule = payload["policy"]["rules"][0]
     assert rule["action_family"] == "message_send"
-    assert rule["destination"] == "friend"
+    assert rule["destination"] == "messaging"
+    assert rule["recipient_identity"] == plugin._recipient_identity_from_value("friend")
     assert rule["remaining_invocations"] == 1
 
     bind_owner(plugin, session_id="s2")

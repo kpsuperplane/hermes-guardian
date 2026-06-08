@@ -66,7 +66,9 @@ def _ensure_activity_db() -> None:
                         action_detail TEXT NOT NULL DEFAULT '',
                         module TEXT NOT NULL DEFAULT '',
                         rule_effect TEXT NOT NULL DEFAULT '',
-                        rule_scope TEXT NOT NULL DEFAULT ''
+                        rule_scope TEXT NOT NULL DEFAULT '',
+                        purpose TEXT NOT NULL DEFAULT '',
+                        recipient_identity TEXT NOT NULL DEFAULT ''
                     )
                     """
                 )
@@ -82,6 +84,10 @@ def _ensure_activity_db() -> None:
                     conn.execute("ALTER TABLE activity ADD COLUMN rule_effect TEXT NOT NULL DEFAULT ''")
                 if "rule_scope" not in columns:
                     conn.execute("ALTER TABLE activity ADD COLUMN rule_scope TEXT NOT NULL DEFAULT ''")
+                if "purpose" not in columns:
+                    conn.execute("ALTER TABLE activity ADD COLUMN purpose TEXT NOT NULL DEFAULT ''")
+                if "recipient_identity" not in columns:
+                    conn.execute("ALTER TABLE activity ADD COLUMN recipient_identity TEXT NOT NULL DEFAULT ''")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_ts_idx ON activity(ts)")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_decision_idx ON activity(decision)")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_action_idx ON activity(action_family)")
@@ -103,7 +109,10 @@ def _ensure_activity_db() -> None:
                         expires_at INTEGER NOT NULL,
                         cron_job_id TEXT NOT NULL DEFAULT '',
                         cron_job_name TEXT NOT NULL DEFAULT '',
-                        reason TEXT NOT NULL DEFAULT ''
+                        reason TEXT NOT NULL DEFAULT '',
+                        purpose TEXT NOT NULL DEFAULT 'unknown',
+                        recipient_identity TEXT NOT NULL DEFAULT 'none',
+                        legacy_destination TEXT NOT NULL DEFAULT ''
                     )
                     """
                 )
@@ -117,6 +126,12 @@ def _ensure_activity_db() -> None:
                     conn.execute("ALTER TABLE pending_approvals ADD COLUMN cron_job_name TEXT NOT NULL DEFAULT ''")
                 if "reason" not in pending_columns:
                     conn.execute("ALTER TABLE pending_approvals ADD COLUMN reason TEXT NOT NULL DEFAULT ''")
+                if "purpose" not in pending_columns:
+                    conn.execute("ALTER TABLE pending_approvals ADD COLUMN purpose TEXT NOT NULL DEFAULT 'unknown'")
+                if "recipient_identity" not in pending_columns:
+                    conn.execute("ALTER TABLE pending_approvals ADD COLUMN recipient_identity TEXT NOT NULL DEFAULT 'none'")
+                if "legacy_destination" not in pending_columns:
+                    conn.execute("ALTER TABLE pending_approvals ADD COLUMN legacy_destination TEXT NOT NULL DEFAULT ''")
                 conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_session_idx ON pending_approvals(session_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_expires_idx ON pending_approvals(expires_at)")
                 conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_cron_job_idx ON pending_approvals(cron_job_id)")
@@ -142,6 +157,8 @@ def _emit_activity(
     module: str = "",
     rule_effect: str = "",
     rule_scope: str = "",
+    purpose: str = "",
+    recipient_identity: str = "",
 ) -> None:
     """Persist sanitized activity metadata for dashboard/debugging."""
     if decision not in _ACTIVITY_DECISIONS:
@@ -162,9 +179,9 @@ def _emit_activity(
                     ts, decision, mode, session_label, session_hash, owner_hash,
                     tool_name, action_family, destination, data_classes, reason,
                     approval_id, rule_id, rule_source, action_detail,
-                    module, rule_effect, rule_scope
+                    module, rule_effect, rule_scope, purpose, recipient_identity
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     int(_now()),
@@ -185,6 +202,8 @@ def _emit_activity(
                     str(module or "")[:40],
                     str(rule_effect or "")[:40],
                     str(rule_scope or "")[:160],
+                    _normalize_rule_purpose(purpose or "unknown", allow_star=False),
+                    _normalize_rule_recipient_identity(recipient_identity or "none", allow_star=False),
                 ),
             )
         _prune_activity_db()

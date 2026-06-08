@@ -17,6 +17,8 @@
     effect: "allow",
     action_family: "*",
     destination: "",
+    purpose: "",
+    recipient_identity: "",
     tool_name: "",
     data_classes: ["*"],
     lifetime: "always",
@@ -93,6 +95,8 @@
       effect: text(rule.effect, "allow"),
       action_family: text(rule.action_family, "*"),
       destination: text(rule.destination) === "*" ? "" : text(rule.destination),
+      purpose: text(rule.purpose) === "*" ? "" : text(rule.purpose),
+      recipient_identity: text(rule.recipient_identity) === "*" ? "" : text(rule.recipient_identity),
       tool_name: text(rule.tool_name) === "*" ? "" : text(rule.tool_name),
       data_classes: Array.isArray(rule.data_classes) && rule.data_classes.length ? rule.data_classes.slice() : ["*"],
       lifetime: lifetime,
@@ -115,6 +119,8 @@
         tool_name: text(form.tool_name, "*"),
         action_family: text(form.action_family, "*"),
         destination: text(form.destination, "*"),
+        purpose: text(form.purpose, "*"),
+        recipient_identity: text(form.recipient_identity, "*"),
         data_classes: classes.indexOf("*") >= 0 ? ["*"] : classes,
       },
       scope: {
@@ -134,6 +140,8 @@
       && text(match.tool_name, "*") === "*"
       && text(match.action_family, "*") === "*"
       && text(match.destination, "*") === "*"
+      && text(match.purpose, "*") === "*"
+      && text(match.recipient_identity, "*") === "*"
       && classes.indexOf("*") >= 0;
   }
 
@@ -176,6 +184,8 @@
     const suggestions = policy.suggestions || {};
     const destinationSuggestions = policy.destination_suggestions || suggestions.destinations || [];
     const toolNameSuggestions = policy.tool_name_suggestions || suggestions.tool_names || [];
+    const purposeSuggestions = policy.purpose_suggestions || suggestions.purposes || [];
+    const recipientIdentitySuggestions = policy.recipient_identity_suggestions || suggestions.recipient_identities || [];
     const form = props.form;
     const setForm = props.setForm;
     const classSet = new Set(form.data_classes || ["*"]);
@@ -222,6 +232,12 @@
           h("datalist", { id: "hermes-guardian-tool-name-options" }, toolNameSuggestions.map(function (value) {
             return h("option", { key: value, value: value });
           })),
+          h("datalist", { id: "hermes-guardian-purpose-options" }, purposeSuggestions.map(function (value) {
+            return h("option", { key: value, value: value });
+          })),
+          h("datalist", { id: "hermes-guardian-recipient-options" }, recipientIdentitySuggestions.map(function (value) {
+            return h("option", { key: value, value: value });
+          })),
           h("div", { className: "hermes-guardian-radio-row" },
             h("label", { className: "hermes-guardian-check" }, h("input", { type: "radio", checked: form.effect === "allow", onChange: function () { update("effect", "allow"); } }), "Allow"),
             h("label", { className: "hermes-guardian-check" }, h("input", { type: "radio", checked: form.effect === "deny", onChange: function () { update("effect", "deny"); } }), "Deny"),
@@ -232,6 +248,10 @@
             }))),
             h(Field, { label: "Destination" }, h("input", { className: "hermes-guardian-input", list: "hermes-guardian-destination-options", value: form.destination, placeholder: "Any destination", onChange: function (event) { update("destination", event.target.value); } })),
             h(Field, { label: "Tool name" }, h("input", { className: "hermes-guardian-input", list: "hermes-guardian-tool-name-options", value: form.tool_name, placeholder: "Any tool", onChange: function (event) { update("tool_name", event.target.value); } })),
+          ),
+          h("div", { className: "hermes-guardian-form-grid" },
+            h(Field, { label: "Purpose" }, h("input", { className: "hermes-guardian-input", list: "hermes-guardian-purpose-options", value: form.purpose, placeholder: "Any purpose", onChange: function (event) { update("purpose", event.target.value); } })),
+            h(Field, { label: "Recipient identity" }, h("input", { className: "hermes-guardian-input", list: "hermes-guardian-recipient-options", value: form.recipient_identity, placeholder: "Any recipient", onChange: function (event) { update("recipient_identity", event.target.value); } })),
           ),
           h("div", { className: "hermes-guardian-check-grid" },
             h("label", { className: "hermes-guardian-check" }, h("input", { type: "checkbox", checked: classSet.has("*"), onChange: function () { toggleClass("*"); } }), "All data classes"),
@@ -617,9 +637,12 @@
       const tool = text(row.tool_name || row.tool, "n/a");
       const action = text(row.action_family, "n/a");
       const destination = text(row.destination, "n/a");
+      const purpose = text(row.purpose);
+      const recipient = text(row.recipient_identity);
       return h("div", { className: "hermes-guardian-history-target" },
         h("div", { className: "hermes-guardian-history-tool" }, tool),
         h("div", { className: "hermes-guardian-history-route" }, action + " -> " + destination),
+        purpose || recipient ? h("div", { className: "hermes-guardian-muted" }, "purpose " + text(purpose, "unknown") + " recipient " + text(recipient, "none")) : null,
       );
     }
 
@@ -635,6 +658,18 @@
 
     const rules = (policy && policy.rules) || [];
     const blocks = (policy && policy.recent_blocks) || [];
+    const riskBanners = (policy && policy.risk_banners) || [];
+
+    function renderRiskBanners() {
+      return riskBanners.length ? h("div", { className: "hermes-guardian-risk-banners" },
+        riskBanners.map(function (banner) {
+          return h("div", { key: banner.id || banner.message, className: "hermes-guardian-banner hermes-guardian-risk-banner" },
+            h("span", { className: "hermes-guardian-risk-severity" }, text(banner.severity || "risk")),
+            h("span", null, text(banner.message)),
+          );
+        }),
+      ) : null;
+    }
 
     function renderSettings() {
       const securityRules = (policy && policy.security_rules) || [];
@@ -740,7 +775,7 @@
       return h("div", { className: "hermes-guardian-grid" },
         h("div", { className: "hermes-guardian-topbar" },
           h("p", { className: "hermes-guardian-muted hermes-guardian-rule-description" },
-            "Egress rules decide which tainted private data can leave Guardian by matching action, destination, data class, and owner/session or cron scope.",
+            "Egress rules decide which tainted private data can leave Guardian by matching action, destination, purpose, recipient identity, data class, and owner/session or cron scope.",
           ),
           h(Button, { onClick: openCreate }, "New rule"),
         ),
@@ -768,6 +803,8 @@
             ),
             h("div", { className: "hermes-guardian-rule-meta" },
               h("span", null, ruleScopeText(rule)),
+              h("span", null, "Purpose " + displayText(rule.purpose, "*")),
+              h("span", null, "Recipient " + displayText(rule.recipient_identity, "*")),
             ),
             h("div", { className: "hermes-guardian-chips" }, (rule.data_classes || []).map(function (cls) {
               return h("span", { key: cls, className: "hermes-guardian-chip" }, cls === "*" ? "all data classes" : cls);
@@ -810,6 +847,8 @@
               h("span", null, "Tool " + text(block.tool_name, "n/a")),
               block.module ? h("span", null, "Module " + text(block.module)) : null,
               h("span", null, "Taints " + classesText(block.data_classes)),
+              h("span", null, "Purpose " + text(block.purpose, "unknown")),
+              h("span", null, "Recipient " + text(block.recipient_identity, "none")),
               h("span", null, "Created " + timeText(block.created_at)),
               staleApproval ? h("span", { title: staleTitle }, staleApprovalText(block)) : null,
               h("span", null, "Reason " + text(block.reason, "n/a")),
@@ -885,6 +924,7 @@
         ),
       ),
       error ? h("div", { className: "hermes-guardian-banner" }, error) : null,
+      renderRiskBanners(),
       h(ToastRegion, { toasts: toasts, onDismiss: dismissToast }),
       h("div", { className: "hermes-guardian-tabs", role: "tablist" },
         [["settings", "Settings"], ["rules", "Egress Rules"], ["blocks", "Recent Blocks"], ["history", "History"]].map(function (item) {

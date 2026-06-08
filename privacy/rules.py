@@ -65,6 +65,13 @@ def _default_privacy_config() -> dict[str, Any]:
     }
 
 
+def _strict_privacy_config() -> dict[str, Any]:
+    config = _default_privacy_config()
+    config["privacy"]["mode"] = "strict"
+    config["privacy"]["rules"] = []
+    return config
+
+
 def _normalize_privacy_mode(value: Any) -> str:
     mode = str(value or _DEFAULT_PRIVACY_MODE).strip().lower().replace("_", "-")
     return mode if mode in _PRIVACY_MODES else _DEFAULT_PRIVACY_MODE
@@ -200,6 +207,10 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
             "tool_name": str(match.get("tool_name") or "*").strip() or "*",
             "action_family": str(match.get("action_family") or "*").strip().lower() or "*",
             "destination": str(match.get("destination") or "*").strip().lower() or "*",
+            "purpose": _normalize_rule_purpose(match.get("purpose", "*")),
+            "recipient_identity": _normalize_rule_recipient_identity(
+                match.get("recipient_identity", match.get("recipient", "*"))
+            ),
             "data_classes": _normalize_rule_classes(match.get("data_classes", ["*"])) or ["*"],
         },
         "scope": {
@@ -245,6 +256,26 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
     }
 
 
+def _validate_persistent_privacy_config(parsed: Any) -> None:
+    if not isinstance(parsed, dict):
+        raise ValueError("privacy rule file must be a JSON object")
+    privacy = parsed.get("privacy")
+    if not isinstance(privacy, dict):
+        raise ValueError("privacy rule file missing privacy object")
+    if "mode" in privacy:
+        raw_mode = str(privacy.get("mode") or "").strip().lower().replace("_", "-")
+        if raw_mode not in _PRIVACY_MODES:
+            raise ValueError("privacy rule file has invalid privacy mode")
+    if "rules" in privacy and not isinstance(privacy.get("rules"), list):
+        raise ValueError("privacy rule file privacy.rules must be a list")
+    security = parsed.get("security")
+    if security is not None:
+        if not isinstance(security, dict):
+            raise ValueError("privacy rule file security must be an object")
+        if "rules" in security and not isinstance(security.get("rules"), list):
+            raise ValueError("privacy rule file security.rules must be a list")
+
+
 def _load_privacy_config() -> dict[str, Any]:
     global _PERSISTENT_RULES_CACHE, _PERSISTENT_RULES_ERROR, _PERSISTENT_RULES_MTIME
     with _LOCK:
@@ -265,14 +296,13 @@ def _load_privacy_config() -> dict[str, Any]:
                 _PERSISTENT_RULES_MTIME = None
             else:
                 parsed = json.loads(_PERSISTENT_RULES_PATH.read_text())
-                if not isinstance(parsed, dict) or "privacy" not in parsed:
-                    raise ValueError("invalid privacy rule file")
+                _validate_persistent_privacy_config(parsed)
                 _PERSISTENT_RULES_CACHE = _normalize_privacy_config(parsed)
                 _PERSISTENT_RULES_MTIME = current_mtime
             _PERSISTENT_RULES_ERROR = False
         except Exception as exc:
             logger.warning("%s: failed to load privacy rules: %s", _PLUGIN_NAME, exc)
-            _PERSISTENT_RULES_CACHE = _default_privacy_config()
+            _PERSISTENT_RULES_CACHE = _strict_privacy_config()
             _PERSISTENT_RULES_MTIME = None
             _PERSISTENT_RULES_ERROR = True
         _apply_language_pack_config(_PERSISTENT_RULES_CACHE)
@@ -483,6 +513,14 @@ def _value_matches(rule_value: Any, actual: Any) -> bool:
     return text == "*" or text == str(actual or "").strip().lower()
 
 
+def _destination_matches(rule_value: Any, shape: dict[str, Any]) -> bool:
+    if _value_matches(rule_value, shape.get("destination")):
+        return True
+    if str(shape.get("action_family") or "") != "message_send":
+        return False
+    return _value_matches(rule_value, shape.get("legacy_destination"))
+
+
 def _rule_matches(rule: dict[str, Any], shape: dict[str, Any]) -> bool:
     if not rule.get("enabled", True):
         return False
@@ -493,7 +531,11 @@ def _rule_matches(rule: dict[str, Any], shape: dict[str, Any]) -> bool:
         return False
     if not _value_matches(match.get("action_family", "*"), shape.get("action_family")):
         return False
-    if not _value_matches(match.get("destination", "*"), shape.get("destination")):
+    if not _destination_matches(match.get("destination", "*"), shape):
+        return False
+    if not _value_matches(match.get("purpose", "*"), shape.get("purpose", "unknown")):
+        return False
+    if not _value_matches(match.get("recipient_identity", "*"), shape.get("recipient_identity", "none")):
         return False
     current_classes = set(shape.get("data_classes") or [])
     rule_classes = set(match.get("data_classes") or ["*"])

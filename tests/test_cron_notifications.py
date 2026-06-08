@@ -50,7 +50,8 @@ def test_cron_block_sends_one_sanitized_home_channel_notification(monkeypatch):
     assert "Job: Ritz-Carlton AX 2026 availability check" in message
     assert "Job ID: 41c2974734f8" in message
     assert "Action: message_send" in message
-    assert "Destination: friend" in message
+    assert "Destination: messaging" in message
+    assert "friend" not in message
     assert "Data classes: email" in message
     assert "Approval ID:" not in message
     assert "Decision:" not in message

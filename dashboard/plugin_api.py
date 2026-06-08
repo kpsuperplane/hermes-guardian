@@ -126,6 +126,8 @@ def _requires_wildcard_allow_confirmation(body: dict[str, Any]) -> bool:
         str(match.get("tool_name") or "*").strip() == "*"
         and str(match.get("action_family") or "*").strip() == "*"
         and str(match.get("destination") or "*").strip() == "*"
+        and str(match.get("purpose") or "*").strip() == "*"
+        and str(match.get("recipient_identity") or "*").strip() == "*"
         and "*" in {str(cls).strip() for cls in classes}
     )
 

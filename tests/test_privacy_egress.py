@@ -153,6 +153,71 @@ def test_privacy_rule_remaining_invocations_count_down_and_delete():
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "again"}, session_id="s1") is not None
 
 
+def test_message_send_uses_messaging_destination_with_hashed_recipient_identity():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+
+    result = plugin._on_pre_tool_call(
+        "send_message",
+        {"to": "friend", "text": "hello", "purpose": "Follow Up"},
+        session_id="s1",
+    )
+
+    assert result is not None
+    approval = plugin._PENDING_APPROVALS[first_pending_id(plugin)]
+    assert approval["destination"] == "messaging"
+    assert approval["purpose"] == "follow_up"
+    assert approval["recipient_identity"].startswith("recipient_")
+    assert approval["recipient_identity"] == plugin._recipient_identity_from_value("friend")
+    assert "friend" not in json.dumps(approval)
+
+
+def test_legacy_message_destination_rule_still_matches_hashed_recipient_shape():
+    plugin = load_plugin()
+    save_privacy_config(plugin, rules=[
+        privacy_rule(
+            rule_id="rule_legacy_friend",
+            action_family="message_send",
+            destination="friend",
+            data_classes=["email"],
+        )
+    ])
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+
+    assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
+    assert plugin._on_pre_tool_call("send_message", {"to": "attacker", "text": "hello"}, session_id="s1") is not None
+
+
+def test_contextual_message_rule_matches_purpose_and_recipient_identity():
+    plugin = load_plugin()
+    recipient_identity = plugin._recipient_identity_from_value("friend")
+    save_privacy_config(plugin, rules=[
+        privacy_rule(
+            rule_id="rule_context_friend",
+            action_family="message_send",
+            destination="messaging",
+            purpose="support",
+            recipient_identity=recipient_identity,
+            data_classes=["email"],
+        )
+    ])
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"email"})
+
+    assert plugin._on_pre_tool_call(
+        "send_message",
+        {"to": "friend", "text": "hello", "purpose": "support"},
+        session_id="s1",
+    ) is None
+    assert plugin._on_pre_tool_call(
+        "send_message",
+        {"to": "friend", "text": "hello", "purpose": "marketing"},
+        session_id="s1",
+    ) is not None
+
+
 def test_mcp_read_like_fetch_is_not_treated_as_web_egress():
     plugin = load_plugin()
     bind_owner(plugin)

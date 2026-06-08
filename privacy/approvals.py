@@ -18,6 +18,10 @@ def _pending_approval_from_row(row: sqlite3.Row) -> dict[str, Any] | None:
         "tool_name": str(row["tool_name"] or ""),
         "action_family": str(row["action_family"] or ""),
         "destination": str(row["destination"] or ""),
+        "purpose": _normalize_rule_purpose(row["purpose"], allow_star=False) if "purpose" in row.keys() else "unknown",
+        "recipient_identity": _normalize_rule_recipient_identity(row["recipient_identity"], allow_star=False)
+        if "recipient_identity" in row.keys() else "none",
+        "legacy_destination": str(row["legacy_destination"] or "") if "legacy_destination" in row.keys() else "",
         "data_classes": data_classes,
         "action_detail": str(row["action_detail"] or ""),
         "fingerprint": str(row["fingerprint"] or ""),
@@ -36,7 +40,8 @@ def _load_pending_approvals_from_store_unlocked() -> None:
             rows = conn.execute(
                 """
                 SELECT id, session_id, owner_hash, tool_name, action_family,
-                       destination, data_classes, action_detail, fingerprint,
+                       destination, purpose, recipient_identity, legacy_destination,
+                       data_classes, action_detail, fingerprint,
                        created_at, expires_at, cron_job_id, cron_job_name, reason
                 FROM pending_approvals
                 WHERE expires_at > ?
@@ -62,7 +67,8 @@ def _pending_approval_from_store_unlocked(approval_id: str) -> dict[str, Any] | 
             row = conn.execute(
                 """
                 SELECT id, session_id, owner_hash, tool_name, action_family,
-                       destination, data_classes, action_detail, fingerprint,
+                       destination, purpose, recipient_identity, legacy_destination,
+                       data_classes, action_detail, fingerprint,
                        created_at, expires_at, cron_job_id, cron_job_name, reason
                 FROM pending_approvals
                 WHERE id = ?
@@ -83,10 +89,11 @@ def _save_pending_approval_to_store_unlocked(approval: dict[str, Any]) -> None:
                 """
                 INSERT OR REPLACE INTO pending_approvals (
                     id, session_id, owner_hash, tool_name, action_family,
-                    destination, data_classes, action_detail, fingerprint,
+                    destination, purpose, recipient_identity, legacy_destination,
+                    data_classes, action_detail, fingerprint,
                     created_at, expires_at, cron_job_id, cron_job_name, reason
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(approval.get("id") or ""),
@@ -95,6 +102,9 @@ def _save_pending_approval_to_store_unlocked(approval: dict[str, Any]) -> None:
                     str(approval.get("tool_name") or ""),
                     str(approval.get("action_family") or ""),
                     str(approval.get("destination") or ""),
+                    _normalize_rule_purpose(approval.get("purpose", "unknown"), allow_star=False),
+                    _normalize_rule_recipient_identity(approval.get("recipient_identity", "none"), allow_star=False),
+                    str(approval.get("legacy_destination") or ""),
                     ",".join(
                         sorted(
                             str(cls)
@@ -235,6 +245,9 @@ def _create_pending_approval(shape: dict[str, Any]) -> dict[str, Any]:
         "tool_name": shape["tool_name"],
         "action_family": shape["action_family"],
         "destination": shape["destination"],
+        "purpose": _normalize_rule_purpose(shape.get("purpose", "unknown"), allow_star=False),
+        "recipient_identity": _normalize_rule_recipient_identity(shape.get("recipient_identity", "none"), allow_star=False),
+        "legacy_destination": "",
         "data_classes": list(shape["data_classes"]),
         "action_detail": shape.get("action_detail") or "",
         "fingerprint": shape["fingerprint"],
@@ -292,6 +305,8 @@ def _rule_from_approval(approval: dict[str, Any], *, persistent: bool = False) -
             "tool_name": approval.get("tool_name") or "*",
             "action_family": approval.get("action_family") or "*",
             "destination": approval.get("destination") or "*",
+            "purpose": approval.get("purpose") or "*",
+            "recipient_identity": approval.get("recipient_identity") or "*",
             "data_classes": list(approval.get("data_classes") or ["*"]),
         },
         "scope": scope,

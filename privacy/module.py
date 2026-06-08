@@ -52,6 +52,8 @@ def _emit_egress_activity(
     rule_effect: str = "",
     rule_scope: str = "",
     action_detail: str = "",
+    purpose: str = "",
+    recipient_identity: str = "",
 ) -> None:
     _emit_activity(
         decision,
@@ -68,13 +70,15 @@ def _emit_egress_activity(
         rule_effect=rule_effect,
         rule_scope=rule_scope,
         action_detail=action_detail,
+        purpose=purpose,
+        recipient_identity=recipient_identity,
         module="privacy",
     )
 
 
-def _allow_privacy_off_tool_call(tool_name: str, args: Any, session_id: str | None, action: tuple[str, str] | None) -> None:
+def _allow_privacy_off_tool_call(tool_name: str, args: Any, session_id: str | None, action: ToolAction | None) -> None:
     if action:
-        action_family, destination = action
+        action_family, destination = action.as_tuple()
         data_classes = _data_classes_for_egress(session_id, args)
         if data_classes:
             _emit_egress_activity(
@@ -86,6 +90,8 @@ def _allow_privacy_off_tool_call(tool_name: str, args: Any, session_id: str | No
                 data_classes=data_classes,
                 reason="privacy policy off",
                 action_detail=_activity_action_detail(tool_name, args, action_family, destination),
+                purpose=action.purpose,
+                recipient_identity=action.recipient_identity,
             )
     else:
         _emit_read_activity_if_applicable(tool_name, args, session_id)
@@ -99,6 +105,8 @@ def _allow_untainted_tool_call(
     *,
     action_family: str,
     destination: str,
+    purpose: str = "unknown",
+    recipient_identity: str = "none",
 ) -> None:
     _emit_egress_activity(
         "allowed",
@@ -109,6 +117,8 @@ def _allow_untainted_tool_call(
         data_classes=set(),
         reason="no private data in scope",
         action_detail=_activity_action_detail(tool_name, args, action_family, destination),
+        purpose=purpose,
+        recipient_identity=recipient_identity,
     )
     _record_allowed_tool_side_effects(session_id, tool_name, args)
 
@@ -127,6 +137,8 @@ def _allow_approved_tool_call(shape: dict[str, Any], source: dict[str, Any], too
         rule_source=source.get("source", ""),
         rule_effect=source.get("effect", "allow"),
         action_detail=shape.get("action_detail", ""),
+        purpose=shape.get("purpose", "unknown"),
+        recipient_identity=shape.get("recipient_identity", "none"),
     )
     _record_allowed_tool_side_effects(
         shape.get("session_id", ""),
@@ -152,6 +164,8 @@ def _block_for_privacy_rule(shape: dict[str, Any], tool_name: str, source: dict[
         rule_source=source.get("source", "persistent"),
         rule_effect=source.get("effect", "deny"),
         action_detail=shape.get("action_detail", ""),
+        purpose=shape.get("purpose", "unknown"),
+        recipient_identity=shape.get("recipient_identity", "none"),
     )
     _notify_cron_failure_if_needed(
         session_id=shape.get("session_id", ""),
@@ -193,6 +207,8 @@ def _allow_read_only_tool_call(shape: dict[str, Any], tool_name: str, args: Any)
         reason="read-only low-risk",
         rule_source="read-only",
         action_detail=shape.get("action_detail", ""),
+        purpose=shape.get("purpose", "unknown"),
+        recipient_identity=shape.get("recipient_identity", "none"),
     )
     _record_allowed_tool_side_effects(shape.get("session_id", ""), tool_name, args)
 
@@ -218,6 +234,8 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
             data_classes=set(shape.get("data_classes") or []),
             reason=hard_reason,
             action_detail=shape.get("action_detail", ""),
+            purpose=shape.get("purpose", "unknown"),
+            recipient_identity=shape.get("recipient_identity", "none"),
         )
         _notify_cron_failure_if_needed(
             session_id=shape.get("session_id", ""),
@@ -254,6 +272,8 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
             reason=reason,
             rule_source="llm",
             action_detail=shape.get("action_detail", ""),
+            purpose=shape.get("purpose", "unknown"),
+            recipient_identity=shape.get("recipient_identity", "none"),
         )
         _record_allowed_tool_side_effects(
             shape.get("session_id", ""),
@@ -293,6 +313,8 @@ def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_r
         reason=blocked_reason,
         approval_id=approval.get("id", ""),
         action_detail=shape.get("action_detail", ""),
+        purpose=shape.get("purpose", "unknown"),
+        recipient_identity=shape.get("recipient_identity", "none"),
     )
     _notify_cron_failure_if_needed(
         session_id=shape.get("session_id", ""),
@@ -314,6 +336,12 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
         action_family = str(intrinsic_risk.get("action_family") or "")
         destination = str(intrinsic_risk.get("destination") or "")
         data_classes = set(intrinsic_risk.get("data_classes") or [])
+        action_detail = (
+            f"action_family={action_family or 'unknown'} "
+            f"destination={destination or 'network'} "
+            f"data_classes={','.join(sorted(data_classes)) or 'unknown'} "
+            f"reason={reason}"
+        )
         _emit_egress_activity(
             "security_blocked",
             session_id=session_id,
@@ -322,7 +350,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
             destination=destination,
             data_classes=data_classes,
             reason=reason,
-            action_detail=_activity_action_detail(tool_name, args, action_family, destination),
+            action_detail=action_detail,
         )
         _notify_cron_failure_if_needed(
             session_id=session_id,
@@ -336,7 +364,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
         return {"action": "block", "message": f"Blocked by {_PLUGIN_NAME}: {reason}."}
 
     privacy_policy = _privacy_policy()
-    action = _egress_action_for_tool(tool_name, args, session_id)
+    action = _egress_action_context_for_tool(tool_name, args, session_id)
 
     if privacy_policy == "off":
         _allow_privacy_off_tool_call(tool_name, args, session_id, action)
@@ -347,13 +375,16 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
         _record_allowed_tool_side_effects(session_id, tool_name, args)
         return None
 
-    action_family, destination = action
+    action_family, destination = action.as_tuple()
     data_classes = _data_classes_for_egress(session_id, args)
     shape = _approval_shape(
         session_id=session_id,
         tool_name=tool_name,
         action_family=action_family,
         destination=destination,
+        purpose=action.purpose,
+        recipient_identity=action.recipient_identity,
+        legacy_destination=action.legacy_destination,
         data_classes=data_classes,
         args=args,
     )
@@ -371,6 +402,8 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
             session_id,
             action_family=action_family,
             destination=destination,
+            purpose=action.purpose,
+            recipient_identity=action.recipient_identity,
         )
         return None
 
@@ -422,6 +455,7 @@ def _privacy_observe_tool_result(
     )
     if taint_classes:
         _taint_session(session_id, taint_classes)
+        _record_provenance_from_tool_result(session_id, tool_name, parsed, taint_classes)
         _emit_activity(
             "tainted",
             session_id=session_id,
@@ -494,13 +528,16 @@ def _final_destination_is_owner_private(
 
 def _privacy_transform_llm_output(response_text: str = "", **kwargs: Any) -> str | None:
     session_id = str(kwargs.get("session_id") or "")
-    classes = _session_taint(session_id)
+    if not _session_taint(session_id):
+        return None
+    classes = _data_classes_for_egress(session_id, response_text)
     if not classes:
         return None
     platform = str(kwargs.get("platform") or "")
     sender_id = str(kwargs.get("sender_id") or kwargs.get("user_id") or "")
     chat_type = str(kwargs.get("chat_type") or kwargs.get("channel_type") or kwargs.get("conversation_type") or "")
     recipient = str(kwargs.get("recipient") or kwargs.get("to") or kwargs.get("chat_id") or kwargs.get("channel") or "")
+    recipient_identity = _recipient_identity_from_value(recipient)
     destination = _final_response_destination(
         session_id=session_id,
         platform=platform,
@@ -521,6 +558,8 @@ def _privacy_transform_llm_output(response_text: str = "", **kwargs: Any) -> str
             destination=destination,
             data_classes=classes,
             reason="owner-visible final response",
+            purpose="unknown",
+            recipient_identity=recipient_identity,
         )
         return None
     _emit_egress_activity(
@@ -531,5 +570,7 @@ def _privacy_transform_llm_output(response_text: str = "", **kwargs: Any) -> str
         destination=destination,
         data_classes=classes,
         reason="tainted final response to non-owner destination",
+        purpose="unknown",
+        recipient_identity=recipient_identity,
     )
     return "[hermes-guardian suppressed a tainted final response to this destination.]"

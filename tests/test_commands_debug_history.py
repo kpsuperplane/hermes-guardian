@@ -48,6 +48,30 @@ def test_guardian_debug_command_reports_gateway_safe_decision(monkeypatch):
     assert "Source: persistent rule_debug" in response
 
 
+def test_guardian_debug_command_accepts_contextual_fields():
+    plugin = load_plugin()
+    recipient_identity = plugin._recipient_identity_from_value("friend")
+    save_privacy_config(plugin, rules=[
+        privacy_rule(
+            rule_id="rule_context_debug",
+            action_family="message_send",
+            destination="messaging",
+            purpose="support",
+            recipient_identity=recipient_identity,
+            data_classes=["email"],
+        )
+    ])
+
+    response = plugin._handle_guardian_command(
+        "debug action=message_send destination=messaging classes=email "
+        f"purpose=support recipient={recipient_identity}"
+    )
+
+    assert "Decision: allowed" in response
+    assert "Purpose: support" in response
+    assert f"Recipient identity: {recipient_identity}" in response
+
+
 def test_guardian_debug_command_does_not_consume_once_approval():
     plugin = load_plugin()
     plugin._ONCE_APPROVALS[plugin._GLOBAL_SESSION_ID] = [{

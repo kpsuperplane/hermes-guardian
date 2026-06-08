@@ -37,6 +37,8 @@ def privacy_rule(
     effect: str = "allow",
     action_family: str = "mcp_write",
     destination: str = "mcp:notion",
+    purpose: str = "*",
+    recipient_identity: str = "*",
     data_classes: list[str] | None = None,
     owner_hash: str = "*",
     session_id: str = "",
@@ -53,6 +55,8 @@ def privacy_rule(
             "tool_name": "*",
             "action_family": action_family,
             "destination": destination,
+            "purpose": purpose,
+            "recipient_identity": recipient_identity,
             "data_classes": data_classes or ["*"],
         },
         "scope": {

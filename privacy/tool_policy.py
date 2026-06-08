@@ -349,20 +349,95 @@ def _taint_reason_for_tool_result(tool_name: str, classes: set[str]) -> str:
 
 
 def _data_classes_for_egress(session_id: str | None, args: Any) -> set[str]:
-    classes = _session_taint(session_id)
-    classes.update(_classes_from_content(args))
-    return classes
+    arg_classes = _classes_from_content(args)
+    matched_classes = _provenance_match_classes(session_id, args)
+    if matched_classes:
+        return arg_classes | matched_classes
+    return arg_classes | _session_taint(session_id)
+
+
+def _safe_policy_token(value: Any, *, default: str, limit: int = 64) -> str:
+    text = str(value or "").strip().lower().replace(" ", "_")
+    text = re.sub(r"[^a-z0-9_.:-]+", "_", text).strip("_.:-")
+    return (text[:limit] if text else default) or default
+
+
+def _purpose_from_args(args: Any) -> str:
+    if isinstance(args, dict):
+        for key in ("purpose", "intent", "use_case"):
+            if args.get(key):
+                return _safe_policy_token(args.get(key), default="unknown", limit=64)
+    return "unknown"
+
+
+def _recipient_raw_from_args(args: Any) -> str:
+    if isinstance(args, dict):
+        for key in ("to", "recipient", "channel", "chat_id", "target", "conversation_id", "thread_id"):
+            value = args.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def _recipient_identity_from_value(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return "none"
+    digest = hashlib.sha256(f"recipient:{text}".encode("utf-8")).hexdigest()
+    return f"recipient_{digest[:24]}"
+
+
+def _recipient_identity_from_args(args: Any) -> str:
+    return _recipient_identity_from_value(_recipient_raw_from_args(args))
+
+
+def _normalize_rule_purpose(value: Any, *, allow_star: bool = True) -> str:
+    text = str(value or "").strip()
+    if allow_star and (not text or text == "*"):
+        return "*"
+    return _safe_policy_token(text, default="unknown", limit=64)
+
+
+def _normalize_rule_recipient_identity(value: Any, *, allow_star: bool = True) -> str:
+    text = str(value or "").strip()
+    if allow_star and (not text or text == "*"):
+        return "*"
+    if text.lower() == "none":
+        return "none"
+    if re.fullmatch(r"recipient_[a-f0-9]{24}", text.lower()):
+        return text.lower()
+    return _recipient_identity_from_value(text)
 
 
 class ToolAction:
-    __slots__ = ("action_family", "destination")
+    __slots__ = ("action_family", "destination", "purpose", "recipient_identity", "legacy_destination")
 
-    def __init__(self, action_family: str, destination: str) -> None:
+    def __init__(
+        self,
+        action_family: str,
+        destination: str,
+        *,
+        purpose: str = "unknown",
+        recipient_identity: str = "none",
+        legacy_destination: str = "",
+    ) -> None:
         self.action_family = action_family
         self.destination = destination
+        self.purpose = _safe_policy_token(purpose, default="unknown", limit=64)
+        self.recipient_identity = _normalize_rule_recipient_identity(recipient_identity, allow_star=False)
+        self.legacy_destination = str(legacy_destination or "")
 
     def as_tuple(self) -> tuple[str, str]:
         return (self.action_family, self.destination)
+
+    def metadata(self) -> dict[str, str]:
+        return {
+            "action_family": self.action_family,
+            "destination": self.destination,
+            "purpose": self.purpose,
+            "recipient_identity": self.recipient_identity,
+            "legacy_destination": self.legacy_destination,
+        }
 
 
 def _is_mcp_write_tool(tool_name: str) -> bool:
@@ -399,6 +474,80 @@ def _mcp_tool_action(lower: str, args: Any, session_id: str | None) -> ToolActio
     return None
 
 
+def _intrinsic_destination(value: Any, *, default: str = "network") -> str:
+    for url in _extract_urls(value):
+        host = _safe_host_from_url(url)
+        if host:
+            return "private-network" if _is_private_or_metadata_host(host) else host
+    return default
+
+
+def _intrinsic_has_local_secret_source(text: str) -> bool:
+    if _LOCAL_SECRET_READ_RE.search(text):
+        return True
+    if _SENSITIVE_LOCAL_PATH_RE.search(text) and re.search(
+        r"\b(?:cat|head|tail|grep|rg|sed|awk|sqlite3|open|read_text|read_bytes|readFileSync|fs\.readFile)\b",
+        text,
+        re.I,
+    ):
+        return True
+    return False
+
+
+def _intrinsic_has_browser_private_source(text: str) -> bool:
+    return bool(_BROWSER_SECRET_READ_RE.search(text))
+
+
+def _intrinsic_has_network_sink(value: Any, text: str) -> bool:
+    if _NETWORK_SINK_RE.search(text):
+        return True
+    if _extract_urls(value) and re.search(r"\b(?:post|put|patch|delete|send|share|publish|upload)\b", text, re.I):
+        return True
+    return False
+
+
+def _intrinsic_mcp_source_classes(lower: str, args_text: str) -> set[str]:
+    combined = f"{lower} {args_text}".lower()
+    classes: set[str] = set()
+    if re.search(r"(?:^|[^a-z0-9])(?:gmail|email|mail|inbox|message|slack|discord)(?:[^a-z0-9]|$)", combined):
+        classes.add("email")
+    if re.search(r"(?:^|[^a-z0-9])(?:drive|docs?|document|file|notion|sheet|slide)(?:[^a-z0-9]|$)", combined):
+        classes.add("documents")
+    if re.search(r"(?:^|[^a-z0-9])(?:calendar|event|meeting)(?:[^a-z0-9]|$)", combined):
+        classes.add("calendar")
+    if re.search(r"(?:^|[^a-z0-9])(?:dex|contact|contacts|people|person)(?:[^a-z0-9]|$)", combined):
+        classes.add("contacts")
+    if re.search(r"(?:^|[^a-z0-9])(?:memory|mnemosyne|session_search|search_sessions)(?:[^a-z0-9]|$)", combined):
+        classes.add("memory")
+    return classes
+
+
+def _intrinsic_mcp_sink_destination(lower: str, args: Any, args_text: str) -> str:
+    destination = _intrinsic_destination(args, default="")
+    if destination:
+        return destination
+    if re.search(r"(?:^|[^a-z0-9])(?:webhook|callback|endpoint|share|send|post|publish|upload)(?:[^a-z0-9]|$)", f"{lower} {args_text}", re.I):
+        return _mcp_destination(lower)
+    return ""
+
+
+def _intrinsic_mcp_risk(lower: str, args: Any, args_text: str) -> dict[str, Any] | None:
+    if not lower.startswith("mcp_"):
+        return None
+    classes = _intrinsic_mcp_source_classes(lower, args_text)
+    if not classes:
+        return None
+    destination = _intrinsic_mcp_sink_destination(lower, args, args_text)
+    if not destination:
+        return None
+    return {
+        "action_family": "mcp_write",
+        "destination": destination,
+        "data_classes": classes,
+        "reason": "same-call MCP private source plus network/share sink",
+    }
+
+
 def _intrinsic_risk_for_tool(tool_name: str, args: Any) -> dict[str, Any] | None:
     if not _security_rule_enabled("intrinsic_exfiltration"):
         return None
@@ -407,21 +556,24 @@ def _intrinsic_risk_for_tool(tool_name: str, args: Any) -> dict[str, Any] | None
     if not text:
         return None
     if lower in {"terminal", "execute_code", "code_execution", "shell"}:
-        if _LOCAL_SECRET_READ_RE.search(text) and _NETWORK_SINK_RE.search(text):
+        if _intrinsic_has_local_secret_source(text) and _intrinsic_has_network_sink(args, text):
             return {
                 "action_family": "terminal_exec",
-                "destination": "network",
+                "destination": _intrinsic_destination(args, default="network"),
                 "data_classes": {"local_system"},
                 "reason": "same-call local secret read plus network egress",
             }
     if lower in {"browser_console", "browser_cdp"}:
-        if _BROWSER_SECRET_READ_RE.search(text) and _NETWORK_SINK_RE.search(text):
+        if _intrinsic_has_browser_private_source(text) and _intrinsic_has_network_sink(args, text):
             return {
                 "action_family": lower,
-                "destination": "browser",
+                "destination": _intrinsic_destination(args, default="network"),
                 "data_classes": {"browser_private_input"},
                 "reason": "same-call browser state read plus network egress",
             }
+    mcp_risk = _intrinsic_mcp_risk(lower, args, text)
+    if mcp_risk:
+        return mcp_risk
     return None
 
 
@@ -523,7 +675,13 @@ def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> To
         (bool(_TERMINAL_TOOL_RE.match(lower)), lambda: ToolAction("terminal_exec", "terminal")),
         (
             _is_message_send_call(lower, args),
-            lambda: ToolAction("message_send", _safe_destination_from_args(args, default="messaging")),
+            lambda: ToolAction(
+                "message_send",
+                "messaging",
+                purpose=_purpose_from_args(args),
+                recipient_identity=_recipient_identity_from_args(args),
+                legacy_destination=_safe_destination_from_args(args, default="messaging"),
+            ),
         ),
         (lower == "send_message", lambda: None),
         (
@@ -544,6 +702,10 @@ def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> To
 def _egress_action_for_tool(tool_name: str, args: Any, session_id: str | None) -> tuple[str, str] | None:
     action = _egress_tool_action(tool_name, args, session_id)
     return action.as_tuple() if action else None
+
+
+def _egress_action_context_for_tool(tool_name: str, args: Any, session_id: str | None) -> ToolAction | None:
+    return _egress_tool_action(tool_name, args, session_id)
 
 
 def _read_activity_for_tool(tool_name: str, args: Any, session_id: str | None = None) -> tuple[str, str] | None:

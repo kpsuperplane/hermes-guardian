@@ -76,8 +76,8 @@ def _activity_action_detail(tool_name: str, args: Any, action_family: str = "", 
                 return f"computer {action}: {_redacted_content_note(text)}"
             return f"computer {action}"
         if lower_action == "message_send":
-            target = args.get("to") or args.get("recipient") or args.get("channel") or destination
-            return f"send to {str(target)[:120]}: <message redacted>"
+            recipient_identity = _recipient_identity_from_args(args)
+            return f"send via {destination or 'messaging'} to {recipient_identity}: <message redacted>"
         if lower_action == "message_list":
             return "list message targets"
         if lower_action == "web_api":

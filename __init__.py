@@ -44,6 +44,14 @@ _SYNC_STATE_KEYS = [
 
 _SYNC_TO_CORE_KEYS = set(_SYNC_STATE_KEYS) | {"_now", "_env"}
 _SYNC_SKIP_FROM_CORE = {"_now", "_env"}
+_FACADE_CALLABLE_DENYLIST = {
+    "_assert_core_logic_contract",
+    "_core_logic_missing_required_symbols",
+    "_core_logic_path",
+    "_load_core_logic",
+    "_load_logic_module",
+    "_load_relative_module",
+}
 
 
 def _sync_to_core() -> None:
@@ -84,7 +92,7 @@ for _name in dir(_CORE):
         continue
     _value = getattr(_CORE, _name)
     if callable(_value):
-        if _name == "_load_sibling_module":
+        if _name in _FACADE_CALLABLE_DENYLIST:
             continue
         if isinstance(_value, type):
             globals()[_name] = _value

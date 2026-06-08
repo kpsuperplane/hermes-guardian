@@ -150,7 +150,7 @@ def test_env_helper_ignores_old_privacy_egress_guard_names(monkeypatch):
         ("mcp_notion_notion_fetch", {"id": "page"}, None, None),
         ("mcp_notion_notion_update_page", {"id": "page", "title": "x"}, None, ("mcp_write", "mcp:notion")),
         ("send_message", {"action": "list"}, None, None),
-        ("send_message", {"to": "friend", "text": "hello"}, None, ("message_send", "friend")),
+        ("send_message", {"to": "friend", "text": "hello"}, None, ("message_send", "messaging")),
         ("browser_snapshot", {}, None, None),
         ("web_search", {"query": "kevin@example.com"}, None, ("web_read", "web_search")),
         ("api_request", {"url": "https://example.com"}, None, ("web_api", "example.com")),

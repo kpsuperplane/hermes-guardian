@@ -303,17 +303,21 @@ _SENSITIVE_LOCAL_PATH_RE = re.compile(
 _LOCAL_SECRET_READ_RE = re.compile(
     r"(\.env|\.ssh|auth\.json|mcp-tokens|credentials?|tokens?|cookies?|keychain|"
     r"AWS_SECRET_ACCESS_KEY|GITHUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|"
+    r"os\.environ|process\.env|getenv\s*\(|/proc/self/environ|"
     r"cat\s+[^;&|]*(?:\.env|credentials?|tokens?|\.ssh)|"
-    r"open\s*\([^)]*(?:\.env|credentials?|tokens?|\.ssh))",
+    r"(?:open|read_text|read_bytes|readFileSync|fs\.readFile)\s*\([^)]*(?:\.env|auth\.json|mcp-tokens|credentials?|tokens?|\.ssh))",
     re.I | re.S,
 )
 _BROWSER_SECRET_READ_RE = re.compile(
-    r"(document\.cookie|localStorage|sessionStorage|indexedDB|chrome\.cookies|browser\s+profile|cookies?)",
+    r"(document\.(?:cookie|body|documentElement|forms?)|localStorage|sessionStorage|indexedDB|"
+    r"querySelector|getElementById|getElementsBy|innerText|innerHTML|textContent|\.value\b|"
+    r"navigator\.credentials|chrome\.cookies|browser\s+profile|cookies?)",
     re.I,
 )
 _NETWORK_SINK_RE = re.compile(
     r"(https?://|\b(curl|wget|scp|sftp|rsync|nc|netcat)\b|"
-    r"requests\.(post|put|patch)|fetch\s*\(|XMLHttpRequest|sendBeacon|webhook|upload)",
+    r"requests\.(get|post|put|patch|delete)|urllib\.request|urlopen|fetch\s*\(|"
+    r"XMLHttpRequest|sendBeacon|WebSocket|webhook|callback|upload)",
     re.I | re.S,
 )
 
@@ -390,8 +394,68 @@ Return only the requested JSON verdict."""
 
 
 
+_CORE_LOGIC_MODULES = (
+    "runtime/shared_context",
+    "security/module",
+    "runtime/activity_store",
+    "runtime/activity_rows",
+    "privacy/taint",
+    "privacy/tool_policy",
+    "privacy/provenance",
+    "privacy/action_details",
+    "privacy/llm",
+    "privacy/rules",
+    "privacy/approvals",
+    "privacy/module",
+    "integrations/cron_notifications",
+    "ui/dashboard",
+    "ui/commands",
+    "hooks",
+    "runtime/state",
+)
+_CORE_LOGIC_ALLOWED_REBINDS = {
+    "_cron_job_id_from_session": (
+        "privacy/approvals",
+        "integrations/cron_notifications",
+    ),
+}
+_CORE_LOGIC_REQUIRED_SYMBOLS = (
+    "_activity_datatables_payload",
+    "_apply_language_pack_config",
+    "_dashboard_rule_create_action",
+    "_guardian_cli_setup",
+    "_handle_guardian_command",
+    "_on_pre_gateway_dispatch",
+    "_on_pre_llm_call",
+    "_on_pre_tool_call",
+    "_on_session_end",
+    "_on_session_reset",
+    "_on_transform_llm_output",
+    "_on_transform_tool_result",
+    "_privacy_pre_tool_call",
+    "_privacy_transform_llm_output",
+    "_security_pre_gateway_dispatch",
+    "_security_pre_tool_call",
+    "_security_transform_llm_output",
+    "_security_transform_tool_result",
+)
+_REGISTERED_HOOKS = (
+    "pre_tool_call",
+    "transform_tool_result",
+    "pre_gateway_dispatch",
+    "transform_llm_output",
+    "pre_llm_call",
+    "on_session_reset",
+    "on_session_end",
+)
+
+
+def _core_logic_path(name: str) -> Path:
+    return Path(__file__).parent / f"{name}.py"
+
+
 def _load_logic_module(name: str) -> None:
-    path = Path(__file__).parent / f"{name}.py"
+    path = _core_logic_path(name)
     code = path.read_text()
     compiled = compile(code, str(path), "exec")
     exec(compiled, globals(), globals())
@@ -399,26 +463,23 @@ def _load_logic_module(name: str) -> None:
 
 def _load_core_logic() -> None:
     """Load modular logic files so `core.py` remains a thin façade."""
-    # keep ordering for readability and side-effect free references
-    for name in (
-        "runtime/shared_context",
-        "security/module",
-        "runtime/activity_store",
-        "runtime/activity_rows",
-        "privacy/taint",
-        "privacy/tool_policy",
-        "privacy/action_details",
-        "privacy/llm",
-        "privacy/rules",
-        "privacy/approvals",
-        "privacy/module",
-        "integrations/cron_notifications",
-        "ui/dashboard",
-        "ui/commands",
-        "hooks",
-        "runtime/state",
-    ):
+    for name in _CORE_LOGIC_MODULES:
         _load_logic_module(name)
+
+
+def _core_logic_missing_required_symbols() -> tuple[str, ...]:
+    return tuple(
+        name
+        for name in _CORE_LOGIC_REQUIRED_SYMBOLS
+        if name not in globals() or not callable(globals()[name])
+    )
+
+
+def _assert_core_logic_contract() -> None:
+    missing = _core_logic_missing_required_symbols()
+    if missing:
+        joined = ", ".join(missing)
+        raise RuntimeError(f"{_PLUGIN_NAME}: core loader missing required symbols: {joined}")
 
 
 def _now() -> float:
@@ -460,6 +521,7 @@ def _safe_session_label(session_id: str | None) -> str:
 
 
 _load_core_logic()
+_assert_core_logic_contract()
 try:
     _security._set_security_rule_enabled_callback(_security_rule_enabled)
 except Exception as exc:
@@ -477,13 +539,17 @@ def register(ctx) -> None:
     except Exception as exc:
         logger.warning("%s: failed to capture plugin LLM facade: %s", _PLUGIN_NAME, exc)
         _PLUGIN_LLM = None
-    ctx.register_hook("pre_tool_call", _on_pre_tool_call)
-    ctx.register_hook("transform_tool_result", _on_transform_tool_result)
-    ctx.register_hook("pre_gateway_dispatch", _on_pre_gateway_dispatch)
-    ctx.register_hook("transform_llm_output", _on_transform_llm_output)
-    ctx.register_hook("pre_llm_call", _on_pre_llm_call)
-    ctx.register_hook("on_session_reset", _on_session_reset)
-    ctx.register_hook("on_session_end", _on_session_end)
+    hook_callbacks = {
+        "pre_tool_call": _on_pre_tool_call,
+        "transform_tool_result": _on_transform_tool_result,
+        "pre_gateway_dispatch": _on_pre_gateway_dispatch,
+        "transform_llm_output": _on_transform_llm_output,
+        "pre_llm_call": _on_pre_llm_call,
+        "on_session_reset": _on_session_reset,
+        "on_session_end": _on_session_end,
+    }
+    for hook_name in _REGISTERED_HOOKS:
+        ctx.register_hook(hook_name, hook_callbacks[hook_name])
     if hasattr(ctx, "register_command"):
         ctx.register_command(
             _COMMAND_NAME,
