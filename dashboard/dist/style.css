@@ -120,6 +120,10 @@
   width: auto;
 }
 
+.hermes-guardian-disabled-action {
+  display: inline-flex;
+}
+
 .hermes-guardian-button,
 .hermes-guardian-secondary,
 .hermes-guardian-danger {

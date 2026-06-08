@@ -521,9 +521,19 @@
     function coveredRuleTitle(block) {
       const ruleId = text(block.covered_rule_id);
       const source = text(block.covered_rule_source);
-      if (ruleId) return "Covered by " + ruleId;
-      if (source) return "Covered by " + source + " rule";
-      return "Covered by an existing rule";
+      const prefix = ruleId ? "Covered by " + ruleId : (source ? "Covered by " + source + " rule" : "Covered by an existing rule");
+      return prefix + ". The matching allow rule already permits this retry, so approving this pending request is not needed.";
+    }
+
+    function approvalButton(block, action, label, disabled, title) {
+      const button = h(Button, {
+        key: action + "-button",
+        disabled: disabled,
+        title: title,
+        onClick: disabled ? undefined : function () { approvalAction(block, action); },
+      }, label);
+      if (!disabled) return button;
+      return h("span", { key: action, className: "hermes-guardian-disabled-action", title: title }, button);
     }
 
     function historyTargetCell(row) {
@@ -670,12 +680,8 @@
                 ),
               ),
               pending ? h("div", { className: "hermes-guardian-actions" },
-                covered
-                  ? h(Button, { key: "covered", variant: "secondary", disabled: true, title: coveredRuleTitle(block) }, "Already covered by rule")
-                  : [
-                      h(Button, { key: "once", onClick: function () { approvalAction(block, "approve-once"); } }, "Approve once"),
-                      h(Button, { key: "always", onClick: function () { approvalAction(block, "approve-always"); } }, "Approve always"),
-                    ],
+                approvalButton(block, "approve-once", "Approve once", covered, covered ? coveredRuleTitle(block) : ""),
+                approvalButton(block, "approve-always", "Approve always", covered, covered ? coveredRuleTitle(block) : ""),
                 h(Button, { key: "dismiss", variant: "secondary", onClick: function () { approvalAction(block, "dismiss"); } }, "Dismiss"),
               ) : null,
             ),
