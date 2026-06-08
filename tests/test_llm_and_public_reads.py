@@ -191,8 +191,9 @@ def test_web_extract_logs_public_read_activity():
     assert rows[0]["destination"] == "pastebin.com"
     assert rows[0]["data_classes"] == ""
     assert rows[0]["reason"] == "public read"
-    assert rows[0]["action_detail"] == "load https://pastebin.com/raw/B3AWmVXF"
+    assert rows[0]["action_detail"] == "load pastebin.com: <url path/query redacted>"
     assert "token=secret" not in json.dumps(rows)
+    assert "B3AWmVXF" not in json.dumps(rows)
 
 
 def test_browser_navigate_logs_public_read_and_updates_host():
@@ -211,7 +212,7 @@ def test_browser_navigate_logs_public_read_and_updates_host():
     assert row["decision"] == "read"
     assert row["action_family"] == "browser_read"
     assert row["destination"] == "example.com"
-    assert row["action_detail"] == "load https://example.com/form"
+    assert row["action_detail"] == "load example.com: <url path/query redacted>"
 
 
 def test_untainted_terminal_egress_logs_allowed_without_private_data():
@@ -259,7 +260,7 @@ def test_url_sanitizer_strips_userinfo_and_long_path_tokens():
     )
 
     assert sanitized == "https://example.com/reset/<token-like>"
-    assert detail == "request https://example.com/reset/<token-like>"
+    assert detail == "request example.com: <url path/query redacted>"
     assert "user:password" not in sanitized
     assert "abcdefghijklmnopqrstuvwxyz123456" not in detail
     assert "token=secret" not in detail

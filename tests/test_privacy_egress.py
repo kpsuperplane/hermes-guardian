@@ -299,7 +299,8 @@ def test_private_web_search_query_requires_approval_even_without_prior_taint():
     rows = plugin._activity_rows({}, limit=10)
     assert [row["decision"] for row in rows] == ["blocked"]
     assert "kevin@example.com" not in json.dumps(rows)
-    assert "<email>" in rows[0]["action_detail"]
+    assert rows[0]["action_detail"].startswith("search <redacted ")
+    assert "classes=email" in rows[0]["action_detail"]
 
 
 def test_security_blocked_action_detail_redacts_auth_code():
@@ -350,6 +351,8 @@ def test_web_search_query_under_taint_requires_approval():
     assert rows[0]["decision"] == "blocked"
     assert rows[0]["action_family"] == "web_read"
     assert rows[0]["data_classes"] == "email"
+    assert "python docs" not in result["message"]
+    assert rows[0]["action_detail"] == "search <redacted 11 chars>"
 
 
 def test_tainted_session_blocks_delegation_model_api_cron_and_local_writes():

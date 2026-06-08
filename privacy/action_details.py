@@ -30,6 +30,15 @@ def _redacted_content_note(value: Any) -> str:
     return f"<redacted {len(text)} chars{suffix}>"
 
 
+def _redacted_url_action_detail(prefix: str, args: Any, destination: str) -> str:
+    url = _extract_url(args)
+    host = _safe_host_from_url(url) if url else ""
+    target = host or destination or "remote"
+    if url and _url_sends_remote_text(url):
+        return f"{prefix} {target}: <url path/query redacted>"
+    return f"{prefix} {target}"
+
+
 def _activity_action_detail(tool_name: str, args: Any, action_family: str = "", destination: str = "") -> str:
     lower_tool = str(tool_name or "").lower()
     lower_action = str(action_family or "").lower()
@@ -72,15 +81,14 @@ def _activity_action_detail(tool_name: str, args: Any, action_family: str = "", 
         if lower_action == "message_list":
             return "list message targets"
         if lower_action == "web_api":
-            url = _extract_url(args)
-            return f"request {_sanitize_url_for_llm(url) if url else destination}"
+            return _redacted_url_action_detail("request", args, destination)
         if lower_action in {"web_read", "browser_read"}:
             url = _extract_url(args)
             if url:
-                return f"load {_sanitize_url_for_llm(url)}"
+                return _redacted_url_action_detail("load", args, destination)
             query = str(args.get("query") or args.get("q") or "")
             if query:
-                return f"search {_redact_action_detail_text(query)}"
+                return f"search {_redacted_content_note(query)}"
             return f"load {destination}"
         if lower_action in {"mcp_write", "mcp_unknown", "mcp_read_query"}:
             keys = ",".join(sorted(str(key) for key in args.keys())[:20])
