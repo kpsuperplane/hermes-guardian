@@ -25,6 +25,7 @@ import re
 import secrets
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 from copy import deepcopy
@@ -35,11 +36,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 logger = logging.getLogger(__name__)
 
+_PLUGIN_ROOT = Path(__file__).parent
+if str(_PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_ROOT))
+
 
 def _load_relative_module(name: str, relative_path: str) -> Any:
     """Load a plugin-relative module file by absolute path."""
     import importlib.util
-    import sys
 
     module_name = f"{__name__}.{name}"
     if module_name in sys.modules:

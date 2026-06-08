@@ -130,3 +130,32 @@ def test_dashboard_plugin_api_loader_imports_plugin_without_package_split_breaka
 
     assert plugin._PLUGIN_NAME == "hermes-guardian"
     assert callable(plugin._dashboard_rule_create_action)
+
+
+def test_dashboard_plugin_api_loader_works_outside_plugin_cwd(tmp_path, monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    server_path = root / "dashboard" / "plugin_api.py"
+    old_path = list(sys.path)
+    for name in list(sys.modules):
+        if name == "_hermes_guardian_dashboard_facade" or name.startswith("language_packs"):
+            sys.modules.pop(name, None)
+    monkeypatch.chdir(tmp_path)
+    try:
+        sys.path[:] = [
+            path
+            for path in sys.path
+            if not path or Path(path).resolve() != root
+        ]
+        spec = importlib.util.spec_from_file_location("hermes_guardian_dashboard_api_tmp_cwd", server_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        plugin = module._guardian()
+        policy = plugin._policy_snapshot()
+
+        assert plugin._PLUGIN_NAME == "hermes-guardian"
+        assert "security_rules" in policy
+        assert callable(plugin._activity_datatables_payload)
+    finally:
+        sys.path[:] = old_path

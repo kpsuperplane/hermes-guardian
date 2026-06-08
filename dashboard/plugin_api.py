@@ -61,7 +61,11 @@ def _guardian() -> Any:
         raise RuntimeError("failed to load Hermes Guardian plugin")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
     return module
 
 
