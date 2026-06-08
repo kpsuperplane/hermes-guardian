@@ -149,12 +149,11 @@ def _browser_result_has_private_context(value: Any) -> bool:
     text = _stringify_for_scan(value)
     if not text:
         return False
-    return bool(re.search(
-        r"\b(logged\s+in|sign\s*out|logout|account|profile|csrf|authenticat(?:ed|ion)|"
-        r"prefilled|password|document\.cookie|localStorage|sessionStorage)\b",
-        text,
-        re.I,
-    ) or _EMAIL_ADDRESS_RE.search(text))
+    return bool(
+        _LANGUAGE_PACKS.browser_private_context_pattern.search(text)
+        or re.search(r"\b(csrf|document\.cookie|localStorage|sessionStorage)\b", text, re.I)
+        or _EMAIL_ADDRESS_RE.search(text)
+    )
 
 
 def _classes_from_tool_name(tool_name: str) -> set[str]:

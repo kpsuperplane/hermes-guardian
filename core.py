@@ -56,6 +56,7 @@ def _load_relative_module(name: str, relative_path: str) -> Any:
 
 _presentation = _load_relative_module("ui.presentation", "ui/presentation.py")
 _security = _load_relative_module("security.scanner", "security/scanner.py")
+_language = _load_relative_module("language_packs.runtime", "language_packs/runtime.py")
 
 
 _PLUGIN_NAME = "hermes-guardian"
@@ -200,6 +201,7 @@ _EMAIL_ADDRESS_RE = _security._EMAIL_ADDRESS_RE
 _PHONE_RE = _security._PHONE_RE
 _SSN_RE = _security._SSN_RE
 _PRIVATE_FIELD_RE = _security._PRIVATE_FIELD_RE
+_LANGUAGE_PACKS = _language._COMPILED_LANGUAGE_PACKS
 
 _SOURCE_TAINT_RULES: list[tuple[re.Pattern[str], set[str]]] = [
     (re.compile(r"(^|_)(gmail|email|mail|inbox|message)(_|$)", re.I), {"email"}),

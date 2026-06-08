@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from language_packs.runtime import _COMPILED_LANGUAGE_PACKS
+
 _PLUGIN_NAME = "hermes-guardian"
 _FORMER_PLUGIN_NAME = "privacy-egress-guard"
 
@@ -19,37 +21,8 @@ _MESSAGE_KEYS = {
     "thread_id",
 }
 
-_SECURITY_SENSITIVE_PATTERNS = [
-    (re.compile(r"\[\s*sensitive\s+email\s+subject\s+redacted\s*\]", re.I), "redacted sensitive email"),
-    (re.compile(r"\[\s*sensitive\s+email\s+(?:content|body|message)\s+redacted\s*\]", re.I), "redacted sensitive email"),
-    (re.compile(r"\[\s*redacted\s+sensitive\s+(?:email\s+)?subject\s*\]", re.I), "redacted sensitive email"),
-    (re.compile(r"\bpassword\s+(reset|change|recovery)\b", re.I), "password reset"),
-    (re.compile(r"\breset\s+(your|the|my)?\s*password\b", re.I), "password reset"),
-    (re.compile(r"\bforgot\s+(your|my)?\s*password\b", re.I), "password recovery"),
-    (re.compile(r"\baccount\s+recovery\b", re.I), "account recovery"),
-    (re.compile(
-        r"\b(recovery|security|verification|authentication|login|sign[- ]?in)\s+code\b"
-        r"(?:\s*(?:is|=|:|-|#)\s*|\s.{0,40}?\s)"
-        r"\b(?:\d[\d -]{4,15}|[A-Z0-9]*\d[A-Z0-9 -]{4,15})\b",
-        re.I | re.S,
-    ), "auth code"),
-    (re.compile(r"\b(one[- ]?time|temporary)\s+(password|passcode|code)\b", re.I), "one-time code"),
-    (re.compile(r"\bone[- ]?time\b.{0,80}\[?\s*redacted\s*\]?", re.I | re.S), "one-time code"),
-    (re.compile(r"\bOTP\b", re.I), "otp"),
-    (re.compile(r"\b(2FA|two[- ]?factor|multi[- ]?factor)\b", re.I), "multi-factor auth"),
-    (re.compile(r"\bmagic\s+link\b", re.I), "magic link"),
-    (re.compile(r"\b(public|ssh|gpg|deploy)\s+key\b.{0,120}\b(added|created|removed|deleted|changed)\b", re.I | re.S), "security key change"),
-    (re.compile(r"\b(added|created|removed|deleted|changed)\b.{0,120}\b(public|ssh|gpg|deploy)\s+key\b", re.I | re.S), "security key change"),
-    (re.compile(r"\bverify\s+(your\s+)?(email|account|identity)\b", re.I), "account verification"),
-    (re.compile(r"\bconfirm\s+(your\s+)?(email|account|identity)\b", re.I), "account confirmation"),
-    (re.compile(r"\bsecurity\s+alert\b", re.I), "security alert"),
-    (re.compile(r"\bnew\s+(sign[- ]?in|login)\b", re.I), "new login alert"),
-    (re.compile(r"\bsuspicious\s+(sign[- ]?in|login|activity)\b", re.I), "suspicious activity"),
-    (re.compile(r"\bunauthori[sz]ed\s+(sign[- ]?in|login|activity)\b", re.I), "unauthorized activity"),
-    (re.compile(r"\b(password|reset|recover|verify|verification|auth|authentication|login|sign[- ]?in|one[- ]?time|otp|2fa|token|passcode|code|security|magic|key)\b.{0,120}\[?\s*redacted\s*\]?", re.I | re.S), "redacted security content"),
-    (re.compile(r"\[?\s*redacted\s*\]?.{0,120}\b(password|reset|recover|verify|verification|auth|authentication|login|sign[- ]?in|one[- ]?time|otp|2fa|token|passcode|code|security|magic|key)\b", re.I | re.S), "redacted security content"),
-    (re.compile(r"https?://[^\s\"'<>]*(reset|recover|verify|confirm|magic|otp|2fa)[^\s\"'<>]*", re.I), "sensitive link"),
-]
+_SECURITY_SENSITIVE_PATTERNS = list(_COMPILED_LANGUAGE_PACKS.security_sensitive_patterns)
+_REDACTION_MARKER_PATTERNS = list(_COMPILED_LANGUAGE_PACKS.redaction_marker_patterns)
 
 _CREDENTIAL_PATTERNS = [
     (re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----", re.I), "private key"),
@@ -65,9 +38,9 @@ _CREDENTIAL_PATTERNS = [
 ]
 
 _CODE_CONTEXT_RE = re.compile(
-    r"\b(?:code|otp|passcode|pin)\b"
-    r"(?:\s*(?:is|=|:|-|#)\s*|\s.{0,40}?\s)"
-    r"\b(?:\d[\d -]{4,15}|[A-Z0-9]*\d[A-Z0-9 -]{4,15})\b",
+    _COMPILED_LANGUAGE_PACKS.auth_code_label_pattern.pattern
+    + r"(?:\s*(?:is|es|=|:|-|#)\s*|\s.{0,40}?\s)"
+    + r"\b(?:\d[\d -]{4,15}|[A-Z0-9]*\d[A-Z0-9 -]{4,15})\b",
     re.I | re.S,
 )
 _NUMBERED_RECORD_START_RE = re.compile(r"(?m)(?=^[^\S\r\n]*\d+[\.)][^\S\r\n]+)")
@@ -79,11 +52,7 @@ _EMAIL_SHAPED_TEXT_RE = re.compile(
 _EMAIL_ADDRESS_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 _PHONE_RE = re.compile(r"(?<!\d)(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}(?!\d)")
 _SSN_RE = re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)")
-_PRIVATE_FIELD_RE = re.compile(
-    r"\b(email|phone|address|contact|attendee|recipient|sender|full\s+name|"
-    r"first\s+name|last\s+name|dob|date\s+of\s+birth|ssn|passport)\b",
-    re.I,
-)
+_PRIVATE_FIELD_RE = _COMPILED_LANGUAGE_PACKS.private_field_pattern
 
 def _context(text: str, start: int, end: int, *, radius: int = 120) -> str:
     prefix = max(0, start - radius)
@@ -118,6 +87,21 @@ def _sensitive_finding(value: Any) -> dict[str, str] | None:
                 "match": match.group(0),
                 "context": _context(text, match.start(), match.end()),
             }
+    for pattern, reason in _REDACTION_MARKER_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return {
+                "reason": reason,
+                "match": match.group(0),
+                "context": _context(text, match.start(), match.end()),
+            }
+    redacted_match = re.search(r"\[?\s*redacted\s*\]?", text, re.I)
+    if redacted_match and _COMPILED_LANGUAGE_PACKS.redacted_security_context_pattern.search(text):
+        return {
+            "reason": "redacted security content",
+            "match": redacted_match.group(0),
+            "context": _context(text, redacted_match.start(), redacted_match.end()),
+        }
     for pattern, reason in _SECURITY_SENSITIVE_PATTERNS:
         match = pattern.search(text)
         if match:
@@ -133,6 +117,13 @@ def _sensitive_finding(value: Any) -> dict[str, str] | None:
             "match": match.group(0),
             "context": _context(text, match.start(), match.end()),
         }
+    for match in re.finditer(r"https?://[^\s\"'<>]+", text, re.I):
+        if _COMPILED_LANGUAGE_PACKS.security_link_term_pattern.search(match.group(0)):
+            return {
+                "reason": "sensitive link",
+                "match": match.group(0),
+                "context": _context(text, match.start(), match.end()),
+            }
     return None
 
 

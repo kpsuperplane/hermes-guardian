@@ -351,6 +351,23 @@ HERMES_GUARDIAN_UNSAFE_DIAGNOSTICS=1
 This is for development only. It can log sensitive detection matches and context
 snippets. Do not enable it in production or on shared systems.
 
+### Language Packs
+
+```bash
+HERMES_GUARDIAN_LANGUAGE_PACKS=en,es
+```
+
+Hermes Guardian uses declarative language packs for semantic security terms,
+auth-code labels, private-field labels, browser private-context hints, redaction
+markers, and sensitive-link terms. English and Spanish are bundled and enabled
+by default. Use `HERMES_GUARDIAN_LANGUAGE_PACKS=en` to limit semantic detection
+to English, or `HERMES_GUARDIAN_LANGUAGE_PACKS=all` to enable every bundled
+pack.
+
+Language packs improve pre-taint semantic detection. Structural protections
+such as source-based taint, tainted URL/search/MCP egress checks, final-response
+mediation, and credential-format scanning remain language-independent.
+
 ## Data Classes
 
 Hermes Guardian tracks private context using these data classes:
@@ -398,6 +415,11 @@ suppresses content matching categories such as:
 For tool calls, security-sensitive arguments are blocked before execution. For
 tool results and model output, matching sensitive email records are removed
 entirely rather than merely redacting the subject.
+
+Semantic security-sensitive terms are supplied by language packs under
+`language_packs/`. New packs should add tests for password reset/recovery,
+auth-code phrases, account/security alerts, private field labels, browser
+private-context hints, redaction markers, and translated sensitive-link terms.
 
 ## Egress Policy
 
