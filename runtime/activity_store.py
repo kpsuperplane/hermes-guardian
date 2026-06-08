@@ -63,7 +63,10 @@ def _ensure_activity_db() -> None:
                         approval_id TEXT NOT NULL,
                         rule_id TEXT NOT NULL,
                         rule_source TEXT NOT NULL,
-                        action_detail TEXT NOT NULL DEFAULT ''
+                        action_detail TEXT NOT NULL DEFAULT '',
+                        module TEXT NOT NULL DEFAULT '',
+                        rule_effect TEXT NOT NULL DEFAULT '',
+                        rule_scope TEXT NOT NULL DEFAULT ''
                     )
                     """
                 )
@@ -73,6 +76,12 @@ def _ensure_activity_db() -> None:
                 }
                 if "action_detail" not in columns:
                     conn.execute("ALTER TABLE activity ADD COLUMN action_detail TEXT NOT NULL DEFAULT ''")
+                if "module" not in columns:
+                    conn.execute("ALTER TABLE activity ADD COLUMN module TEXT NOT NULL DEFAULT ''")
+                if "rule_effect" not in columns:
+                    conn.execute("ALTER TABLE activity ADD COLUMN rule_effect TEXT NOT NULL DEFAULT ''")
+                if "rule_scope" not in columns:
+                    conn.execute("ALTER TABLE activity ADD COLUMN rule_scope TEXT NOT NULL DEFAULT ''")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_ts_idx ON activity(ts)")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_decision_idx ON activity(decision)")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_action_idx ON activity(action_family)")
@@ -130,10 +139,18 @@ def _emit_activity(
     rule_id: str = "",
     rule_source: str = "",
     action_detail: str = "",
+    module: str = "",
+    rule_effect: str = "",
+    rule_scope: str = "",
 ) -> None:
     """Persist sanitized activity metadata for dashboard/debugging."""
     if decision not in _ACTIVITY_DECISIONS:
         decision = "allowed"
+    if not module:
+        if decision in {"security_blocked", "security_suppressed"}:
+            module = "security"
+        elif decision in {"allowed", "auto_approved", "blocked", "denied", "manual_approved", "privacy_off_allowed", "tainted"}:
+            module = "privacy"
     safe_classes = sorted(str(cls) for cls in (data_classes or []) if str(cls) in _ALL_PRIVACY_CLASSES)
     sid = _normalize_session_id(session_id)
     try:
@@ -144,9 +161,10 @@ def _emit_activity(
                 INSERT INTO activity (
                     ts, decision, mode, session_label, session_hash, owner_hash,
                     tool_name, action_family, destination, data_classes, reason,
-                    approval_id, rule_id, rule_source, action_detail
+                    approval_id, rule_id, rule_source, action_detail,
+                    module, rule_effect, rule_scope
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     int(_now()),
@@ -164,6 +182,9 @@ def _emit_activity(
                     str(rule_id or "")[:80],
                     str(rule_source or "")[:80],
                     str(action_detail or "")[:500],
+                    str(module or "")[:40],
+                    str(rule_effect or "")[:40],
+                    str(rule_scope or "")[:160],
                 ),
             )
         _prune_activity_db()

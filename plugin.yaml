@@ -1,5 +1,5 @@
 name: hermes-guardian
-version: 2.0.0
+version: 3.0.0
 description: Hermes Guardian security and egress policy enforcement
 provides_hooks:
   - pre_tool_call

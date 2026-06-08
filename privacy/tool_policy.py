@@ -191,6 +191,12 @@ def _record_local_system_result_policy(session_id: str | None, tool_name: str, a
         "remote_read": _terminal_command_is_safe_remote_read(_terminal_command_for_args(args)),
         "ts": _now(),
     }
+    _record_shared_context(
+        session_id,
+        tool_name,
+        public_remote_read=bool(entry["remote_read"]),
+        local_system_taint=",".join(entry["taint"]),
+    )
     with _LOCK:
         state = _ensure_session(session_id)
         policies = state.setdefault("local_system_result_policies", [])
@@ -201,6 +207,18 @@ def _record_local_system_result_policy(session_id: str | None, tool_name: str, a
 def _consume_local_system_result_policy(session_id: str | None, tool_name: str) -> dict[str, Any]:
     if not _is_local_system_tool(tool_name):
         return {}
+    shared = _consume_shared_context(session_id, tool_name)
+    if shared:
+        return {
+            "tool_name": str(tool_name or "").lower(),
+            "taint": [
+                cls
+                for cls in str(shared.get("local_system_taint") or "").split(",")
+                if cls
+            ],
+            "remote_read": bool(shared.get("public_remote_read")),
+            "ts": float(shared.get("ts") or _now()),
+        }
     lower = str(tool_name or "").lower()
     cutoff = _now() - 120
     with _LOCK:
@@ -428,4 +446,3 @@ def _safe_destination_from_args(args: Any, *, default: str) -> str:
                 normalized = re.sub(r"[^A-Za-z0-9_.:@-]+", "_", value.strip())[:80]
                 return normalized or default
     return default
-

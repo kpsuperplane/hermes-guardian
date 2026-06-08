@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import http.server
 import json
 import logging
 import os
@@ -29,21 +28,21 @@ import time
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 logger = logging.getLogger(__name__)
 
 
-def _load_sibling_module(name: str) -> Any:
-    """Load a sibling module file (security/presentation) by absolute path."""
+def _load_relative_module(name: str, relative_path: str) -> Any:
+    """Load a plugin-relative module file by absolute path."""
     import importlib.util
     import sys
 
     module_name = f"{__name__}.{name}"
     if module_name in sys.modules:
         return sys.modules[module_name]
-    module_path = Path(__file__).with_name(f"{name}.py")
+    module_path = Path(__file__).parent / relative_path
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"failed to load {module_path}")
@@ -53,8 +52,8 @@ def _load_sibling_module(name: str) -> Any:
     return module
 
 
-_presentation = _load_sibling_module("presentation")
-_security = _load_sibling_module("security")
+_presentation = _load_relative_module("ui.presentation", "ui/presentation.py")
+_security = _load_relative_module("security.scanner", "security/scanner.py")
 
 
 _PLUGIN_NAME = "hermes-guardian"
@@ -64,10 +63,6 @@ _UNSAFE_DIAGNOSTICS_FLAG = Path(__file__).with_name(".unsafe-diagnostics")
 _PERSISTENT_RULES_PATH = Path(__file__).with_name("guardian-rules.json")
 _PERSISTENT_RULES_MTIME: float | None = None
 _ACTIVITY_DB_PATH = Path(__file__).with_name("activity.sqlite3")
-_JQUERY_VERSION = "3.7.1"
-_JQUERY_ASSET_DIR = Path(__file__).with_name("vendor") / "jquery" / _JQUERY_VERSION
-_DATATABLES_VERSION = "2.3.8"
-_DATATABLES_ASSET_DIR = Path(__file__).with_name("vendor") / "datatables" / _DATATABLES_VERSION
 _APPROVAL_TTL_SECONDS = 10 * 60
 _APPROVAL_ID_REUSE_SECONDS = 7 * 24 * 60 * 60
 _RECENT_COMMAND_TTL_SECONDS = 30
@@ -149,18 +144,12 @@ _APPROVAL_WORDS_RIGHT = [
     "willow",
     "zenith",
 ]
-_ALLOWLIST_ENV = "HERMES_GUARDIAN_ALLOWLIST"
-_PRIVACY_ENV = "HERMES_GUARDIAN_PRIVACY"
-_DASHBOARD_HOST_ENV = "HERMES_GUARDIAN_DASHBOARD_HOST"
-_DASHBOARD_PORT_ENV = "HERMES_GUARDIAN_DASHBOARD_PORT"
 _ACTIVITY_MAX_ROWS_ENV = "HERMES_GUARDIAN_ACTIVITY_MAX_ROWS"
 _ACTIVITY_RETENTION_DAYS_ENV = "HERMES_GUARDIAN_ACTIVITY_RETENTION_DAYS"
 _ACTIVITY_GROUP_SECONDS_ENV = "HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS"
 _HISTORY_TIMEZONE_ENV = "HERMES_GUARDIAN_HISTORY_TIMEZONE"
 _CRON_NOTIFY_TO_ENV = "HERMES_GUARDIAN_CRON_NOTIFY_TO"
 _HERMES_CLI_ENV = "HERMES_GUARDIAN_HERMES_CLI"
-_DEFAULT_DASHBOARD_HOST = "127.0.0.1"
-_DEFAULT_DASHBOARD_PORT = 8787
 _DEFAULT_ACTIVITY_MAX_ROWS = 10_000
 _DEFAULT_ACTIVITY_RETENTION_DAYS = 30
 _DEFAULT_ACTIVITY_GROUP_SECONDS = 60
@@ -178,8 +167,6 @@ _PERSISTENT_RULES_CACHE: dict[str, Any] | None = None
 _PERSISTENT_RULES_ERROR = False
 _ACTIVITY_DB_INITIALIZED = False
 _LAST_ACTIVITY_PRUNE = 0.0
-_DASHBOARD_SERVER: http.server.ThreadingHTTPServer | None = None
-_DASHBOARD_THREAD: threading.Thread | None = None
 _PLUGIN_LLM: Any | None = None
 _CRON_NOTIFICATIONS_SENT: set[str] = set()
 _ALL_PRIVACY_CLASSES = {
@@ -374,7 +361,7 @@ Return only the requested JSON verdict."""
 
 
 def _load_logic_module(name: str) -> None:
-    path = Path(__file__).with_name(f"{name}.py")
+    path = Path(__file__).parent / f"{name}.py"
     code = path.read_text()
     compiled = compile(code, str(path), "exec")
     exec(compiled, globals(), globals())
@@ -384,18 +371,22 @@ def _load_core_logic() -> None:
     """Load modular logic files so `core.py` remains a thin façade."""
     # keep ordering for readability and side-effect free references
     for name in (
-        "security_filters",
-        "activity_store",
-        "activity_rows",
-        "tool_policy",
-        "tool_policy_details",
-        "approval_engine",
-        "approval_rules",
-        "cron_notifications",
-        "dashboard_views",
-        "command_handlers",
-        "hook_handlers",
-        "session_handlers",
+        "runtime/shared_context",
+        "security/module",
+        "runtime/activity_store",
+        "runtime/activity_rows",
+        "privacy/taint",
+        "privacy/tool_policy",
+        "privacy/action_details",
+        "privacy/llm",
+        "privacy/rules",
+        "privacy/approvals",
+        "privacy/module",
+        "integrations/cron_notifications",
+        "ui/dashboard",
+        "ui/commands",
+        "hooks",
+        "runtime/state",
     ):
         _load_logic_module(name)
 
@@ -418,17 +409,10 @@ def _unsafe_diagnostics_enabled() -> bool:
 
 
 def _privacy_policy() -> str:
-    raw = _env(_PRIVACY_ENV, "strict").strip().lower().replace("_", "-")
-    if raw == "off":
-        return "off"
-    if raw in {"strict", ""}:
+    try:
+        return _privacy_mode()
+    except NameError:
         return "strict"
-    if raw == "read-only":
-        return "read-only"
-    if raw == "llm":
-        return "llm"
-    logger.warning("%s: invalid %s=%r; using strict", _PLUGIN_NAME, _PRIVACY_ENV, raw)
-    return "strict"
 
 
 def _short_hash(value: str | None) -> str:
@@ -446,3 +430,33 @@ def _safe_session_label(session_id: str | None) -> str:
 
 
 _load_core_logic()
+
+
+def register(ctx) -> None:
+    global _PLUGIN_LLM
+    try:
+        _PLUGIN_LLM = getattr(ctx, "llm", None)
+    except Exception as exc:
+        logger.warning("%s: failed to capture plugin LLM facade: %s", _PLUGIN_NAME, exc)
+        _PLUGIN_LLM = None
+    ctx.register_hook("pre_tool_call", _on_pre_tool_call)
+    ctx.register_hook("transform_tool_result", _on_transform_tool_result)
+    ctx.register_hook("pre_gateway_dispatch", _on_pre_gateway_dispatch)
+    ctx.register_hook("transform_llm_output", _on_transform_llm_output)
+    ctx.register_hook("pre_llm_call", _on_pre_llm_call)
+    ctx.register_hook("on_session_reset", _on_session_reset)
+    ctx.register_hook("on_session_end", _on_session_end)
+    if hasattr(ctx, "register_command"):
+        ctx.register_command(
+            _COMMAND_NAME,
+            _handle_guardian_command,
+            description="Manage Hermes Guardian approvals",
+            args_hint="status|approve|deny|rules|privacy|clear-taint|history|failures|debug",
+        )
+    if hasattr(ctx, "register_cli_command"):
+        ctx.register_cli_command(
+            "guardian",
+            "Manage Hermes Guardian",
+            _guardian_cli_setup,
+            description="Manage Hermes Guardian dashboard and local maintenance commands.",
+        )

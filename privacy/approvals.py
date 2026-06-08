@@ -243,38 +243,48 @@ def _guardian_block_message(approval: dict[str, Any]) -> str:
         f"/guardian approve {approval['id']} once\n"
         f"/guardian approve {approval['id']} session\n"
         f"/guardian approve {approval['id']} always\n"
-        "or deny with:\n"
-        f"/guardian deny {approval['id']}"
+        "or dismiss with:\n"
+        f"/guardian dismiss {approval['id']}"
     )
 
 
 def _rule_from_approval(approval: dict[str, Any], *, persistent: bool = False) -> dict[str, Any]:
-    rule = {
-        "rule_id": f"rule_{secrets.token_hex(4)}" if persistent else "",
+    cron_job_id = _cron_job_id_from_session(approval.get("session_id"))
+    scope = {
         "owner_hash": approval.get("owner_hash") or "",
         "session_id": approval.get("session_id") or "",
-        "tool_name": approval.get("tool_name") or "",
-        "action_family": approval.get("action_family") or "",
-        "destination": approval.get("destination") or "",
-        "data_classes": list(approval.get("data_classes") or []),
-        "fingerprint": approval.get("fingerprint") or "",
+        "cron_job_id": "",
+        "cron_job_name": "",
+    }
+    if persistent and cron_job_id:
+        scope["owner_hash"] = "*"
+        scope["session_id"] = ""
+        scope["cron_job_id"] = cron_job_id
+        scope["cron_job_name"] = str(approval.get("cron_job_name") or "")
+    rule = {
+        "id": f"rule_{secrets.token_hex(4)}" if persistent else f"volatile_{secrets.token_hex(4)}",
+        "effect": "allow",
+        "enabled": True,
+        "match": {
+            "tool_name": approval.get("tool_name") or "*",
+            "action_family": approval.get("action_family") or "*",
+            "destination": approval.get("destination") or "*",
+            "data_classes": list(approval.get("data_classes") or ["*"]),
+        },
+        "scope": scope,
+        "remaining_invocations": -1,
         "created_at": int(_now()),
     }
     if not persistent:
-        rule.pop("rule_id", None)
-    cron_job_id = _cron_job_id_from_session(approval.get("session_id"))
-    if persistent and cron_job_id:
-        rule["cron_job_id"] = cron_job_id
-        if approval.get("cron_job_name"):
-            rule["cron_job_name"] = approval.get("cron_job_name")
-        rule["owner_hash"] = "*"
+        rule["fingerprint"] = approval.get("fingerprint") or ""
     return rule
 
 
 def _rule_scope_label(rule: dict[str, Any]) -> str:
-    cron_job_id = str(rule.get("cron_job_id") or "").strip()
+    scope = rule.get("scope") if isinstance(rule.get("scope"), dict) else {}
+    cron_job_id = str(scope.get("cron_job_id") or rule.get("cron_job_id") or "").strip()
     if cron_job_id:
-        cron_job_name = str(rule.get("cron_job_name") or "").strip()
+        cron_job_name = str(scope.get("cron_job_name") or rule.get("cron_job_name") or "").strip()
         try:
             cron_job_name = cron_job_name or _cron_job_name(cron_job_id)
         except Exception:
@@ -282,19 +292,20 @@ def _rule_scope_label(rule: dict[str, Any]) -> str:
         if cron_job_name:
             return f"cron job {cron_job_name} ({cron_job_id})"
         return f"cron job {cron_job_id}"
-    if str(rule.get("source") or "") == "env":
-        return "environment allowlist"
-    if rule.get("owner_hash") == "*":
+    if str(scope.get("session_id") or "").strip():
+        return "session"
+    if scope.get("owner_hash") == "*":
         return "all owners"
     return "owner"
 
 
 def _rule_delete_owner_allowed(owner_hash: str, rule: dict[str, Any]) -> bool:
+    scope = rule.get("scope") if isinstance(rule.get("scope"), dict) else {}
     if owner_hash == _CLI_OWNER_HASH:
         return True
-    if rule.get("owner_hash") == owner_hash:
+    if scope.get("owner_hash") == owner_hash:
         return True
-    if rule.get("owner_hash") == "*" and rule.get("cron_job_id") and owner_hash in _configured_owner_hashes():
+    if scope.get("owner_hash") == "*" and scope.get("cron_job_id") and owner_hash in _configured_owner_hashes():
         return True
     return False
 
@@ -304,23 +315,22 @@ def _delete_persistent_rule(owner_hash: str, rule_id: str) -> tuple[bool, str, d
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", rule_id):
         return False, f"Invalid persistent rule id {rule_id or '(empty)'}.", None
 
-    data = _load_persistent_rules()
-    rules = data.get("rules", [])
+    rules = _persistent_privacy_rules()
     removed: dict[str, Any] | None = None
     kept: list[dict[str, Any]] = []
     for rule in rules:
-        if rule.get("rule_id") == rule_id and _rule_delete_owner_allowed(owner_hash, rule):
+        if rule.get("id") == rule_id and _rule_delete_owner_allowed(owner_hash, rule):
             removed = rule
             continue
         kept.append(rule)
 
     if removed is None:
-        return False, f"No matching persistent rule found for {rule_id}.", None
+        return False, f"No matching privacy rule found for {rule_id}.", None
 
-    if not _save_persistent_rules({"rules": kept}):
-        return False, "Failed to delete persistent guardian rule; Hermes Guardian remains fail-closed.", None
+    if not _save_persistent_privacy_rules(kept):
+        return False, "Failed to delete privacy rule; Hermes Guardian remains fail-closed.", None
 
-    return True, f"Deleted persistent guardian rule {rule_id}.", removed
+    return True, f"Deleted privacy rule {rule_id}.", removed
 
 
 def _remember_command_owner(raw_args: str, owner_hash: str) -> None:

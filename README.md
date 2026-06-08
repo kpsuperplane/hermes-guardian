@@ -13,11 +13,12 @@ tools unless the action is explicitly allowed.
 
 ## What It Does
 
-Hermes Guardian has two protection layers:
+Hermes Guardian has two protection modules:
 
-1. Security/access-sensitive content is blocked categorically.
-2. Private-context egress is approval-gated by destination, action type, and
-   data class.
+1. The Security Module blocks or filters security/access-sensitive content
+   categorically.
+2. The Privacy Module approval-gates private-context egress by destination,
+   action type, data class, and user privacy rules.
 
 Security-sensitive content is never approval-gated. It is blocked or suppressed
 outright. This includes password resets, OTPs, 2FA codes, magic links, account
@@ -30,7 +31,8 @@ outbound actions are checked before they execute. If a tool call would send or
 expose that private context to a destination that has not been approved, Hermes
 Guardian blocks the call and creates a short-lived approval ID.
 
-The privacy policy controls how private-context egress is handled:
+The Privacy Module mode controls how private-context egress is handled when no
+user privacy rule matches:
 
 - `strict`: require manual approval unless an allow rule matches.
 - `read-only`: automatically allow a small set of metadata-verified low-risk
@@ -40,7 +42,7 @@ The privacy policy controls how private-context egress is handled:
 - `off`: disable private-egress approval checks while still blocking
   security/access-sensitive content.
 
-The original tool call is not paused or resumed. After approval, the agent must
+Blocked tool calls are not paused or resumed. After approval, the agent must
 retry the action.
 
 ## Design Goals
@@ -51,6 +53,26 @@ retry the action.
 - Keep private data available for useful reasoning, but control where it leaves.
 - Store only safe metadata for approvals, rules, history, and diagnostics.
 - Stay resilient across Hermes updates by living under `~/.hermes/plugins`.
+
+## Architecture
+
+The implementation is split by responsibility:
+
+- `security/`: Security Module scanner and hook-surface filtering.
+- `privacy/`: Privacy Module taint, egress classification, rules, approvals,
+  action details, and LLM mode.
+- `runtime/`: shared sanitized context, activity storage, activity rows, and
+  lifecycle state.
+- `ui/`: slash commands, Hermes dashboard action adapters, and presentation
+  helpers.
+- `dashboard/`: Hermes dashboard manifest, static tab assets, and FastAPI
+  plugin API routes.
+- `integrations/`: cron failure notifications.
+- `tests/`: focused pytest files split by behavior area, with shared helpers in
+  `tests/support.py` and environment cleanup in `tests/conftest.py`.
+
+`core.py` is the composition root, and `hooks.py` only orchestrates module
+calls in hook order.
 
 ## Install
 
@@ -84,21 +106,30 @@ hermes plugins list --plain --no-bundled
 Expected result:
 
 ```text
-enabled      git      2.0.0    hermes-guardian
+enabled      git      3.0.0    hermes-guardian
 ```
 
 ## Configuration
 
-Configuration is read from environment variables. On a typical Hermes install,
-put these in `~/.hermes/.env` or in the environment used by the gateway service.
+Privacy configuration is stored in `guardian-rules.json` inside the plugin
+directory. It can be edited directly as JSON, through `/guardian` slash
+commands, or through the integrated dashboard. Dashboard runtime options,
+activity retention, timezone, and cron notification settings are configured with
+environment variables.
 
-### Privacy Policy
+### Privacy Config
 
-```bash
-HERMES_GUARDIAN_PRIVACY=strict
+```json
+{
+  "version": 1,
+  "privacy": {
+    "mode": "strict",
+    "rules": []
+  }
+}
 ```
 
-Supported values:
+Supported `privacy.mode` values:
 
 - `strict`: default. Private egress from tainted sessions requires manual
   approval unless an allow rule matches.
@@ -112,61 +143,66 @@ Supported values:
 
 Security/access-sensitive content is always blocked regardless of this setting.
 
-### Static Allowlist
+### Privacy Rules
 
-```bash
-HERMES_GUARDIAN_ALLOWLIST="mcp_write:mcp:notion"
+Privacy rules are ordered user rules evaluated before the default privacy mode.
+Rules can explicitly `allow` or `deny` matching egress. Deny rules are useful
+for hard policy choices that should block even when the current privacy mode
+would otherwise ask for approval.
+
+```json
+{
+  "id": "rule_notion",
+  "effect": "allow",
+  "enabled": true,
+  "match": {
+    "tool_name": "*",
+    "action_family": "mcp_write",
+    "destination": "mcp:notion",
+    "data_classes": ["*"]
+  },
+  "scope": {
+    "owner_hash": "*",
+    "session_id": "",
+    "cron_job_id": "",
+    "cron_job_name": ""
+  },
+  "remaining_invocations": -1,
+  "created_at": 1780775040
+}
 ```
 
-Use this for destinations that should always be allowed without creating runtime
-approval records.
+`remaining_invocations=-1` means infinite. Positive values count down on each
+match and the rule is deleted at `0`. Security Module blocks and filters remain
+non-approvable and cannot be bypassed by privacy allow rules.
 
-Format:
-
-```text
-action_family:destination
-action_family:destination#class+class
-```
-
-Entries can be separated with semicolons or newlines:
-
-```bash
-HERMES_GUARDIAN_ALLOWLIST="mcp_write:mcp:notion;browser_type:trusted.example.com#email+contacts"
-```
-
-The first colon separates the action family from the destination, so destinations
-such as `mcp:notion` work correctly. Without a `#class+class` suffix, the rule
-allows all Guardian data classes for that action and destination.
-
-Examples:
-
-```bash
-# Always allow writes to Notion for any private data class.
-HERMES_GUARDIAN_ALLOWLIST="mcp_write:mcp:notion"
-
-# Allow browser typing to one trusted host only for email and contacts.
-HERMES_GUARDIAN_ALLOWLIST="browser_type:forms.example.com#email+contacts"
-
-# Allow multiple destinations.
-HERMES_GUARDIAN_ALLOWLIST="mcp_write:mcp:notion;message_send:mcp:slack#calendar"
-```
-
-Static allowlist rules cannot override security-sensitive blocking.
+Approval-created rules use the same schema. `approve once` creates a
+session-scoped allow rule with `remaining_invocations=1`; the rule is visible in
+the dashboard and deleted after the matching retry consumes it. `approve always`
+creates a persistent allow rule with `remaining_invocations=-1`; cron approvals
+also store the cron job id/name so the rule applies only to future runs of that
+job.
 
 ### Dashboard
 
-```bash
-HERMES_GUARDIAN_DASHBOARD_HOST=127.0.0.1
-HERMES_GUARDIAN_DASHBOARD_PORT=8787
-```
+Hermes Guardian registers a tab in the main Hermes dashboard at `/guardian` via
+`dashboard/manifest.json`.
 
-Defaults:
+Dashboard tabs:
 
-- `HERMES_GUARDIAN_DASHBOARD_HOST=127.0.0.1`
-- `HERMES_GUARDIAN_DASHBOARD_PORT=8787`
+- Settings: edit `privacy.mode`.
+- Rules: create, edit, delete, enable/disable, and reorder privacy allow/deny
+  rules. The rule modal uses guided fields, data-class selection, invocation
+  lifetime controls, and cron-job name selection.
+- Recent Blocks: inspect recent privacy/security blocks, approve or dismiss
+  pending approvals, and avoid duplicate approvals. If a pending block is
+  already covered by a newly created allow rule, the approval buttons are
+  shown as a disabled "Already covered by rule" button.
+- History: paginated activity feed. Tool, action, and destination are combined
+  into one route column so time and reason have more room.
 
-Bind to `0.0.0.0` only if the host-level exposure model is safe, for example a
-firewall plus Cloudflare Tunnel authentication.
+Dashboard actions return toast notifications rather than persistent inline save
+messages.
 
 ### Activity Retention
 
@@ -185,8 +221,8 @@ Defaults:
 Set a retention value to `0` to disable that specific limit. Set
 `HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS=0` to disable display grouping.
 
-Grouping affects only the dashboard, `/api/activity`, `/guardian history`, and
-`/guardian failures`.
+Grouping affects only `/api/activity`, `/guardian history`, and `/guardian
+failures`. The dashboard History tab uses paginated raw activity rows.
 The underlying audit rows remain exact until retention pruning deletes them.
 
 ### History Timezone
@@ -363,7 +399,7 @@ sensitive URLs still receive categorical security-sensitive suppression.
 
 ## LLM Privacy Mode
 
-`HERMES_GUARDIAN_PRIVACY=llm` is intended to approximate Codex-style
+`privacy.mode=llm` is intended to approximate Codex-style
 low-risk-action approval while keeping private content out of the verifier
 prompt.
 
@@ -411,26 +447,28 @@ Kevin can approve with:
 /guardian approve 4827 once
 /guardian approve 4827 session
 /guardian approve 4827 always
-or deny with:
-/guardian deny 4827
+or dismiss with:
+/guardian dismiss 4827
 ```
 
 Approval IDs are four-digit codes, so they are easy to type on mobile. Guardian
 avoids reusing codes that are pending or that appeared in activity during the
-last 7 days; older codes can be reused. IDs remain short-lived and scoped to
-the gateway sender identity captured for the session. Pending approvals are
-stored in Guardian's SQLite activity database so cron-created approvals can be
-resolved by gateway or CLI command handlers in another process.
+last 7 days; codes outside that window can be reused. IDs remain short-lived
+and scoped to the gateway sender identity captured for the session. Pending
+approvals are stored in Guardian's SQLite activity database so cron-created
+approvals can be resolved by gateway or CLI command handlers in another
+process.
 
 Approval scopes:
 
-- `once`: allow exactly the matching next tool call once.
-- `session`: allow the same destination, action family, and data classes for
-  the current session.
-- `always`: persist a narrow rule for the same destination, action family, and
-  data classes. When approved from a cron run, the persistent rule is also
-  scoped to that cron job ID, so it can apply to future runs of the same job
-  without approving the same action for unrelated jobs or chat sessions.
+- `once`: create a matching privacy allow rule with `remaining_invocations=1`.
+- `session`: create a session-scoped volatile privacy allow rule that lasts for
+  the active plugin process/session state.
+- `always`: persist a narrow privacy allow rule with
+  `remaining_invocations=-1`. When approved from a cron run, the persistent
+  rule is also scoped to that cron job ID, so it can apply to future runs of
+  the same job without approving the same action for unrelated jobs or chat
+  sessions.
   Guardian displays the cron name when available and keeps the numeric job ID
   beside it for unambiguous matching.
 
@@ -445,88 +483,81 @@ Use these from a Hermes gateway interface:
 /guardian approve <id> once
 /guardian approve <id> session
 /guardian approve <id> always
-/guardian deny <id>
+/guardian dismiss <id>
 /guardian clear-taint
 /guardian rules
-/guardian revoke <rule_id>
-/guardian self-test
+/guardian rule add allow|deny action=<family> destination=<dest> classes=<class+class|*>
+/guardian rule delete <rule_id>
+/guardian rule enable|disable <rule_id>
+/guardian rule move <rule_id> before|after <other_rule_id>
+/guardian privacy mode strict|read-only|llm|off
 /guardian history [limit]
 /guardian failures [limit]
+/guardian failed [limit]
 /guardian debug action=<family> destination=<dest> classes=<class+class> [tool=<tool_name>]
 ```
 
 Command notes:
 
-- `/guardian status` shows active data classes, pending approval count, and
-  matching allow-rule count.
-- `/guardian rules` lists persistent and configured allow rules without raw
-  private content.
+- `/guardian status` shows active data classes, pending approval count,
+  privacy mode, and matching privacy-rule count.
+- `/guardian rules` lists persistent privacy rules without raw private content.
+- `/guardian rule ...` creates, deletes, toggles, and reorders privacy rules.
+- `/guardian privacy mode ...` edits `guardian-rules.json`.
 - `/guardian clear-taint` clears taint and session approvals for active Guardian
   sessions owned by the sender.
-- `/guardian self-test` checks representative terminal and allowlist behavior
-  without using private content.
+- `/guardian dismiss <id>` removes a pending approval without adding a rule.
+  `/guardian deny <id>` remains an alias for dismiss.
+- `/guardian failed` is an alias for `/guardian failures`.
 - `/guardian debug ...` evaluates a hypothetical action/destination/classes
-  tuple against the current policy and allow rules.
+  tuple against the current privacy mode and rules.
 
 ## Dashboard
 
-Hermes Guardian includes a local read-only dashboard for understanding decisions
-and recent activity. The activity feed uses a paginated DataTables view backed
-by server-side SQLite queries, so the browser does not render the whole activity
-database at once.
+Hermes Guardian is integrated into the main Hermes dashboard at `/guardian` for
+understanding decisions, editing privacy mode, and managing privacy rules.
 
-Manage it from the Hermes CLI:
+The Guardian CLI dashboard command reports the integration status and can prune
+activity history:
 
 ```bash
-hermes guardian dashboard start
 hermes guardian dashboard status
 hermes guardian dashboard url
-hermes guardian dashboard stop
 hermes guardian dashboard prune
 ```
 
-Or run it as a standalone local service:
-
-```bash
-python ~/.hermes/plugins/hermes-guardian/dashboard_server.py
-```
-
-Read-only endpoints:
+Dashboard API routes are mounted by Hermes under
+`/api/plugins/hermes-guardian/`:
 
 ```text
-GET /
-GET /api/activity
-GET /api/activity?decision=blocked&data_class=email
-GET /api/activity/datatables
-GET /api/policy
-GET /api/debug?action_family=mcp_write&destination=mcp:notion&data_classes=email
+GET /api/plugins/hermes-guardian/policy
+GET /api/plugins/hermes-guardian/activity
+GET /api/plugins/hermes-guardian/activity/datatables
+POST /api/plugins/hermes-guardian/privacy/mode
+POST /api/plugins/hermes-guardian/rules
+PATCH /api/plugins/hermes-guardian/rules/{rule_id}
+DELETE /api/plugins/hermes-guardian/rules/{rule_id}
+POST /api/plugins/hermes-guardian/approvals/{approval_id}/approve
+POST /api/plugins/hermes-guardian/approvals/{approval_id}/dismiss
 ```
 
-`/api/activity/datatables` accepts DataTables server-side query parameters such
-as `draw`, `start`, `length`, `search[value]`, `order[0][column]`, and
-`order[0][dir]`. Page sizes are limited to `25`, `50`, or `100`. Sorting is
-restricted to safe metadata columns, and searching only scans sanitized metadata
-stored in the activity database.
-
-DataTables JS/CSS assets are pinned and vendored under the plugin directory, so
-the dashboard does not need a runtime CDN request.
+The `/activity/datatables` endpoint provides paginated and filterable SQLite
+activity rows for the History tab.
 
 The dashboard shows sanitized metadata only:
 
 - Timestamp.
 - Security policy.
 - Decision.
-- Tool name.
-- Action family.
-- Destination.
+- Tool/route metadata: tool name, action family, and destination.
 - Data classes.
 - Approval/rule identifiers.
 - Short session hashes.
 - Sanitized action detail, such as a short command summary.
 
-Rows show compact metadata by default. Click the expand control on a row to view
-the full sanitized reason, sanitized action detail, policy mode, row ID,
-timestamp, and approval/rule metadata.
+History rows show compact metadata by default. The History tab combines tool,
+action, and destination into one column, while `/guardian history` formats the
+same sanitized metadata as grouped chat output.
 
 It does not store raw tool arguments, email bodies, typed text, tokenized URLs,
 file contents, or message content.
@@ -558,7 +589,7 @@ Example:
 Jun 6, 2026 10:42 PM PDT
 🏷️ `documents`
 Action: `mcp_write to mcp:notion`
-Allowed: matched allow rule (`env`)
+Allowed: matched allow rule (`rule_notion`)
 
 📥 **`mcp_gmail_search`**
 Jun 6, 2026 10:41 PM PDT
@@ -573,14 +604,16 @@ failure signal by itself. It means later outbound actions may require approval.
 In-memory state:
 
 - Session taint.
-- Pending approvals.
-- Once/session approvals.
+- Pending approvals loaded from SQLite for the current process.
+- Session approvals.
 - Browser host and private-typing state.
+- Short-lived sanitized cross-hook context, such as local-system result policy
+  and public remote-read metadata.
 
 Persistent state:
 
-- `guardian-rules.json`: persistent `always` allow rules.
-- `activity.sqlite3`: sanitized activity history.
+- `guardian-rules.json`: privacy mode and persistent privacy allow/deny rules.
+- `activity.sqlite3`: sanitized activity history and pending approvals.
 
 Persistent state stores metadata only. It should not contain raw private
 messages, email bodies, typed form values, file contents, tokenized URLs, or
@@ -611,11 +644,39 @@ It also registers the gateway slash command:
 
 For a personal Hermes install, a practical default is:
 
+```json
+{
+  "version": 1,
+  "privacy": {
+    "mode": "llm",
+    "rules": [
+      {
+        "id": "rule_notion",
+        "effect": "allow",
+        "enabled": true,
+        "match": {
+          "tool_name": "*",
+          "action_family": "mcp_write",
+          "destination": "mcp:notion",
+          "data_classes": ["*"]
+        },
+        "scope": {
+          "owner_hash": "*",
+          "session_id": "",
+          "cron_job_id": "",
+          "cron_job_name": ""
+        },
+        "remaining_invocations": -1,
+        "created_at": 0
+      }
+    ]
+  }
+}
+```
+
+Common environment settings:
+
 ```bash
-HERMES_GUARDIAN_PRIVACY=llm
-HERMES_GUARDIAN_ALLOWLIST="mcp_write:mcp:notion"
-HERMES_GUARDIAN_DASHBOARD_HOST=127.0.0.1
-HERMES_GUARDIAN_DASHBOARD_PORT=8787
 HERMES_GUARDIAN_ACTIVITY_MAX_ROWS=10000
 HERMES_GUARDIAN_ACTIVITY_RETENTION_DAYS=30
 HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS=60
@@ -624,8 +685,8 @@ HERMES_GUARDIAN_CRON_NOTIFY_TO=origin
 ```
 
 Expose the dashboard only behind an authenticated tunnel or other access
-control. The dashboard is read-only and sanitized, but it is still operational
-security metadata.
+control. The dashboard stores sanitized metadata only, but it can change privacy
+rules and privacy mode.
 
 ## Updating
 
@@ -651,6 +712,12 @@ Run the local test suite with:
 python -m pytest -q
 ```
 
+Run a focused area with:
+
+```bash
+python -m pytest -q tests/test_approvals.py
+```
+
 The tests cover:
 
 - Security-sensitive email suppression.
@@ -658,9 +725,29 @@ The tests cover:
 - Taint tracking.
 - Browser, MCP write, messaging, terminal, and code egress checks.
 - Manual approval flows.
-- Static allowlist behavior.
-- `strict`, `read-only`, `llm`, and `off` policy behavior.
-- Dashboard/activity history formatting and retention.
+- Cross-process approval persistence for cron and dashboard flows.
+- Cron failure notifications.
+- Slash command status, debug, history, failures, rules, and approvals.
+- Privacy allow/deny rules, countdown deletion, and approval-created rules.
+- `strict`, `read-only`, `llm`, and `off` privacy mode behavior.
+- Dashboard policy payloads, rule CRUD, recent blocks, history pagination, and
+  activity formatting/retention.
+
+The test suite is split by behavior area:
+
+```text
+tests/test_security.py
+tests/test_privacy_egress.py
+tests/test_privacy_modes.py
+tests/test_llm_and_public_reads.py
+tests/test_dashboard_activity.py
+tests/test_dashboard_policy.py
+tests/test_commands_debug_history.py
+tests/test_commands_rules_failures.py
+tests/test_cron_notifications.py
+tests/test_approvals.py
+tests/test_hooks_registration.py
+```
 
 GitHub Actions is configured to run the test suite on Python 3.11.
 
@@ -674,5 +761,5 @@ GitHub Actions is configured to run the test suite on Python 3.11.
 - `llm` mode is only as available as the Hermes plugin LLM facade. If the LLM
   verifier is unavailable or malformed, the plugin falls back to manual
   approval.
-- Static allowlists should be narrow. They are powerful and should represent
-  destinations you actually trust.
+- Persistent privacy allow rules should be narrow. They are powerful and should
+  represent destinations you actually trust.

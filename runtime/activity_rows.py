@@ -18,6 +18,162 @@ def _activity_rows(filters: dict[str, str], *, limit: int = 200) -> list[dict[st
     return [_activity_row_from_sql(row) for row in rows]
 
 
+def _dashboard_suggestion_value(value: Any, *, limit: int = 160) -> str:
+    cleaned = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or "")).strip()
+    if not cleaned or cleaned == "*":
+        return ""
+    if re.search(r"(?:access_?token|auth_?token|api_?key|secret|password)=", cleaned, re.I):
+        return ""
+    return cleaned[:limit]
+
+
+def _activity_distinct_values(column: str, *, limit: int = 40) -> list[str]:
+    if column not in {"destination", "tool_name"}:
+        return []
+    _ensure_activity_db()
+    sql = (
+        f"SELECT {column} AS value, MAX(ts) AS latest FROM activity "
+        f"WHERE {column} NOT IN ('', '*') "
+        f"GROUP BY {column} ORDER BY latest DESC LIMIT ?"
+    )
+    try:
+        with _activity_connect() as conn:
+            values = [row["value"] for row in conn.execute(sql, (max(1, min(int(limit), 100)),)).fetchall()]
+    except Exception:
+        return []
+    return [
+        cleaned
+        for cleaned in (_dashboard_suggestion_value(value) for value in values)
+        if cleaned
+    ]
+
+
+def _dashboard_rule_form_suggestions(
+    rules: list[dict[str, Any]],
+    pending: list[dict[str, Any]],
+) -> dict[str, list[str]]:
+    destinations: list[str] = []
+    tool_names: list[str] = []
+
+    def add(target: list[str], value: Any, *, limit: int = 160) -> None:
+        cleaned = _dashboard_suggestion_value(value, limit=limit)
+        if cleaned and cleaned not in target:
+            target.append(cleaned)
+
+    for rule in rules:
+        match = rule.get("match") or {}
+        add(destinations, match.get("destination"))
+        add(tool_names, match.get("tool_name"), limit=120)
+    for approval in pending:
+        add(destinations, approval.get("destination"))
+        add(tool_names, approval.get("tool_name"), limit=120)
+    for value in _activity_distinct_values("destination"):
+        add(destinations, value)
+    for value in _activity_distinct_values("tool_name", limit=60):
+        add(tool_names, value, limit=120)
+
+    return {
+        "destinations": destinations[:80],
+        "tool_names": tool_names[:80],
+    }
+
+
+_RECENT_BLOCK_DECISIONS = ("blocked", "denied", "security_blocked")
+
+
+def _activity_data_classes_list(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple, set)):
+        raw = value
+    else:
+        raw = str(value or "").split(",")
+    return sorted(
+        cls
+        for cls in (str(item).strip() for item in raw)
+        if cls in _ALL_PRIVACY_CLASSES
+    )
+
+
+def _pending_approval_rule_coverage(approval: dict[str, Any]) -> dict[str, Any]:
+    shape = {
+        "session_id": _normalize_session_id(approval.get("session_id")),
+        "owner_hash": str(approval.get("owner_hash") or ""),
+        "tool_name": str(approval.get("tool_name") or ""),
+        "action_family": str(approval.get("action_family") or ""),
+        "destination": str(approval.get("destination") or ""),
+        "data_classes": _activity_data_classes_list(approval.get("data_classes")),
+        "fingerprint": str(approval.get("fingerprint") or ""),
+    }
+    source = _approval_source(shape, consume_once=False)
+    if source and source.get("effect") == "allow":
+        return {
+            "covered_by_rule": True,
+            "covered_rule_id": str(source.get("rule_id") or ""),
+            "covered_rule_source": str(source.get("source") or ""),
+        }
+    return {
+        "covered_by_rule": False,
+        "covered_rule_id": "",
+        "covered_rule_source": "",
+    }
+
+
+def _dashboard_recent_blocks(pending: list[dict[str, Any]], *, limit: int = 5) -> list[dict[str, Any]]:
+    pending_by_id = {
+        str(item.get("id") or ""): item
+        for item in pending
+        if str(item.get("id") or "")
+    }
+    rows = _activity_rows({"decisions": ",".join(_RECENT_BLOCK_DECISIONS)}, limit=max(limit * 4, limit))
+    blocks: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for row in rows:
+        approval_id = str(row.get("approval_id") or "")
+        pending_approval = pending_by_id.get(approval_id)
+        block_id = approval_id if pending_approval else f"activity-{int(row.get('id') or 0)}"
+        if block_id in seen:
+            continue
+        seen.add(block_id)
+        data_classes = (
+            list(pending_approval.get("data_classes") or [])
+            if pending_approval
+            else _activity_data_classes_list(row.get("data_classes"))
+        )
+        blocks.append({
+            "id": block_id,
+            "activity_id": int(row.get("id") or 0),
+            "approval_id": approval_id if pending_approval else "",
+            "pending": bool(pending_approval),
+            "decision": str(row.get("decision") or ""),
+            "module": str(row.get("module") or ""),
+            "session_label": str(row.get("session_label") or ""),
+            "session_hash": str(row.get("session_hash") or ""),
+            "tool_name": str(row.get("tool_name") or (pending_approval or {}).get("tool_name") or ""),
+            "action_family": str(row.get("action_family") or (pending_approval or {}).get("action_family") or ""),
+            "destination": str(row.get("destination") or (pending_approval or {}).get("destination") or ""),
+            "data_classes": sorted(data_classes),
+            "action_detail": str(row.get("action_detail") or (pending_approval or {}).get("action_detail") or ""),
+            "reason": str(row.get("reason") or (pending_approval or {}).get("reason") or ""),
+            "created_at": int(row.get("ts") or (pending_approval or {}).get("created_at") or 0),
+            "expires_at": int((pending_approval or {}).get("expires_at") or 0),
+            "cron_job_id": str((pending_approval or {}).get("cron_job_id") or ""),
+            "cron_job_name": str((pending_approval or {}).get("cron_job_name") or ""),
+            "scope": str((pending_approval or {}).get("scope") or ""),
+            "covered_by_rule": bool((pending_approval or {}).get("covered_by_rule")),
+            "covered_rule_id": str((pending_approval or {}).get("covered_rule_id") or ""),
+            "covered_rule_source": str((pending_approval or {}).get("covered_rule_source") or ""),
+        })
+
+    for approval in pending:
+        approval_id = str(approval.get("id") or "")
+        if not approval_id or approval_id in seen:
+            continue
+        seen.add(approval_id)
+        blocks.append(dict(approval, approval_id=approval_id, pending=True, decision="blocked", module="privacy"))
+
+    return sorted(blocks, key=lambda item: int(item.get("created_at") or 0), reverse=True)[:limit]
+
+
 _DATATABLES_SORT_COLUMNS = {
     "ts": "ts",
     "time": "ts",
@@ -44,6 +200,9 @@ _DATATABLES_SEARCH_COLUMNS = (
     "rule_id",
     "rule_source",
     "action_detail",
+    "module",
+    "rule_effect",
+    "rule_scope",
 )
 
 
@@ -111,6 +270,9 @@ def _activity_row_from_sql(row: sqlite3.Row) -> dict[str, Any]:
         "rule_id": row["rule_id"],
         "rule_source": row["rule_source"],
         "action_detail": row["action_detail"],
+        "module": row["module"],
+        "rule_effect": row["rule_effect"],
+        "rule_scope": row["rule_scope"],
     }
 
 
@@ -147,6 +309,9 @@ def _activity_datatables_row(row: dict[str, Any]) -> dict[str, Any]:
         "approval_id": str(row.get("approval_id") or ""),
         "rule_id": str(row.get("rule_id") or ""),
         "rule_source": str(row.get("rule_source") or ""),
+        "module": str(row.get("module") or ""),
+        "rule_effect": str(row.get("rule_effect") or ""),
+        "rule_scope": str(row.get("rule_scope") or ""),
     }
 
 
@@ -285,6 +450,53 @@ def _grouped_activity_rows(filters: dict[str, str], *, limit: int = 200) -> list
     return _group_activity_rows(_activity_rows(filters, limit=raw_limit), limit=safe_limit)
 
 
+def _cron_job_choices_for_dashboard() -> list[dict[str, Any]]:
+    path = Path.home() / ".hermes" / "cron" / "jobs.json"
+    try:
+        parsed = json.loads(path.read_text()) if path.exists() else []
+    except Exception as exc:
+        logger.warning("%s: failed to load cron job choices for dashboard: %s", _PLUGIN_NAME, exc)
+        return []
+    if isinstance(parsed, dict):
+        raw_jobs: Any = parsed.get("jobs", parsed.get("items", []))
+    else:
+        raw_jobs = parsed
+    if isinstance(raw_jobs, dict):
+        iterable = []
+        for key, value in raw_jobs.items():
+            if isinstance(value, dict):
+                merged = dict(value)
+                merged.setdefault("id", key)
+                iterable.append(merged)
+    elif isinstance(raw_jobs, list):
+        iterable = raw_jobs
+    else:
+        iterable = []
+    choices: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for job in iterable:
+        if not isinstance(job, dict):
+            continue
+        job_id = str(job.get("id") or job.get("job_id") or "").strip()
+        name = str(job.get("name") or job.get("title") or job_id).strip()
+        if not job_id or not name or job_id in seen:
+            continue
+        raw_active = job.get("enabled", job.get("active", None))
+        if raw_active is None:
+            active = not bool(job.get("paused", False))
+        elif isinstance(raw_active, str):
+            active = raw_active.strip().lower() not in {"0", "false", "no", "off", "paused"}
+        else:
+            active = bool(raw_active)
+        choices.append({
+            "id": job_id[:80],
+            "name": " ".join(name.split())[:160],
+            "active": active,
+        })
+        seen.add(job_id)
+    return choices
+
+
 def _policy_snapshot() -> dict[str, Any]:
     with _LOCK:
         _prune_expired()
@@ -316,39 +528,55 @@ def _policy_snapshot() -> dict[str, Any]:
                     "cron_job_name": str(approval.get("cron_job_name") or ""),
                     "scope": _rule_scope_label(
                         {
-                            "cron_job_id": str(approval.get("cron_job_id") or ""),
-                            "cron_job_name": str(approval.get("cron_job_name") or ""),
+                            "scope": {
+                                "cron_job_id": str(approval.get("cron_job_id") or ""),
+                                "cron_job_name": str(approval.get("cron_job_name") or ""),
+                            }
                         }
                     )
                     if str(approval.get("cron_job_id") or "")
                     else "",
+                    **_pending_approval_rule_coverage(approval),
                 }
-                for approval in _PENDING_APPROVALS.values()
+                for approval in list(_PENDING_APPROVALS.values())
             ],
             key=lambda item: int(item.get("created_at") or 0),
             reverse=True,
         )
-        rules = _configured_allow_rules() + _load_persistent_rules().get("rules", [])
+        rules = _persistent_privacy_rules()
+    suggestions = _dashboard_rule_form_suggestions(rules, pending)
+    recent_blocks = _dashboard_recent_blocks(pending)
     return {
         "privacy_policy": _privacy_policy(),
-        "allowlist_env_set": bool(_env(_ALLOWLIST_ENV, "").strip()),
+        "privacy_mode": _privacy_policy(),
         "activity_db": str(_ACTIVITY_DB_PATH),
         "activity_max_rows": _activity_max_rows(),
         "activity_retention_days": _activity_retention_days(),
         "activity_group_seconds": _activity_group_seconds(),
         "sessions": sessions,
         "pending": pending,
-        "recent_blocks": pending[:5],
+        "recent_blocks": recent_blocks,
+        "cron_jobs": _cron_job_choices_for_dashboard(),
+        "suggestions": suggestions,
+        "destination_suggestions": suggestions["destinations"],
+        "tool_name_suggestions": suggestions["tool_names"],
         "rules": [
             {
-                "rule_id": rule.get("rule_id", ""),
-                "source": rule.get("source", "persistent"),
-                "action_family": rule.get("action_family", ""),
-                "destination": rule.get("destination", ""),
-                "data_classes": sorted(rule.get("data_classes") or []),
+                "rule_id": rule.get("id", ""),
+                "id": rule.get("id", ""),
+                "source": "persistent",
+                "effect": rule.get("effect", ""),
+                "enabled": bool(rule.get("enabled", True)),
+                "action_family": (rule.get("match") or {}).get("action_family", ""),
+                "destination": (rule.get("match") or {}).get("destination", ""),
+                "tool_name": (rule.get("match") or {}).get("tool_name", ""),
+                "data_classes": sorted((rule.get("match") or {}).get("data_classes") or []),
                 "scope": _rule_scope_label(rule),
-                "cron_job_id": str(rule.get("cron_job_id") or ""),
-                "cron_job_name": str(rule.get("cron_job_name") or ""),
+                "remaining_invocations": int(rule.get("remaining_invocations", -1)),
+                "owner_hash": str((rule.get("scope") or {}).get("owner_hash") or "*"),
+                "session_id": str((rule.get("scope") or {}).get("session_id") or ""),
+                "cron_job_id": str((rule.get("scope") or {}).get("cron_job_id") or ""),
+                "cron_job_name": str((rule.get("scope") or {}).get("cron_job_name") or ""),
             }
             for rule in rules
         ],
