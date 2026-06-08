@@ -309,7 +309,7 @@
     const toasts = stateToasts[0];
     const setToasts = stateToasts[1];
     const toastTimers = useRef({});
-    const stateMode = useState("strict");
+    const stateMode = useState("llm");
     const privacyMode = stateMode[0];
     const setPrivacyMode = stateMode[1];
     const stateModeSaving = useState(false);
@@ -390,7 +390,7 @@
       setError("");
       return api("/policy").then(function (value) {
         setPolicy(value);
-        setPrivacyMode(value.privacy_mode || value.privacy_policy || "strict");
+        setPrivacyMode(value.privacy_mode || value.privacy_policy || "llm");
       }).catch(function (err) {
         setError(String(err.message || err));
       }).finally(function () {

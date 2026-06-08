@@ -53,6 +53,7 @@ def test_pending_approval_id_is_contextual_without_llm():
 
 def test_pending_approval_id_is_four_digit_even_with_llm_available():
     plugin = load_plugin()
+    save_privacy_config(plugin, mode="strict")
     plugin._PLUGIN_LLM = FakeSecurityLlm({"code": "unused"})
     bind_owner(plugin)
     plugin._taint_session("s1", {"local_system"})
@@ -71,6 +72,7 @@ def test_pending_approval_id_is_four_digit_even_with_llm_available():
 
 def test_approval_id_generation_does_not_call_llm_with_tool_metadata():
     plugin = load_plugin()
+    save_privacy_config(plugin, mode="strict")
     plugin._PLUGIN_LLM = FakeSecurityLlm({"code": "unused"})
     bind_owner(plugin)
     plugin._taint_session("s1", {"email"})

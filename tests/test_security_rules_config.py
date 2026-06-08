@@ -30,7 +30,7 @@ def test_security_rule_can_be_saved_in_json(tmp_path):
     data = json.loads((tmp_path / "rules.json").read_text())
     configured = {rule["id"]: rule["enabled"] for rule in data["security"]["rules"]}
     assert configured["account_security_content"] is False
-    assert data["privacy"]["mode"] == "strict"
+    assert data["privacy"]["mode"] == "llm"
 
 
 def test_security_rule_can_be_disabled_by_direct_json_edit(tmp_path):

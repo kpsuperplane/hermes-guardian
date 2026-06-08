@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 _PRIVACY_RULE_FILE_VERSION = 1
+_DEFAULT_PRIVACY_MODE = "llm"
 _PRIVACY_MODES = {"strict", "read-only", "llm", "off"}
 _SECURITY_RULE_DEFINITIONS = {
     "account_security_content": {
@@ -54,7 +55,7 @@ def _default_privacy_config() -> dict[str, Any]:
     return {
         "version": _PRIVACY_RULE_FILE_VERSION,
         "privacy": {
-            "mode": "strict",
+            "mode": _DEFAULT_PRIVACY_MODE,
             "rules": [],
         },
         "security": {
@@ -65,8 +66,8 @@ def _default_privacy_config() -> dict[str, Any]:
 
 
 def _normalize_privacy_mode(value: Any) -> str:
-    mode = str(value or "strict").strip().lower().replace("_", "-")
-    return mode if mode in _PRIVACY_MODES else "strict"
+    mode = str(value or _DEFAULT_PRIVACY_MODE).strip().lower().replace("_", "-")
+    return mode if mode in _PRIVACY_MODES else _DEFAULT_PRIVACY_MODE
 
 
 def _normalize_rule_classes(raw: Any, *, allow_star: bool = True) -> list[str]:

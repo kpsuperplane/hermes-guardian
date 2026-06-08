@@ -90,11 +90,13 @@ def test_read_only_privacy_does_not_auto_approve_messages(monkeypatch):
     assert "Action: message_send" in result["message"]
 
 
-def test_privacy_policy_ignores_old_env_values(monkeypatch):
+def test_privacy_policy_defaults_to_llm_and_ignores_old_env_values(monkeypatch):
     plugin = load_plugin()
 
+    assert plugin._privacy_policy() == "llm"
+
     monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "manual")
-    assert plugin._privacy_policy() == "strict"
+    assert plugin._privacy_policy() == "llm"
 
     save_privacy_config(plugin, mode="llm")
     monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "auto-approve")
@@ -122,7 +124,7 @@ def test_privacy_policy_ignores_old_security_env_names(monkeypatch):
     monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "llm")
     monkeypatch.setenv("PRIVACY_EGRESS_GUARD_SECURITY", "off")
 
-    assert plugin._privacy_policy() == "strict"
+    assert plugin._privacy_policy() == "llm"
 
 
 def test_env_helper_ignores_old_privacy_egress_guard_names(monkeypatch):

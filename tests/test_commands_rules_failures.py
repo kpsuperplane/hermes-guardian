@@ -50,7 +50,7 @@ def test_non_owner_slash_cannot_change_global_privacy_mode():
     response = plugin._handle_guardian_command("privacy mode off")
 
     assert "Permission denied" in response
-    assert plugin._privacy_policy() == "strict"
+    assert plugin._privacy_policy() == "llm"
 
 
 def test_guardian_rule_add_defaults_platform_slash_to_caller_scope(tmp_path):

@@ -442,7 +442,7 @@ def _privacy_policy() -> str:
     try:
         return _privacy_mode()
     except NameError:
-        return "strict"
+        return "llm"
 
 
 def _short_hash(value: str | None) -> str:

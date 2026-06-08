@@ -141,12 +141,12 @@ Privacy mode controls private-context egress when no privacy rule matches:
 | `llm` | Run deterministic hard blocks first, then ask a sanitized LLM verifier for low-risk judgment. |
 | `off` | Disable private-egress approval checks. Security-sensitive content is still blocked. |
 
-The default mode is `strict`.
+The default mode is `llm`.
 
 Set the mode from a Hermes gateway:
 
 ```text
-/guardian privacy mode strict
+/guardian privacy mode llm
 ```
 
 Or edit `guardian-rules.json`:
@@ -155,7 +155,7 @@ Or edit `guardian-rules.json`:
 {
   "version": 1,
   "privacy": {
-    "mode": "strict",
+    "mode": "llm",
     "rules": []
   },
   "security": {
