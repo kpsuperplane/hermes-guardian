@@ -85,7 +85,7 @@ enabled      git      3.0.0    hermes-guardian
 Guardian registers a `/guardian` slash command and an integrated dashboard tab
 at `/guardian`.
 
-## Features
+## Why Guardian?
 
 Modern agents need private context to be useful. They also have many outbound
 surfaces: messages, MCP writes, browser forms, URLs, search queries, terminal
@@ -110,6 +110,8 @@ Use Guardian when you want:
 
 Guardian is not a sandbox. It complements Hermes process isolation, credential
 scoping, SSRF protection, gateway authorization, and dangerous-command controls.
+
+## Features
 
 Guardian can:
 
