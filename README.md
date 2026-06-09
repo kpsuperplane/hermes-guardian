@@ -177,12 +177,9 @@ Or edit `guardian-rules.json`:
 
 Rule mutation helpers preserve both privacy rules and security rule settings.
 
-### Owner authorization context (llm mode)
+### LLM mode details
 
-The `llm` verifier is otherwise blind to the conversation, so an action the owner
-explicitly requested can still land in manual approval (for example, submitting a
-newsletter form that types an address into a Google Form on a tainted session).
-To close that gap, the verifier receives one extra signal: a sanitized excerpt of
+The `llm` verifier receives a sanitized excerpt of
 the most recent inbound message from an **authenticated** session owner, captured
 at gateway dispatch as `user_request_context`.
 
@@ -210,13 +207,13 @@ This channel is deliberately narrow and fail-closed:
   still auto-approves, but a calendar event in the same field does not, even though
   both ran with the calendar ambiently in scope.
 
-**What the verifier sees.** In `llm` mode the verifier receives the **real action
-payload** — with security-sensitive content and credential-shaped tokens stripped —
-not a redacted shape, so it can check that content matches the authorized intent.
-At-rest storage stays metadata-only apart from the sanitized verdict rationale
-(best-effort redaction, see Limitations). Enabling `llm` mode assumes the verifier
-LLM shares the agent's trust boundary; since you choose which LLMs Hermes connects
-to, that assumption is yours to own. The full trust-boundary rationale is in theory's
+The verifier also receives the **real action payload** — with security-sensitive 
+content and credential-shaped tokens stripped — so it can check that content 
+matches the authorized intent. At-rest storage stays metadata-only apart from 
+the sanitized verdict rationale (best-effort redaction, see Limitations). 
+Enabling `llm` mode assumes the verifier LLM shares the agent's trust boundary; since 
+you choose which LLMs Hermes connects to, that assumption is yours to own. 
+The full trust-boundary rationale is in theory's 
 [Coarse declassification context](./theory.md#coarse-declassification-context).
 
 **Verifier latency.** By default the verifier runs on the agent's own model. If
