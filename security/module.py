@@ -10,12 +10,16 @@ def _stringify_for_scan(value: Any, *, depth: int = 0) -> str:
     return _security._stringify_for_scan(value, depth=depth)
 
 
-def _sensitive_finding(value: Any) -> dict[str, str] | None:
-    return _security._sensitive_finding(value)
+def _sensitive_finding(
+    value: Any, *, skip_reasons: frozenset[str] = frozenset()
+) -> dict[str, str] | None:
+    return _security._sensitive_finding(value, skip_reasons=skip_reasons)
 
 
-def _sensitive_reason(value: Any) -> str | None:
-    return _security._sensitive_reason(value)
+def _sensitive_reason(
+    value: Any, *, skip_reasons: frozenset[str] = frozenset()
+) -> str | None:
+    return _security._sensitive_reason(value, skip_reasons=skip_reasons)
 
 
 def _log_unsafe_diagnostic(surface: str, value: Any) -> None:
@@ -54,15 +58,19 @@ def _scrub_text_records(
     text: str,
     *,
     hide_subjectless_email_records: bool = False,
+    skip_reasons: frozenset[str] = frozenset(),
 ) -> tuple[str, int, str | None]:
     return _security._scrub_text_records(
         text,
         hide_subjectless_email_records=hide_subjectless_email_records,
+        skip_reasons=skip_reasons,
     )
 
 
-def _scrub(value: Any) -> tuple[Any, int, str | None]:
-    return _security._scrub(value)
+def _scrub(
+    value: Any, *, skip_reasons: frozenset[str] = frozenset()
+) -> tuple[Any, int, str | None]:
+    return _security._scrub(value, skip_reasons=skip_reasons)
 
 
 def _security_pre_tool_call(tool_name: str, args: Any, session_id: str | None) -> dict[str, str] | None:
@@ -97,12 +105,17 @@ def _security_transform_tool_result(
     taint_classes: set[str],
     public_remote_read: bool,
 ) -> str | None:
+    # Inbound reads may carry API/service tokens the agent legitimately needs (e.g. an MCP
+    # server's own auth token). Suppressing them at read-time breaks the integration without
+    # preventing a leak — every egress surface still scans at full strictness. Hard secrets
+    # and account-security content stay suppressed here; see _INBOUND_ALLOWED_CREDENTIAL_REASONS.
+    inbound_allowed = _security._INBOUND_ALLOWED_CREDENTIAL_REASONS
     if not parsed_ok:
-        reason = None if public_remote_read else _sensitive_reason(result)
+        reason = None if public_remote_read else _sensitive_reason(result, skip_reasons=inbound_allowed)
         if not reason:
             return None
         _log_unsafe_diagnostic(f"transform_tool_result:{tool_name}", result)
-        scrubbed_text, suppressed, text_reason = _scrub_text_records(result)
+        scrubbed_text, suppressed, text_reason = _scrub_text_records(result, skip_reasons=inbound_allowed)
         if suppressed and scrubbed_text.strip():
             _emit_activity(
                 "security_suppressed",
@@ -137,7 +150,7 @@ def _security_transform_tool_result(
     if public_remote_read:
         return None
 
-    scrubbed, suppressed, reason = _scrub(deepcopy(parsed))
+    scrubbed, suppressed, reason = _scrub(deepcopy(parsed), skip_reasons=inbound_allowed)
     if not suppressed:
         return None
 

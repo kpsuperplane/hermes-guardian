@@ -35,8 +35,33 @@ _CREDENTIAL_PATTERNS = [
     (re.compile(r"\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\b"), "jwt"),
     (re.compile(r"\b(?:Bearer|Refresh)\s+[A-Za-z0-9._~+/=-]{24,}\b", re.I), "bearer token"),
     (re.compile(r"(?im)^\s*(?:cookie|session(?:id)?|csrf(?:_token)?)\s*[:=]\s*[^\s#;]{12,}"), "session cookie"),
-    (re.compile(r"(?im)^\s*[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PRIVATE_KEY|API_KEY)[A-Z0-9_]*\s*=\s*[^\s#]{8,}"), "secret assignment"),
+    # Password and private-key assignments are hard secrets: kept suppressed even on the
+    # inbound tool-result path. Matched before the token pattern below so a name containing
+    # PASSWORD/PRIVATE_KEY always classifies as a hard secret, never as a service token.
+    (re.compile(r"(?im)^\s*[A-Z0-9_]*(?:PASSWORD|PRIVATE_KEY)[A-Z0-9_]*\s*=\s*[^\s#]{8,}"), "password assignment"),
+    # API/service token assignments (e.g. ``FOO_API_KEY=...``, ``CLIENT_SECRET=...``). These are
+    # token-style credentials the agent may legitimately need to read — for instance an MCP
+    # server's own auth token — so they are allowed inbound but still blocked at every egress.
+    (re.compile(r"(?im)^\s*[A-Z0-9_]*(?:TOKEN|SECRET|API_KEY)[A-Z0-9_]*\s*=\s*[^\s#]{8,}"), "secret assignment"),
 ]
+
+# Credential reasons representing API/service authentication tokens. On the inbound
+# tool-result path (and only there) these are read into context rather than suppressed:
+# legitimate MCP/service integrations routinely surface their own tokens, and suppressing
+# them at read-time breaks the integration without preventing any leak — egress remains
+# guarded. Every egress surface (tool args, gateway dispatch, final response) still scans
+# without this allowance. Hard secrets (private keys, AWS keys, password assignments) and
+# all account-security content (OTPs, reset/recovery, magic links, ...) are intentionally
+# absent here and stay suppressed even on inbound reads.
+_INBOUND_ALLOWED_CREDENTIAL_REASONS = frozenset({
+    "api key",
+    "github token",
+    "slack token",
+    "bearer token",
+    "jwt",
+    "session cookie",
+    "secret assignment",
+})
 
 
 def _set_security_rule_enabled_callback(callback: Any) -> None:
@@ -112,7 +137,9 @@ def _stringify_for_scan(value: Any, *, depth: int = 0) -> str:
     return str(value)
 
 
-def _sensitive_finding(value: Any) -> dict[str, str] | None:
+def _sensitive_finding(
+    value: Any, *, skip_reasons: frozenset[str] = frozenset()
+) -> dict[str, str] | None:
     text = _stringify_for_scan(value)
     if not text:
         return None
@@ -120,6 +147,8 @@ def _sensitive_finding(value: Any) -> dict[str, str] | None:
     sensitive_links_enabled = _scanner_security_rule_enabled("sensitive_links")
     if _scanner_security_rule_enabled("credential_content"):
         for pattern, reason in _CREDENTIAL_PATTERNS:
+            if reason in skip_reasons:
+                continue
             match = pattern.search(text)
             if match:
                 return {
@@ -177,8 +206,10 @@ def _sensitive_finding(value: Any) -> dict[str, str] | None:
     return None
 
 
-def _sensitive_reason(value: Any) -> str | None:
-    finding = _sensitive_finding(value)
+def _sensitive_reason(
+    value: Any, *, skip_reasons: frozenset[str] = frozenset()
+) -> str | None:
+    finding = _sensitive_finding(value, skip_reasons=skip_reasons)
     return finding["reason"] if finding else None
 
 
@@ -221,6 +252,7 @@ def _scrub_text_records(
     text: str,
     *,
     hide_subjectless_email_records: bool = False,
+    skip_reasons: frozenset[str] = frozenset(),
 ) -> tuple[str, int, str | None]:
     """Remove sensitive records from plaintext batches when records are obvious."""
     starts = [match.start() for match in _NUMBERED_RECORD_START_RE.finditer(text)]
@@ -240,7 +272,7 @@ def _scrub_text_records(
     suppressed = 0
     first_reason = None
     for record in records:
-        reason = _sensitive_reason(record)
+        reason = _sensitive_reason(record, skip_reasons=skip_reasons)
         if not reason and hide_subjectless_email_records and _email_shaped_text(record):
             if not re.search(r"(?im)^\s*Subject:\s*\S", record):
                 reason = "redacted sensitive email metadata"
@@ -267,13 +299,17 @@ def _scrub_text_records(
     return prefix + "".join(cleaned).strip(), suppressed, first_reason
 
 
-def _scrub(value: Any) -> tuple[Any, int, str | None]:
-    reason = _sensitive_reason(value)
+def _scrub(
+    value: Any, *, skip_reasons: frozenset[str] = frozenset()
+) -> tuple[Any, int, str | None]:
+    reason = _sensitive_reason(value, skip_reasons=skip_reasons)
     if _looks_like_message_record(value) and reason:
         return None, 1, reason
 
     if isinstance(value, dict) and reason and isinstance(value.get("result"), str):
-        scrubbed_text, suppressed, text_reason = _scrub_text_records(value["result"])
+        scrubbed_text, suppressed, text_reason = _scrub_text_records(
+            value["result"], skip_reasons=skip_reasons
+        )
         if suppressed and scrubbed_text.strip():
             cleaned = dict(value)
             cleaned["result"] = scrubbed_text
@@ -300,13 +336,13 @@ def _scrub(value: Any) -> tuple[Any, int, str | None]:
         suppressed = 0
         first_reason = None
         for item in value:
-            item_reason_pre = _sensitive_reason(item)
+            item_reason_pre = _sensitive_reason(item, skip_reasons=skip_reasons)
             if item_reason_pre:
                 suppressed += 1
                 if first_reason is None:
                     first_reason = item_reason_pre
                 continue
-            scrubbed, count, item_reason = _scrub(item)
+            scrubbed, count, item_reason = _scrub(item, skip_reasons=skip_reasons)
             suppressed += count
             if first_reason is None and item_reason:
                 first_reason = item_reason
@@ -320,7 +356,7 @@ def _scrub(value: Any) -> tuple[Any, int, str | None]:
         suppressed = 0
         first_reason = None
         for key, item in value.items():
-            scrubbed, count, item_reason = _scrub(item)
+            scrubbed, count, item_reason = _scrub(item, skip_reasons=skip_reasons)
             suppressed += count
             if first_reason is None and item_reason:
                 first_reason = item_reason

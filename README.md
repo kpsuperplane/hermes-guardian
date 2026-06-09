@@ -273,6 +273,36 @@ This assumes the verifier LLM shares the agent's trust boundary. Since you choos
 which LLMs Hermes connects to, that assumption is yours to own; enabling `llm` mode
 opts into it.
 
+**Verifier latency.** By default the verifier runs on the agent's own model. If
+that is a large or reasoning model, each gated egress can take several seconds. A
+classification verdict does not need a frontier model, so you can point the
+verifier at a faster one:
+
+```text
+/guardian privacy verifier-model gpt-5.4-mini   # or any fast model your provider exposes
+/guardian privacy verifier-model none            # back to the Hermes default
+```
+
+This needs a one-time config grant, because Hermes gates per-plugin model
+selection:
+
+```yaml
+plugins:
+  entries:
+    hermes-guardian:
+      llm:
+        allow_model_override: true
+        allowed_models: [gpt-5.4-mini]   # optional allowlist
+```
+
+Guardian is fail-safe here: if the override is rejected (grant missing) or the
+model is unavailable, it retries once on the default model rather than denying
+everything. A smaller model is faster but less sharp on subtle content/intent
+calls, so prefer a capable "mini"/"flash"-class model over the smallest. Guardian
+also caches *deny* verdicts briefly per session, so a retried blocked action does
+not re-pay the verifier latency (denials only — a cached deny can never become a
+false allow). Watch the effect in the **Performance** tab.
+
 Both context channels are toggleable, in the dashboard Settings tab, by slash
 command, or directly in `guardian-rules.json` under `privacy`:
 
@@ -387,7 +417,7 @@ High-level Security Module protections are enabled by default:
 | Rule ID | Blocks |
 | --- | --- |
 | `account_security_content` | Password reset/recovery, auth codes, magic links, account verification, security alerts, and similar semantic account-security content. |
-| `credential_content` | Private keys, OAuth/session/cloud/API tokens, bearer tokens, JWTs, cookies, and `.env`-style secret assignments. |
+| `credential_content` | Private keys, OAuth/session/cloud/API tokens, bearer tokens, JWTs, cookies, and `.env`-style secret assignments. API/service tokens are read inbound but blocked at egress — see below. |
 | `sensitive_links` | Reset, recovery, verification, confirmation, magic-link, OTP, and 2FA URLs. |
 | `intrinsic_exfiltration` | Same-call local, code, browser console/CDP, or obvious MCP private-source reads combined with network/share sinks before session taint exists. |
 | `private_network_reads` | Terminal remote-read shortcuts targeting localhost, private IPs, link-local/metadata hosts, or `.local` hosts. |
@@ -407,6 +437,18 @@ payloads. It covers shapes such as local secret reads sent through
 `requests.post`, GET query construction from local files, browser DOM/cookie
 reads sent with `fetch` or `sendBeacon`, CDP `Runtime.evaluate` exfiltration,
 and MCP private-source tools paired with webhook/share sinks.
+
+`credential_content` is asymmetric by direction. On **egress** surfaces — tool
+arguments, gateway messages, and the final response — every credential shape
+above is blocked or suppressed. On the **inbound** tool-result path, API/service
+authentication tokens (OAuth/cloud/bearer tokens, JWTs, session cookies, and
+`.env`-style `*_API_KEY=` / `*_TOKEN=` / `*_SECRET=` assignments) are read into
+context rather than suppressed: integrations such as MCP servers routinely
+surface their own tokens, and stripping them at read-time breaks the integration
+without preventing any leak — the token is still blocked if the agent later tries
+to send it anywhere. Hard secrets (private keys, AWS access keys, and
+`*_PASSWORD=` / `*_PRIVATE_KEY=` assignments) stay suppressed even inbound, as
+does all `account_security_content` (OTPs, reset/recovery, magic links).
 
 Disabling a security rule weakens non-approvable hardening. Privacy checks still
 apply to classified private egress, but the disabled security category no
@@ -582,6 +624,7 @@ Use these from a Hermes gateway interface:
 /guardian privacy unknown-tools gate|allow
 /guardian privacy user-context on|off
 /guardian privacy cron-context on|off
+/guardian privacy verifier-model <model_id|none>
 /guardian tools
 /guardian tool set <match> [taints=class+class] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]
 /guardian tool delete <match_or_id>
@@ -623,17 +666,21 @@ Dashboard tabs:
 - **Recent Blocks**: inspect privacy/security blocks, approve pending actions,
   and dismiss approvals.
 - **History**: browse paginated sanitized activity rows.
+- **Performance**: per-check overhead Guardian adds — overall, LLM-verifier vs
+  deterministic, per-hook-type (avg/p50/p95/max), and recent samples.
 
 Hermes mounts the dashboard API under `/api/plugins/hermes-guardian/`:
 
 ```text
 GET /api/plugins/hermes-guardian/policy
+GET /api/plugins/hermes-guardian/performance
 GET /api/plugins/hermes-guardian/activity
 GET /api/plugins/hermes-guardian/activity/datatables
 POST /api/plugins/hermes-guardian/privacy/mode
 POST /api/plugins/hermes-guardian/privacy/unknown-tools
 POST /api/plugins/hermes-guardian/privacy/user-context
 POST /api/plugins/hermes-guardian/privacy/cron-context
+POST /api/plugins/hermes-guardian/privacy/verifier-model
 PATCH /api/plugins/hermes-guardian/security/rules/{rule_id}
 PATCH /api/plugins/hermes-guardian/language-packs/{pack_id}
 POST /api/plugins/hermes-guardian/rules
@@ -705,8 +752,8 @@ Persistent files live in the plugin directory and are ignored by git:
 Activity retention settings:
 
 ```bash
-HERMES_GUARDIAN_ACTIVITY_MAX_ROWS=10000
-HERMES_GUARDIAN_ACTIVITY_RETENTION_DAYS=30
+HERMES_GUARDIAN_ACTIVITY_MAX_ROWS=100
+HERMES_GUARDIAN_ACTIVITY_RETENTION_DAYS=7
 HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS=60
 HERMES_GUARDIAN_HISTORY_TIMEZONE=America/Los_Angeles
 ```

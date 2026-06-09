@@ -64,6 +64,61 @@ def test_doc_read_tools_do_not_suppress_code_documentation():
     assert notion_result is None
 
 
+def test_inbound_result_allows_api_token_assignments():
+    plugin = load_plugin()
+
+    # An MCP/skill result that surfaces a service token the agent legitimately needs is read
+    # into context rather than suppressed at read-time. (Egress remains guarded; see below.)
+    skill_doc = (
+        "# Setup\n"
+        "Add to your .env file:\n"
+        "  SLACK_API_TOKEN=xoxb-9f3a8e2188b-example-token-value\n"
+        "Then run the skill.\n"
+    )
+    assert plugin._on_transform_tool_result(tool_name="skill_view", result=skill_doc) is None
+    assert plugin._on_transform_tool_result(
+        tool_name="mcp_acme_config",
+        result=json.dumps({"result": "key: sk-" + "a" * 40}),
+    ) is None
+
+
+def test_inbound_result_still_suppresses_hard_secrets():
+    plugin = load_plugin()
+
+    for result in (
+        "config:\n  DB_PRIVATE_KEY=abcdefgh12345678\n",
+        "config:\n  DB_PASSWORD=hunter2hunter2\n",
+        "-----BEGIN RSA PRIVATE KEY-----\nMIIabc...\n",
+    ):
+        transformed = plugin._on_transform_tool_result(tool_name="skill_view", result=result)
+        assert transformed is not None
+        assert parse_json(transformed)["hermes_guardian"]["suppressed"] is True
+
+
+def test_inbound_result_still_suppresses_account_security_content():
+    plugin = load_plugin()
+
+    for result in (
+        "Your verification code is 123456",
+        "Reset your password using this link",
+    ):
+        transformed = plugin._on_transform_tool_result(tool_name="mcp_gmail_read", result=result)
+        assert transformed is not None
+        assert parse_json(transformed)["result"] == "[suppressed by hermes-guardian]"
+
+
+def test_egress_still_blocks_api_tokens_read_inbound():
+    plugin = load_plugin()
+    token_line = "SLACK_API_TOKEN=xoxb-9f3a8e2188b-example-token-value"
+
+    # Final response carrying the token is suppressed on the way out.
+    assert plugin._on_transform_llm_output(response_text=f"Token:\n  {token_line}") is not None
+
+    # The token going out as a tool argument is hard-blocked.
+    blocked = plugin._on_pre_tool_call(tool_name="message_send", args={"text": token_line})
+    assert blocked is not None and blocked["action"] == "block"
+
+
 def test_sensitive_finding_includes_match_and_context():
     plugin = load_plugin()
 
