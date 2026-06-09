@@ -241,6 +241,27 @@ This channel is deliberately narrow and fail-closed:
   raise `authorization_level` for actions the user actually asked for, but cannot
   override `risk_level` or the absolute deny rules.
 
+Both context channels are toggleable, in the dashboard Settings tab, by slash
+command, or directly in `guardian-rules.json` under `privacy`:
+
+```text
+/guardian privacy user-context on|off   # default on
+/guardian privacy cron-context on|off   # default off
+```
+
+```json
+{ "privacy": { "llm_user_context": true, "llm_cron_context": false } }
+```
+
+`llm_user_context` (default on) gates the owner channel above. `llm_cron_context`
+(default off) gates a parallel channel for cron runs: when on, the verifier also
+receives `cron_context`, a sanitized excerpt of the cron job's own stored
+instruction (sourced from the job record, redacted the same way). Because cron
+runs unattended with no human to catch a bad auto-approval, a cron job can **never
+self-authorize high-risk egress** — high-risk cron actions always fall back to
+manual approval even with cron context on, and enabling it raises a runtime risk
+banner. Enabling cron context from the dashboard requires explicit confirmation.
+
 ## Approvals
 
 When Guardian blocks egress, it returns a short-lived four-digit approval ID:
@@ -251,7 +272,7 @@ Hermes Guardian blocked this egress.
 Approval ID: 4827
 Action: browser_type
 Destination: example.com
-Data classes: email, contacts
+Data classes: communications, contacts
 
 The owner can approve with:
 /guardian approve 4827 once
@@ -365,8 +386,8 @@ status` and the dashboard policy snapshot surface a risk banner when
 
 Guardian's data classes are categories of *provenance-private* content — content
 that is private because of where it came from, not because it matches a sensitive
-pattern. This is why the classes are email, contacts, calendar, and documents
-rather than credential or secret formats: Guardian protects a different asset
+pattern. This is why the classes are communications, contacts, calendar, and
+documents rather than credential or secret formats: Guardian protects a different asset
 than a secret scanner does. (Access-sensitive material that *does* have a
 signature — credentials, OTPs, tokens — is handled separately and more strictly
 by the Security Module.)
@@ -375,8 +396,8 @@ Guardian tracks private context with these data classes:
 
 | Class | Examples |
 | --- | --- |
-| `email` | Email bodies, subjects, snippets, senders, and message lists. |
-| `contacts` | Dex/contact data, names, email addresses, phone numbers, and contact metadata. |
+| `communications` | Email and message bodies, subjects, snippets, senders, threads, and message lists (email/DM/chat tools, or email-record headers in content). |
+| `contacts` | Dex/contact data, names, **email addresses**, phone numbers, and contact metadata. |
 | `memory` | Hermes memory, Mnemosyne, and session-search results. |
 | `documents` | Notion, Drive, files, document bodies, and document metadata. |
 | `calendar` | Meetings, attendees, schedule details, and event data. |
@@ -384,8 +405,19 @@ Guardian tracks private context with these data classes:
 | `browser_private_input` | Private or user-derived text typed into a browser page. |
 
 Source-based taint wins over content detection for known private sources. For
-example, reading email taints the session as `email` even if the returned email
-text contains no obvious PII pattern.
+example, reading email taints the session as `communications` even if the returned
+email text contains no obvious PII pattern. A bare email address found in content
+is an identifier and taints `contacts`, not `communications`.
+
+Web and browser reads are confidence-gated: contact-shaped content (an address, a
+phone number, an `address`/`contact` field label) only taints when the host
+carries private context — the operator typed credentials there, or the page shows
+logged-in/account markers. Business or public-facing addresses (`support@…`, or
+any address at a non-consumer domain such as `hello@kevinpei.com`) never taint on
+their own, so browsing public pages does not accrue noise taint. Structurally
+unambiguous signals (an SSN, an email-record header block) still taint regardless
+of context. The legacy `email` class is accepted in persisted rules and maps to
+`communications`.
 
 Guardian also keeps volatile, metadata-only provenance for some copied text
 inside the active session. It indexes non-security-sensitive, medium-length
@@ -442,8 +474,8 @@ override** instead of weakening the global mode. Overrides let you tell Guardian
 what a tool actually does, and Guardian trusts your declaration:
 
 ```text
-# An MCP server you trust: its reads carry email, and it is not a sink.
-/guardian tool set mcp_acme_* taints=email egress=ignore note="trusted acme server"
+# An MCP server you trust: its reads carry communications, and it is not a sink.
+/guardian tool set mcp_acme_* taints=communications egress=ignore note="trusted acme server"
 
 # A custom tool that really sends messages: classify it so it gates correctly.
 /guardian tool set send_widget egress=message_send
@@ -516,6 +548,8 @@ Use these from a Hermes gateway interface:
 /guardian rule move <rule_id> before|after <other_rule_id>
 /guardian privacy mode strict|read-only|llm|off
 /guardian privacy unknown-tools gate|allow
+/guardian privacy user-context on|off
+/guardian privacy cron-context on|off
 /guardian tools
 /guardian tool set <match> [taints=class+class] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]
 /guardian tool delete <match_or_id>
@@ -536,8 +570,8 @@ Helpful commands:
 /guardian status
 /guardian history 20
 /guardian failures
-/guardian debug action=mcp_write destination=mcp:notion classes=email
-/guardian debug action=message_send destination=messaging classes=email purpose=support recipient=recipient_...
+/guardian debug action=mcp_write destination=mcp:notion classes=communications
+/guardian debug action=message_send destination=messaging classes=communications purpose=support recipient=recipient_...
 ```
 
 `/guardian deny` is an alias for dismiss. `/guardian failed` is an alias for
@@ -550,8 +584,9 @@ Guardian appears in the main Hermes dashboard at `/guardian` via
 
 Dashboard tabs:
 
-- **Settings**: edit privacy mode, set the unknown-tools mode, manage tool
-  overrides, toggle Security Module rules, and manage language packs.
+- **Settings**: edit privacy mode, toggle the LLM approval context channels
+  (user-prompt and cron), set the unknown-tools mode, manage tool overrides,
+  toggle Security Module rules, and manage language packs.
 - **Rules**: create, edit, delete, enable/disable, and reorder privacy rules.
 - **Recent Blocks**: inspect privacy/security blocks, approve pending actions,
   and dismiss approvals.
@@ -565,6 +600,8 @@ GET /api/plugins/hermes-guardian/activity
 GET /api/plugins/hermes-guardian/activity/datatables
 POST /api/plugins/hermes-guardian/privacy/mode
 POST /api/plugins/hermes-guardian/privacy/unknown-tools
+POST /api/plugins/hermes-guardian/privacy/user-context
+POST /api/plugins/hermes-guardian/privacy/cron-context
 PATCH /api/plugins/hermes-guardian/security/rules/{rule_id}
 PATCH /api/plugins/hermes-guardian/language-packs/{pack_id}
 POST /api/plugins/hermes-guardian/rules

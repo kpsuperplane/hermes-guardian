@@ -157,6 +157,16 @@ def _dashboard_unknown_tools_mode_action(mode: str) -> tuple[dict[str, Any], int
     return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
 
 
+def _dashboard_llm_user_context_action(enabled: Any) -> tuple[dict[str, Any], int]:
+    ok, message = _set_llm_user_context(_config_bool(enabled, default=_DEFAULT_LLM_USER_CONTEXT))
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+
+
+def _dashboard_llm_cron_context_action(enabled: Any) -> tuple[dict[str, Any], int]:
+    ok, message = _set_llm_cron_context(_config_bool(enabled, default=_DEFAULT_LLM_CRON_CONTEXT))
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+
+
 def _dashboard_tool_override_create_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     match = payload.get("match") or payload.get("tool") or payload.get("tool_name") or ""
     ok, message = _set_tool_override(

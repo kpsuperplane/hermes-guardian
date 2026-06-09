@@ -148,6 +148,12 @@ the tests/docs are updated accordingly:
   held in volatile owner-keyed state, never persisted, and treated as
   authorization evidence only — it must not override `risk_level` or absolute
   deny rules, and group/cron/unauthenticated senders must never populate it.
+  Both context channels are gated by privacy booleans: `llm_user_context`
+  (default on) gates the owner channel above; `llm_cron_context` (default off)
+  gates a parallel `cron_context` channel that supplies a cron job's own
+  sanitized stored instruction. Because cron runs unattended, a cron job may
+  never self-authorize high-risk egress: a high-risk `allow` verdict on a cron
+  session is always downgraded to manual approval, even with cron context on.
 - Final model responses are egress. Tainted responses to owner-private CLI/DM
   destinations may pass; tainted responses to group, cron, or unknown
   destinations are suppressed.
@@ -164,6 +170,8 @@ the tests/docs are updated accordingly:
   "privacy": {
     "mode": "strict",
     "unknown_tools": "gate",
+    "llm_user_context": true,
+    "llm_cron_context": false,
     "rules": [],
     "tools": [
       {
@@ -201,9 +209,16 @@ as a safe non-sink), `gate` (force `tool_unknown` gating), or a concrete action
 family. Overrides take precedence over built-in classification but are privacy-layer
 only: they never bypass the Security Module or intrinsic same-call hard blocks.
 
+`privacy.llm_user_context` (default `true`) and `privacy.llm_cron_context`
+(default `false`) are booleans gating the two `llm`-mode authorization-evidence
+channels. They are normalized by `_config_bool` and exposed through
+`_llm_user_context_enabled` / `_llm_cron_context_enabled` and the
+`_set_llm_user_context` / `_set_llm_cron_context` setters.
+
 Rule mutation helpers must preserve privacy rules, security rule settings, the
-`unknown_tools` mode, and `tools` overrides. This is covered by
-`tests/test_security_rules_config.py` and `tests/test_tool_overrides.py`.
+`unknown_tools` mode, the `llm_user_context` / `llm_cron_context` flags, and
+`tools` overrides. This is covered by `tests/test_security_rules_config.py`,
+`tests/test_tool_overrides.py`, and `tests/test_llm_context_settings.py`.
 
 `activity.sqlite3` has two logical roles:
 
@@ -268,16 +283,19 @@ Keep `dashboard/plugin_api.py` as a thin adapter:
   `x-hermes-guardian-token`.
 - It should require explicit confirmation for the weakening actions: privacy mode
   `off` (`privacy-off`), global wildcard allow rules (`wildcard-allow`),
-  `unknown_tools=allow` (`unknown-tools-allow`), and `egress:ignore` tool overrides
-  (`tool-ignore`).
-- Tool override and unknown-tools routes (`POST /tools`, `PATCH /tools/{id}`,
-  `DELETE /tools/{id}`, `POST /privacy/unknown-tools`) are thin adapters over the
-  `privacy/rules.py` mutators, like the other `_dashboard_*` actions.
+  `unknown_tools=allow` (`unknown-tools-allow`), `egress:ignore` tool overrides
+  (`tool-ignore`), and enabling cron context (`cron-context-on`).
+- Tool override, unknown-tools, and LLM-context routes (`POST /tools`,
+  `PATCH /tools/{id}`, `DELETE /tools/{id}`, `POST /privacy/unknown-tools`,
+  `POST /privacy/user-context`, `POST /privacy/cron-context`) are thin adapters
+  over the `privacy/rules.py` mutators, like the other `_dashboard_*` actions.
 
-The static dashboard files are checked in under `dashboard/dist/`. There is no
-frontend source build pipeline in this repository. If editing those files,
-preserve the Hermes plugin SDK usage (`window.__HERMES_PLUGIN_SDK__`) and API
-route contract.
+The dashboard is a React + TypeScript app. Source lives in `dashboard/src/`;
+`dashboard/dist/index.js` and `dashboard/dist/style.css` are committed build
+artifacts. Edit the source, then rebuild with `bun run build` (or, if `bun` is
+unavailable, the equivalent `esbuild` bundle: IIFE format, `React.createElement`
+JSX factory, React kept external via `window.__HERMES_PLUGIN_SDK__`). Preserve
+the Hermes plugin SDK usage and the API route contract.
 
 ## Language Packs
 
@@ -310,6 +328,8 @@ Important user-facing commands:
 /guardian rule add|delete|enable|disable|move ...
 /guardian privacy mode strict|read-only|llm|off
 /guardian privacy unknown-tools gate|allow
+/guardian privacy user-context on|off
+/guardian privacy cron-context on|off
 /guardian tools
 /guardian tool set <match> [taints=a+b] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]
 /guardian tool delete <match_or_id>

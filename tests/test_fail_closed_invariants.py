@@ -97,7 +97,7 @@ def test_incomplete_llm_allow_verdict_falls_back_to_manual_approval():
     fake_llm = FakeSecurityLlm({"outcome": "allow"})
     plugin._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
 
@@ -192,7 +192,7 @@ def test_throwing_security_result_hook_suppresses_fail_closed(monkeypatch):
 def test_pending_approval_storage_failure_still_blocks(monkeypatch):
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     def boom():
         raise RuntimeError("storage unavailable")
@@ -213,7 +213,7 @@ def test_unavailable_hmac_key_blocks_approval_fail_closed(tmp_path):
     bad_key_path.mkdir()
     plugin._GUARDIAN_HMAC_KEY_PATH = bad_key_path
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "private summary"}, session_id="s1")
 
@@ -225,7 +225,7 @@ def test_unavailable_hmac_key_blocks_approval_fail_closed(tmp_path):
 
 def test_tainted_final_response_to_unknown_destination_is_suppressed():
     plugin = load_plugin()
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     out = plugin._on_transform_llm_output("private summary", session_id="s1")
 
@@ -236,7 +236,7 @@ def test_tainted_final_response_to_unknown_destination_is_suppressed():
 def test_tainted_final_response_to_owner_private_destination_is_allowed():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     out = plugin._on_transform_llm_output(
         "private summary",

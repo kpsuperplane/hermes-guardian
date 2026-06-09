@@ -249,6 +249,19 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
         return {"action": "block", "message": _block_message(hard_reason)}, None
 
     verdict = _llm_security_verdict(shape, args)
+    if (
+        verdict.get("outcome") == "allow"
+        and verdict.get("risk_level") == "high"
+        and _is_cron_session_id(shape.get("session_id"))
+    ):
+        # Cron runs unattended with no human to catch a bad auto-approval, so a
+        # cron job can never self-authorize high-risk egress even when cron
+        # context is enabled. Downgrade to manual approval.
+        verdict = {
+            **verdict,
+            "outcome": "deny",
+            "rationale": f"cron high-risk egress requires human approval ({verdict.get('rationale', '')})",
+        }
     if verdict.get("outcome") == "allow":
         reason = (
             f"llm {verdict.get('risk_level', 'unknown')}: "

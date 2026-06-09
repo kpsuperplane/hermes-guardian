@@ -24,14 +24,14 @@ def test_guardian_rule_delete_slash_alias_removes_persistent_rule(tmp_path):
             rule_id="rule_delete_me",
             action_family="message_send",
             destination="friend",
-            data_classes=["email"],
+            data_classes=["communications"],
             owner_hash="cli",
         ),
         privacy_rule(
             rule_id="rule_keep",
             action_family="browser_type",
             destination="www.google.com",
-            data_classes=["email"],
+            data_classes=["communications"],
             owner_hash="cli",
         ),
     ])
@@ -66,7 +66,7 @@ def test_guardian_rule_add_defaults_platform_slash_to_caller_scope(tmp_path):
     plugin = load_plugin()
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin._PERSISTENT_RULES_CACHE = None
-    command = "rule add allow action=message_send destination=friend classes=email"
+    command = "rule add allow action=message_send destination=friend classes=communications"
 
     plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian {command}", user_id="owner"))
     response = plugin._handle_guardian_command(command)
@@ -75,7 +75,7 @@ def test_guardian_rule_add_defaults_platform_slash_to_caller_scope(tmp_path):
     data = json.loads((tmp_path / "rules.json").read_text())
     rule = data["privacy"]["rules"][0]
     assert rule["scope"]["owner_hash"] == plugin._hash_identity("telegram", "owner")
-    assert rule["match"]["data_classes"] == ["email"]
+    assert rule["match"]["data_classes"] == ["communications"]
     assert rule["match"]["purpose"] == "*"
     assert rule["match"]["recipient_identity"] == "*"
 
@@ -85,7 +85,7 @@ def test_guardian_rule_add_accepts_contextual_fields_and_rules_display_them():
     recipient_identity = plugin._recipient_identity_from_value("friend")
 
     response = plugin._handle_guardian_command(
-        "rule add allow action=message_send destination=messaging classes=email "
+        "rule add allow action=message_send destination=messaging classes=communications "
         f"purpose=support recipient={recipient_identity}"
     )
     rules_text = plugin._handle_guardian_command("rules")
@@ -107,7 +107,7 @@ def test_guardian_rule_add_rejects_invalid_classes_and_malformed_args(tmp_path):
         "rule add allow action=message_send destination=friend classes=emial"
     )
     malformed = plugin._handle_guardian_command(
-        "rule add allow action=message_send destination=friend classes=email stray"
+        "rule add allow action=message_send destination=friend classes=communications stray"
     )
 
     assert "Unknown data class(es): emial" in response
@@ -119,8 +119,8 @@ def test_non_owner_slash_cannot_create_global_or_cron_rule(tmp_path):
     plugin = load_plugin()
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin._PERSISTENT_RULES_CACHE = None
-    global_command = "rule add allow action=message_send destination=friend classes=email owner=*"
-    cron_command = "rule add allow action=message_send destination=friend classes=email cron=aaaaaaaaaaaa"
+    global_command = "rule add allow action=message_send destination=friend classes=communications owner=*"
+    cron_command = "rule add allow action=message_send destination=friend classes=communications cron=aaaaaaaaaaaa"
 
     plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian {global_command}", user_id="attacker"))
     global_response = plugin._handle_guardian_command(global_command)
@@ -139,8 +139,8 @@ def test_guardian_rule_move_requires_target_rule_permission(tmp_path):
     kevin_owner = plugin._hash_identity("telegram", "owner")
     other_owner = plugin._hash_identity("telegram", "other")
     save_privacy_config(plugin, rules=[
-        privacy_rule(rule_id="rule_kevin", destination="friend", data_classes=["email"], owner_hash=kevin_owner),
-        privacy_rule(rule_id="rule_other", destination="other", data_classes=["email"], owner_hash=other_owner),
+        privacy_rule(rule_id="rule_kevin", destination="friend", data_classes=["communications"], owner_hash=kevin_owner),
+        privacy_rule(rule_id="rule_other", destination="other", data_classes=["communications"], owner_hash=other_owner),
     ])
 
     command = "rule move rule_kevin after rule_other"
@@ -169,7 +169,7 @@ def test_guardian_rules_command_uses_readable_card_format(tmp_path):
             effect="deny",
             action_family="browser_type",
             destination="example.com",
-            data_classes=["email", "contacts"],
+            data_classes=["communications", "contacts"],
             owner_hash="cli",
             remaining_invocations=3,
             enabled=False,
@@ -186,7 +186,7 @@ def test_guardian_rules_command_uses_readable_card_format(tmp_path):
     assert "⏸️ **DENY (disabled)** `browser_type -> example.com`" in response
     assert "`rule_limited` · 3 invocations left" in response
     assert "Scope: Owner scoped" in response
-    assert "🏷️ `contacts,email`" in response
+    assert "🏷️ `communications,contacts`" in response
     assert "scope=" not in response
     assert "remaining=" not in response
 
@@ -208,7 +208,7 @@ def test_guardian_failures_command_lists_only_failed_command_activity():
         tool_name="send_message",
         action_family="message_send",
         destination="friend",
-        data_classes={"email"},
+        data_classes={"communications"},
         reason="requires approval",
         approval_id="peg_test",
     )
@@ -261,7 +261,7 @@ def test_guardian_failures_command_alias_empty_and_limit_handling():
         tool_name="send_message",
         action_family="message_send",
         destination="friend",
-        data_classes={"email"},
+        data_classes={"communications"},
         reason="requires approval",
     )
     plugin._emit_activity(
@@ -287,7 +287,7 @@ def test_guardian_history_command_clarifies_legacy_private_source_reason():
         "tainted",
         session_id="s1",
         tool_name="mcp_gmail_search",
-        data_classes={"email"},
+        data_classes={"communications"},
         reason="private source result",
     )
 
@@ -295,7 +295,7 @@ def test_guardian_history_command_clarifies_legacy_private_source_reason():
 
     assert "📥 **`mcp_gmail_search`**" in response
     assert "`mcp_gmail_search` -> `n/a`" not in response
-    assert "🏷️ `email`" in response
+    assert "🏷️ `communications`" in response
     assert "Read/result allowed" not in response
     assert "future outbound approval checks" not in response
     assert "private source result" not in response

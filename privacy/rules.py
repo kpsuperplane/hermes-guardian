@@ -7,6 +7,11 @@ _DEFAULT_PRIVACY_MODE = "llm"
 _PRIVACY_MODES = {"strict", "read-only", "llm", "off"}
 _DEFAULT_UNKNOWN_TOOLS = "gate"
 _UNKNOWN_TOOLS_MODES = {"gate", "allow"}
+# Whether the llm-mode verifier receives sanitized authorization-evidence context.
+# user context (authenticated owner's inbound request) defaults on; cron context
+# (a job's own stored instruction) defaults off because cron runs unattended.
+_DEFAULT_LLM_USER_CONTEXT = True
+_DEFAULT_LLM_CRON_CONTEXT = False
 # Action families a user may assign to a custom/unknown tool via a tool override.
 # "ignore" marks a tool as a safe non-sink; "gate" forces tool_unknown gating.
 _TOOL_OVERRIDE_EGRESS_FAMILIES = {
@@ -77,6 +82,8 @@ def _default_privacy_config() -> dict[str, Any]:
         "privacy": {
             "mode": _DEFAULT_PRIVACY_MODE,
             "unknown_tools": _DEFAULT_UNKNOWN_TOOLS,
+            "llm_user_context": _DEFAULT_LLM_USER_CONTEXT,
+            "llm_cron_context": _DEFAULT_LLM_CRON_CONTEXT,
             "rules": [],
             "tools": [],
         },
@@ -99,6 +106,15 @@ def _normalize_privacy_mode(value: Any) -> str:
     return mode if mode in _PRIVACY_MODES else _DEFAULT_PRIVACY_MODE
 
 
+# Legacy data-class aliases. The old "email" class was split into "contacts"
+# (a bare address) and "communications" (message bodies); existing persisted
+# rules and saved approvals still reference it. Map to "communications" — the
+# dominant intent of an email egress rule is the correspondence content, and
+# mapping to a single class keeps allow rules from silently widening to permit
+# contact egress as well.
+_CLASS_ALIASES = {"email": "communications"}
+
+
 def _normalize_rule_classes(raw: Any, *, allow_star: bool = True) -> list[str]:
     values = raw if isinstance(raw, list) else [raw]
     classes: list[str] = []
@@ -106,6 +122,7 @@ def _normalize_rule_classes(raw: Any, *, allow_star: bool = True) -> list[str]:
         text = str(value or "").strip()
         if allow_star and text == "*":
             return ["*"]
+        text = _CLASS_ALIASES.get(text, text)
         if text in _ALL_PRIVACY_CLASSES and text not in classes:
             classes.append(text)
     return sorted(classes)
@@ -338,6 +355,12 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
         "privacy": {
             "mode": _normalize_privacy_mode(privacy.get("mode")),
             "unknown_tools": _normalize_unknown_tools_mode(privacy.get("unknown_tools")),
+            "llm_user_context": _config_bool(
+                privacy.get("llm_user_context"), default=_DEFAULT_LLM_USER_CONTEXT
+            ),
+            "llm_cron_context": _config_bool(
+                privacy.get("llm_cron_context"), default=_DEFAULT_LLM_CRON_CONTEXT
+            ),
             "rules": normalized_rules,
             "tools": _normalize_tool_overrides(privacy.get("tools")),
         },
@@ -366,6 +389,9 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
             raise ValueError("privacy rule file has invalid privacy.unknown_tools")
     if "tools" in privacy and not isinstance(privacy.get("tools"), list):
         raise ValueError("privacy rule file privacy.tools must be a list")
+    for context_key in ("llm_user_context", "llm_cron_context"):
+        if context_key in privacy and not isinstance(privacy.get(context_key), (bool, int, str)):
+            raise ValueError(f"privacy rule file has invalid privacy.{context_key}")
     security = parsed.get("security")
     if security is not None:
         if not isinstance(security, dict):
@@ -549,6 +575,43 @@ def _set_unknown_tools_mode(mode: str) -> tuple[bool, str]:
     if not _save_privacy_config(next_data):
         return False, "Failed to save unknown-tools mode; Guardian remains unchanged."
     return True, f"Unknown-tools mode set to {normalized}."
+
+
+def _llm_user_context_enabled() -> bool:
+    return _config_bool(
+        _load_privacy_config().get("privacy", {}).get("llm_user_context"),
+        default=_DEFAULT_LLM_USER_CONTEXT,
+    )
+
+
+def _llm_cron_context_enabled() -> bool:
+    return _config_bool(
+        _load_privacy_config().get("privacy", {}).get("llm_cron_context"),
+        default=_DEFAULT_LLM_CRON_CONTEXT,
+    )
+
+
+def _set_llm_context_flag(key: str, enabled: bool, label: str) -> tuple[bool, str]:
+    data = _load_privacy_config()
+    privacy = dict(data.get("privacy") or {})
+    privacy[key] = bool(enabled)
+    next_data = {
+        "version": _PRIVACY_RULE_FILE_VERSION,
+        "privacy": privacy,
+        "security": dict(data.get("security") or {}),
+        "language_packs": dict(data.get("language_packs") or {}),
+    }
+    if not _save_privacy_config(next_data):
+        return False, f"Failed to save {label} setting; Guardian remains unchanged."
+    return True, f"LLM {label} turned {'on' if enabled else 'off'}."
+
+
+def _set_llm_user_context(enabled: bool) -> tuple[bool, str]:
+    return _set_llm_context_flag("llm_user_context", enabled, "user-prompt context")
+
+
+def _set_llm_cron_context(enabled: bool) -> tuple[bool, str]:
+    return _set_llm_context_flag("llm_cron_context", enabled, "cron context")
 
 
 def _tool_overrides() -> list[dict[str, Any]]:

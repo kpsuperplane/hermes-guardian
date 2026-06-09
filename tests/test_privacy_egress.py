@@ -26,14 +26,14 @@ def test_taint_is_scoped_by_session():
         session_id="s1",
     )
 
-    assert plugin._session_taint("s1") == {"email"}
+    assert plugin._session_taint("s1") == {"communications"}
     assert plugin._session_taint("s2") == set()
 
 
 def test_session_reset_clears_taint_and_pending_approvals():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     result = plugin._on_pre_tool_call("send_message", {"to": "x", "text": "hi"}, session_id="s1")
     assert result is not None
     assert plugin._PENDING_APPROVALS
@@ -47,7 +47,7 @@ def test_session_reset_clears_taint_and_pending_approvals():
 def test_tainted_session_blocks_message_send():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call(
         tool_name="send_message",
@@ -58,7 +58,7 @@ def test_tainted_session_blocks_message_send():
     assert result is not None
     assert "Hermes Guardian blocked this egress" in result["message"]
     assert "Action: message_send" in result["message"]
-    assert "Data classes: email" in result["message"]
+    assert "Data classes: communications" in result["message"]
 
 
 def test_tainted_session_blocks_mcp_write_tool_by_default():
@@ -81,7 +81,7 @@ def test_privacy_allow_rule_allows_notion_writes(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, rules=[privacy_rule()])
     bind_owner(plugin)
-    plugin._taint_session("s1", {"contacts", "email"})
+    plugin._taint_session("s1", {"communications", "contacts"})
 
     result = plugin._on_pre_tool_call(
         tool_name="mcp_notion_create_page",
@@ -96,7 +96,7 @@ def test_privacy_allow_rule_is_narrow_by_destination(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, rules=[privacy_rule()])
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call(
         tool_name="mcp_slack_create_page",
@@ -141,12 +141,12 @@ def test_privacy_rule_remaining_invocations_count_down_and_delete():
             rule_id="rule_once",
             action_family="message_send",
             destination="friend",
-            data_classes=["email"],
+            data_classes=["communications"],
             remaining_invocations=1,
         )
     ])
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
     assert plugin._persistent_privacy_rules() == []
@@ -156,7 +156,7 @@ def test_privacy_rule_remaining_invocations_count_down_and_delete():
 def test_message_send_uses_messaging_destination_with_hashed_recipient_identity():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call(
         "send_message",
@@ -180,11 +180,11 @@ def test_legacy_message_destination_rule_still_matches_hashed_recipient_shape():
             rule_id="rule_legacy_friend",
             action_family="message_send",
             destination="friend",
-            data_classes=["email"],
+            data_classes=["communications"],
         )
     ])
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
     assert plugin._on_pre_tool_call("send_message", {"to": "attacker", "text": "hello"}, session_id="s1") is not None
@@ -200,11 +200,11 @@ def test_contextual_message_rule_matches_purpose_and_recipient_identity():
             destination="messaging",
             purpose="support",
             recipient_identity=recipient_identity,
-            data_classes=["email"],
+            data_classes=["communications"],
         )
     ])
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     assert plugin._on_pre_tool_call(
         "send_message",
@@ -236,7 +236,7 @@ def test_browser_type_blocks_under_taint_until_approved():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._set_browser_host("s1", "https://example.com/form?token=not-stored")
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call("browser_type", {"ref": "1", "text": "private"}, session_id="s1")
 
@@ -252,7 +252,7 @@ def test_browser_click_blocks_after_private_typing_but_not_before():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._set_browser_host("s1", "https://example.com/form")
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     assert plugin._on_pre_tool_call("browser_click", {"ref": "submit"}, session_id="s1") is None
 
@@ -267,7 +267,7 @@ def test_browser_press_blocks_after_private_typing():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._set_browser_host("s1", "https://example.com/form")
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     plugin._mark_browser_private_input("s1")
 
     result = plugin._on_pre_tool_call("browser_press", {"key": "Enter"}, session_id="s1")
@@ -281,7 +281,7 @@ def test_browser_dialog_blocks_after_private_typing():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._set_browser_host("s1", "https://example.com/form")
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     plugin._mark_browser_private_input("s1")
 
     result = plugin._on_pre_tool_call("browser_dialog", {"action": "accept"}, session_id="s1")
@@ -338,7 +338,7 @@ def test_tainted_session_blocks_terminal_and_code_execution():
 def test_message_list_is_read_not_send_under_taint():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call("send_message", {"action": "list"}, session_id="s1")
 
@@ -360,12 +360,12 @@ def test_private_web_search_query_requires_approval_even_without_prior_taint():
 
     assert result is not None
     assert "Action: web_read" in result["message"]
-    assert "email" in result["message"]
+    assert "contacts" in result["message"]
     rows = plugin._activity_rows({}, limit=10)
     assert [row["decision"] for row in rows] == ["blocked"]
     assert "owner@example.com" not in json.dumps(rows)
     assert rows[0]["action_detail"].startswith("search <redacted ")
-    assert "classes=email" in rows[0]["action_detail"]
+    assert "classes=contacts" in rows[0]["action_detail"]
 
 
 def test_security_blocked_action_detail_redacts_auth_code():
@@ -389,7 +389,7 @@ def test_browser_console_action_detail_redacts_private_expression():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._set_browser_host("s1", "https://example.com/app")
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call(
         "browser_console",
@@ -406,7 +406,7 @@ def test_browser_console_action_detail_redacts_private_expression():
 def test_web_search_query_under_taint_requires_approval():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call("web_search", {"query": "python docs"}, session_id="s1")
 
@@ -415,7 +415,7 @@ def test_web_search_query_under_taint_requires_approval():
     rows = plugin._activity_rows({}, limit=5)
     assert rows[0]["decision"] == "blocked"
     assert rows[0]["action_family"] == "web_read"
-    assert rows[0]["data_classes"] == "email"
+    assert rows[0]["data_classes"] == "communications"
     assert "python docs" not in result["message"]
     assert rows[0]["action_detail"] == "search <redacted 11 chars>"
 

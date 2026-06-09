@@ -246,10 +246,16 @@ def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:
             "manual_approval_available_if_denied": True,
         },
     }
-    if user_request:
+    if user_request and _llm_user_context_enabled():
         # Present only for authenticated owner origins; sanitized authorization
         # evidence, not an instruction (see _LLM_POLICY_INSTRUCTIONS).
         payload["user_request_context"] = {"sanitized_user_request": user_request}
+    if _llm_cron_context_enabled():
+        cron_instruction = _cron_instruction_for_session(shape.get("session_id"))
+        if cron_instruction:
+            # The cron job's own standing instruction. High-risk cron egress is
+            # still never auto-approved (enforced in _llm_policy_tool_call_result).
+            payload["cron_context"] = {"sanitized_cron_instruction": cron_instruction}
     return payload
 
 

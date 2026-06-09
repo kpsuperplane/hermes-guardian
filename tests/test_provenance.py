@@ -35,7 +35,7 @@ def test_exact_copied_phrase_narrows_egress_classes():
 
     classes = plugin._data_classes_for_egress("s1", {"text": COPIED_EMAIL_PHRASE})
 
-    assert classes == {"email"}
+    assert classes == {"communications"}
 
 
 def test_unrelated_session_class_is_excluded_when_provenance_matches():
@@ -51,7 +51,7 @@ def test_unrelated_session_class_is_excluded_when_provenance_matches():
     )
 
     assert result is not None
-    assert "Data classes: email" in result["message"]
+    assert "Data classes: communications" in result["message"]
     assert "calendar" not in result["message"]
 
 
@@ -63,7 +63,7 @@ def test_no_match_and_paraphrase_fall_back_to_session_taint():
 
     classes = plugin._data_classes_for_egress("s1", {"text": PARAPHRASED_EMAIL_PHRASE})
 
-    assert classes == {"contacts", "email"}
+    assert classes == {"communications", "contacts"}
 
 
 def test_final_response_exact_copied_phrase_narrows_classes():
@@ -82,7 +82,7 @@ def test_final_response_exact_copied_phrase_narrows_classes():
     assert response is not None
     row = plugin._activity_rows({"decision": "blocked"}, limit=1)[0]
     assert row["action_family"] == "final_response"
-    assert row["data_classes"] == "email"
+    assert row["data_classes"] == "communications"
 
 
 def test_untainted_final_response_with_email_shaped_text_is_not_privacy_suppressed():
@@ -110,7 +110,7 @@ def test_short_strings_do_not_match_provenance():
 
     classes = plugin._data_classes_for_egress("s1", {"text": "short private"})
 
-    assert classes == {"contacts", "email"}
+    assert classes == {"communications", "contacts"}
 
 
 def test_security_sensitive_strings_are_not_indexed():
@@ -125,7 +125,7 @@ def test_security_sensitive_strings_are_not_indexed():
 
     classes = plugin._data_classes_for_egress("s1", {"text": SENSITIVE_PHRASE})
 
-    assert classes == {"contacts", "email"}
+    assert classes == {"communications", "contacts"}
     state = plugin._SESSIONS["s1"]
     assert "provenance" not in state or not state["provenance"]
 
@@ -183,11 +183,11 @@ def test_reset_clears_provenance_but_session_end_does_not():
     plugin = load_plugin()
     bind_owner(plugin)
     _observe_email_phrase(plugin)
-    assert plugin._provenance_match_classes("s1", {"text": COPIED_EMAIL_PHRASE}) == {"email"}
+    assert plugin._provenance_match_classes("s1", {"text": COPIED_EMAIL_PHRASE}) == {"communications"}
 
     plugin._on_session_end(session_id="s1")
 
-    assert plugin._provenance_match_classes("s1", {"text": COPIED_EMAIL_PHRASE}) == {"email"}
+    assert plugin._provenance_match_classes("s1", {"text": COPIED_EMAIL_PHRASE}) == {"communications"}
 
     plugin._on_session_reset(session_id="s1")
 

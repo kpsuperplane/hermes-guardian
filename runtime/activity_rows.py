@@ -636,6 +636,14 @@ def _runtime_risk_banners() -> list[dict[str, str]]:
                 "message": "Unknown-tools mode is allow; unrecognized tools are not gated under taint (legacy fail-open).",
             }
         )
+    if _llm_cron_context_enabled():
+        banners.append(
+            {
+                "id": "llm_cron_context",
+                "severity": "medium",
+                "message": "LLM cron context is on; cron jobs supply their own authorization evidence to the verifier (high-risk cron egress still requires manual approval).",
+            }
+        )
     return banners
 
 
@@ -695,6 +703,8 @@ def _policy_snapshot() -> dict[str, Any]:
         "privacy_policy": _privacy_policy(),
         "privacy_mode": _privacy_policy(),
         "unknown_tools": _unknown_tools_mode(),
+        "llm_user_context": _llm_user_context_enabled(),
+        "llm_cron_context": _llm_cron_context_enabled(),
         "tool_overrides": _tool_overrides_snapshot(),
         "tool_override_egress_options": sorted(_TOOL_OVERRIDE_EGRESS_VALUES),
         "all_privacy_classes": sorted(_ALL_PRIVACY_CLASSES),

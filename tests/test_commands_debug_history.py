@@ -17,34 +17,34 @@ from support import *  # noqa: F403
 
 def test_dashboard_debugger_uses_safe_metadata(monkeypatch):
     plugin = load_plugin()
-    save_privacy_config(plugin, rules=[privacy_rule(rule_id="rule_debug", data_classes=["email"])])
+    save_privacy_config(plugin, rules=[privacy_rule(rule_id="rule_debug", data_classes=["communications"])])
 
     allowed = plugin._debug_decision({
         "action_family": "mcp_write",
         "destination": "mcp:notion",
-        "data_classes": "email",
+        "data_classes": "communications",
     })
 
     assert allowed["decision"] == "allowed"
     assert allowed["source"] == {"source": "persistent", "rule_id": "rule_debug", "effect": "allow"}
     assert allowed["action_family"] == "mcp_write"
     assert allowed["destination"] == "mcp:notion"
-    assert allowed["data_classes"] == ["email"]
+    assert allowed["data_classes"] == ["communications"]
 
 
 def test_guardian_debug_command_reports_gateway_safe_decision(monkeypatch):
     plugin = load_plugin()
-    save_privacy_config(plugin, rules=[privacy_rule(rule_id="rule_debug", data_classes=["email"])])
+    save_privacy_config(plugin, rules=[privacy_rule(rule_id="rule_debug", data_classes=["communications"])])
 
     response = plugin._handle_guardian_command(
-        "debug action=mcp_write destination=mcp:notion classes=email tool=mcp_notion_update_page"
+        "debug action=mcp_write destination=mcp:notion classes=communications tool=mcp_notion_update_page"
     )
 
     assert "Guardian debug decision" in response
     assert "Decision: allowed" in response
     assert "Action: mcp_write" in response
     assert "Destination: mcp:notion" in response
-    assert "Data classes: email" in response
+    assert "Data classes: communications" in response
     assert "Source: persistent rule_debug" in response
 
 
@@ -58,12 +58,12 @@ def test_guardian_debug_command_accepts_contextual_fields():
             destination="messaging",
             purpose="support",
             recipient_identity=recipient_identity,
-            data_classes=["email"],
+            data_classes=["communications"],
         )
     ])
 
     response = plugin._handle_guardian_command(
-        "debug action=message_send destination=messaging classes=email "
+        "debug action=message_send destination=messaging classes=communications "
         f"purpose=support recipient={recipient_identity}"
     )
 
@@ -78,15 +78,15 @@ def test_guardian_debug_command_does_not_consume_once_approval():
         "owner_hash": plugin._CLI_OWNER_HASH,
         "action_family": "browser_type",
         "destination": "example.com",
-        "data_classes": ["email"],
+        "data_classes": ["communications"],
         "fingerprint": "debug",
     }]
 
     first = plugin._handle_guardian_command(
-        "debug action=browser_type destination=example.com classes=email"
+        "debug action=browser_type destination=example.com classes=communications"
     )
     second = plugin._handle_guardian_command(
-        "debug action=browser_type destination=example.com classes=email"
+        "debug action=browser_type destination=example.com classes=communications"
     )
 
     assert "Decision: allowed" in first
@@ -99,7 +99,7 @@ def test_guardian_debug_command_reports_privacy_off(monkeypatch):
     save_privacy_config(plugin, mode="off")
 
     response = plugin._handle_guardian_command(
-        "debug action=message_send destination=friend classes=email"
+        "debug action=message_send destination=friend classes=communications"
     )
 
     assert "Decision: allowed" in response
@@ -116,7 +116,7 @@ def test_guardian_history_command_lists_recent_sanitized_activity():
         tool_name="send_message",
         action_family="message_send",
         destination="friend",
-        data_classes={"email"},
+        data_classes={"communications"},
         reason="requires approval",
         approval_id="peg_test",
     )
@@ -138,7 +138,7 @@ def test_guardian_history_command_lists_recent_sanitized_activity():
     assert "🏷️ `documents`" in response
     assert "Allowed: matched allow rule (`env`)" in response
     assert "❌ **`send_message`**" in response
-    assert "🏷️ `email`" in response
+    assert "🏷️ `communications`" in response
     assert "Blocked: requires approval (`peg_test`)" in response
     assert "**Action:**" not in response
     assert "**Status:**" not in response
@@ -177,7 +177,7 @@ def test_guardian_history_command_groups_quick_same_tool_calls(monkeypatch):
             tool_name="browser_type",
             action_family="browser_type",
             destination="example.com",
-            data_classes={"email"},
+            data_classes={"communications"},
             reason="requires approval",
             approval_id=f"peg_{index}",
         )
@@ -188,7 +188,7 @@ def test_guardian_history_command_groups_quick_same_tool_calls(monkeypatch):
     assert "❌ **`browser_type`** x3" in response
     assert "Jun 6, 2026 12:44 PM PDT" in response
     assert " - Jun 6, 2026 12:44 PM PDT" not in response
-    assert "🏷️ `email`" in response
+    assert "🏷️ `communications`" in response
     assert "Blocked: requires approval (`peg_3`)" in response
     assert response.count("❌ **`browser_type`**") == 1
 
@@ -205,7 +205,7 @@ def test_guardian_history_command_empty_and_limit_handling():
             session_id=f"s{index}",
             action_family="message_send",
             destination=f"dest-{index}",
-            data_classes={"email"},
+            data_classes={"communications"},
             reason="test",
         )
 

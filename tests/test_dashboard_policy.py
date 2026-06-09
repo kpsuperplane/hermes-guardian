@@ -55,7 +55,7 @@ def test_policy_snapshot_includes_cron_rule_scope(tmp_path):
             rule_id="rule_test",
             action_family="browser_type",
             destination="www.google.com",
-            data_classes=["email"],
+            data_classes=["communications"],
             cron_job_id="aaaaaaaaaaaa",
             cron_job_name="Example Availability Check",
         )
@@ -80,7 +80,7 @@ def test_policy_snapshot_includes_persistent_rule_metadata(tmp_path):
             rule_id="rule_delete_me",
             action_family="message_send",
             destination="friend",
-            data_classes=["email"],
+            data_classes=["communications"],
             owner_hash="cli",
         )
     ])
@@ -93,7 +93,7 @@ def test_policy_snapshot_includes_persistent_rule_metadata(tmp_path):
     assert rule["destination"] == "friend"
     assert rule["purpose"] == "*"
     assert rule["recipient_identity"] == "*"
-    assert rule["data_classes"] == ["email"]
+    assert rule["data_classes"] == ["communications"]
     assert rule["owner_hash"] == "cli"
 
 
@@ -114,7 +114,7 @@ def test_policy_snapshot_includes_rule_form_suggestions(tmp_path):
         tool_name="browser_type",
         action_family="browser_type",
         destination="example.com",
-        data_classes=["email"],
+        data_classes=["communications"],
     )
 
     policy = plugin._policy_snapshot()
@@ -138,11 +138,11 @@ def test_dashboard_policy_exposes_contextual_rule_and_pending_fields():
             destination="messaging",
             purpose="support",
             recipient_identity=recipient_identity,
-            data_classes=["email"],
+            data_classes=["communications"],
         )
     ])
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     plugin._on_pre_tool_call(
         "send_message",
         {"to": "other", "text": "hello", "purpose": "marketing"},
@@ -168,14 +168,14 @@ def test_dashboard_rule_delete_action_removes_persistent_rule(tmp_path):
             rule_id="rule_delete_me",
             action_family="message_send",
             destination="friend",
-            data_classes=["email"],
+            data_classes=["communications"],
             owner_hash="cli",
         ),
         privacy_rule(
             rule_id="rule_keep",
             action_family="browser_type",
             destination="www.google.com",
-            data_classes=["email"],
+            data_classes=["communications"],
             owner_hash="cli",
         ),
     ])
@@ -199,7 +199,7 @@ def test_policy_snapshot_includes_five_recent_unresolved_blocks(monkeypatch):
     for index in range(6):
         session_id = f"s{index}"
         bind_owner(plugin, session_id=session_id)
-        plugin._taint_session(session_id, {"email"})
+        plugin._taint_session(session_id, {"communications"})
         before = set(plugin._PENDING_APPROVALS)
         now["value"] = 1000 + index
         plugin._on_pre_tool_call("send_message", {"to": f"friend-{index}", "text": "hello"}, session_id=session_id)
@@ -221,7 +221,7 @@ def test_policy_snapshot_marks_pending_block_covered_by_new_allow_rule(tmp_path)
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin._PERSISTENT_RULES_CACHE = None
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
@@ -232,7 +232,7 @@ def test_policy_snapshot_marks_pending_block_covered_by_new_allow_rule(tmp_path)
             action_family="message_send",
             destination="messaging",
             recipient_identity=recipient_identity,
-            data_classes=["email"],
+            data_classes=["communications"],
             remaining_invocations=1,
         )
     ])
@@ -254,7 +254,7 @@ def test_policy_snapshot_does_not_mark_pending_block_covered_by_new_deny_rule(tm
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin._PERSISTENT_RULES_CACHE = None
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
@@ -264,7 +264,7 @@ def test_policy_snapshot_does_not_mark_pending_block_covered_by_new_deny_rule(tm
             effect="deny",
             action_family="message_send",
             destination="friend",
-            data_classes=["email"],
+            data_classes=["communications"],
         )
     ])
 
@@ -282,7 +282,7 @@ def test_policy_snapshot_marks_stored_expired_approval_as_dismissible(monkeypatc
     now = {"value": 1000}
     monkeypatch.setattr(plugin, "_now", lambda: now["value"])
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
@@ -311,7 +311,7 @@ def test_policy_snapshot_omits_orphaned_historical_approval_blocks():
         tool_name="send_message",
         action_family="message_send",
         destination="friend",
-        data_classes={"email"},
+        data_classes={"communications"},
         reason="requires approval",
         approval_id="1234",
     )
@@ -326,7 +326,7 @@ def test_dashboard_dismiss_action_handles_stored_expired_approval(monkeypatch):
     now = {"value": 1000}
     monkeypatch.setattr(plugin, "_now", lambda: now["value"])
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
@@ -376,7 +376,7 @@ def test_policy_snapshot_recent_blocks_includes_hard_blocks_without_pending_appr
 def test_dashboard_approval_actions_remove_pending_blocks():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
 
@@ -394,7 +394,7 @@ def test_dashboard_approval_actions_remove_pending_blocks():
     assert rule["remaining_invocations"] == 1
 
     bind_owner(plugin, session_id="s2")
-    plugin._taint_session("s2", {"email"})
+    plugin._taint_session("s2", {"communications"})
     plugin._on_pre_tool_call("send_message", {"to": "other-friend", "text": "hello"}, session_id="s2")
     approval_id = first_pending_id(plugin)
 
@@ -483,10 +483,10 @@ def test_activity_presentation_helpers_keep_datatables_and_history_consistent(mo
         tool_name="browser_type",
         action_family="browser_type",
         destination="example.com",
-        data_classes={"email", "contacts"},
+        data_classes={"communications", "contacts"},
         reason="requires approval",
         approval_id="amber-bridge-1234",
-        action_detail="type into example.com: <redacted 42 chars; classes=email>",
+        action_detail="type into example.com: <redacted 42 chars; classes=communications>",
     )
 
     row = plugin._grouped_activity_rows({}, limit=1)[0]
@@ -495,14 +495,14 @@ def test_activity_presentation_helpers_keep_datatables_and_history_consistent(mo
 
     assert plugin._activity_status_icon(row["decision"]) == "❌"
     assert plugin._activity_time_text(row) == "Jun 6, 2026 12:44 PM PDT"
-    assert plugin._activity_taints_text(row, code=True) == "🏷️ `contacts,email`"
+    assert plugin._activity_taints_text(row, code=True) == "🏷️ `communications,contacts`"
     assert plugin._activity_reason_line_text(row) == "Blocked: requires approval (`amber-bridge-1234`)"
     assert datatables_row["icon"] == "❌"
     assert datatables_row["time"] == "Jun 6, 2026 12:44 PM PDT"
-    assert datatables_row["data_classes"] == "contacts,email"
+    assert datatables_row["data_classes"] == "communications,contacts"
     assert datatables_row["reason_short"] == "Blocked: requires approval"
     assert "Jun 6, 2026 12:44 PM PDT" in history
-    assert "🏷️ `contacts,email`" in history
+    assert "🏷️ `communications,contacts`" in history
     assert "Blocked: requires approval (`amber-bridge-1234`)" in history
 
 
@@ -534,7 +534,7 @@ def test_activity_prune_limits_max_rows(monkeypatch):
             tool_name="send_message",
             action_family="message_send",
             destination=f"dest-{index}",
-            data_classes={"email"},
+            data_classes={"communications"},
             reason="test",
         )
 

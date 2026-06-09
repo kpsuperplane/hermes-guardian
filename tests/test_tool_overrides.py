@@ -17,7 +17,7 @@ from support import *  # noqa: F403
 def test_unknown_non_mcp_sink_blocks_under_taint(tool_name):
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call(tool_name, {"data": "private"}, session_id="s1")
 
@@ -36,7 +36,7 @@ def test_unknown_tool_allowed_without_taint():
 def test_recognized_read_tools_not_gated_under_taint():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     # Pure private-source read and a navigation/no-op call stay allowed.
     assert plugin._on_pre_tool_call("gmail_get", {"id": "1"}, session_id="s1") is None
@@ -47,7 +47,7 @@ def test_recognized_read_tools_not_gated_under_taint():
 def test_unknown_tools_allow_mode_reverts_to_legacy_allow():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     save_privacy_config(plugin, mode="llm")
     ok, _ = plugin._set_unknown_tools_mode("allow")
     assert ok
@@ -63,7 +63,7 @@ def test_unknown_tools_allow_mode_reverts_to_legacy_allow():
 def test_override_ignore_allows_tool_under_taint():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     ok, _ = plugin._set_tool_override("graphql", egress="ignore")
     assert ok
 
@@ -73,7 +73,7 @@ def test_override_ignore_allows_tool_under_taint():
 def test_override_concrete_family_classifies_and_gates():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     ok, _ = plugin._set_tool_override("send_widget", egress="message_send")
     assert ok
 
@@ -85,7 +85,7 @@ def test_override_concrete_family_classifies_and_gates():
 def test_override_prefix_match_applies_to_all_server_tools():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     ok, _ = plugin._set_tool_override("mcp_acme_*", egress="ignore")
     assert ok
 
@@ -97,7 +97,7 @@ def test_override_prefix_match_applies_to_all_server_tools():
 def test_override_taints_source_on_result_observation():
     plugin = load_plugin()
     bind_owner(plugin, session_id="s1")
-    ok, _ = plugin._set_tool_override("acme_lookup", taints=["email"])
+    ok, _ = plugin._set_tool_override("acme_lookup", taints=["communications"])
     assert ok
 
     plugin._on_transform_tool_result(
@@ -106,13 +106,13 @@ def test_override_taints_source_on_result_observation():
         session_id="s1",
     )
 
-    assert "email" in plugin._session_taint("s1")
+    assert "communications" in plugin._session_taint("s1")
 
 
 def test_override_takes_precedence_over_builtin_classification():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     # send_message is normally a gated message_send sink; ignore override downgrades it.
     ok, _ = plugin._set_tool_override("send_message", egress="ignore")
     assert ok
@@ -123,7 +123,7 @@ def test_override_takes_precedence_over_builtin_classification():
 def test_disabled_override_is_not_applied():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     plugin._set_tool_override("graphql", egress="ignore")
     plugin._set_tool_override_enabled("graphql", False)
 
@@ -153,7 +153,7 @@ def test_set_unknown_tools_mode_rejects_invalid():
 
 def test_overrides_survive_other_config_mutations():
     plugin = load_plugin()
-    plugin._set_tool_override("mcp_acme_*", taints=["email"], egress="ignore")
+    plugin._set_tool_override("mcp_acme_*", taints=["communications"], egress="ignore")
     plugin._set_unknown_tools_mode("allow")
 
     plugin._set_privacy_mode("strict")

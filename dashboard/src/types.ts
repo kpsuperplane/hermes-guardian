@@ -123,6 +123,8 @@ export interface Policy {
   privacy_mode?: string;
   privacy_policy?: string;
   unknown_tools?: string;
+  llm_user_context?: boolean;
+  llm_cron_context?: boolean;
   activity_max_rows?: number;
   activity_retention_days?: number;
   activity_group_seconds?: number;

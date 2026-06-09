@@ -23,8 +23,20 @@ const TABS: Array<[string, string]> = [
 ];
 
 export function GuardianPage() {
-  const { policy, loading, error, privacyMode, setPrivacyMode, unknownTools, setUnknownTools, load } =
-    usePolicy();
+  const {
+    policy,
+    loading,
+    error,
+    privacyMode,
+    setPrivacyMode,
+    unknownTools,
+    setUnknownTools,
+    llmUserContext,
+    setLlmUserContext,
+    llmCronContext,
+    setLlmCronContext,
+    load,
+  } = usePolicy();
   const { toasts, showToast, dismissToast } = useToasts();
   const history = useHistory();
   const actions = useGuardianActions({
@@ -34,6 +46,10 @@ export function GuardianPage() {
     setPrivacyMode,
     unknownTools,
     setUnknownTools,
+    llmUserContext,
+    setLlmUserContext,
+    llmCronContext,
+    setLlmCronContext,
     showToast,
   });
 
@@ -96,6 +112,12 @@ export function GuardianPage() {
           privacyMode={privacyMode}
           modeSaving={actions.modeSaving}
           onChangePrivacyMode={actions.saveMode}
+          llmUserContext={llmUserContext}
+          llmCronContext={llmCronContext}
+          userContextSaving={actions.userContextSaving}
+          cronContextSaving={actions.cronContextSaving}
+          onChangeUserContext={actions.saveUserContext}
+          onChangeCronContext={actions.saveCronContext}
           onPatchSecurityRule={actions.patchSecurityRule}
           languagePacksSaving={actions.languagePacksSaving}
           onPatchLanguagePack={actions.patchLanguagePack}

@@ -54,7 +54,7 @@ def test_authenticated_owner_request_is_attached_and_enables_allow(monkeypatch):
 
     plugin._on_pre_gateway_dispatch(gateway_event(_NEWSLETTER_REQUEST, user_id="owner"))
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email", "contacts"})
+    plugin._taint_session("s1", {"communications", "contacts"})
 
     result = _submit_form(plugin)
 
@@ -76,7 +76,7 @@ def test_unauthenticated_sender_request_is_not_attached(monkeypatch):
 
     plugin._on_pre_gateway_dispatch(gateway_event(_NEWSLETTER_REQUEST, user_id="stranger"))
     bind_owner(plugin, user_id="stranger")
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     _submit_form(plugin)
 
@@ -95,7 +95,7 @@ def test_non_owner_in_group_cannot_authorize_for_owner(monkeypatch):
 
     plugin._on_pre_gateway_dispatch(gateway_event(_NEWSLETTER_REQUEST, user_id="attacker"))
     bind_owner(plugin)  # session owned by owner
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     _submit_form(plugin)
 
@@ -126,7 +126,7 @@ def test_cached_request_redacts_pii_before_storage(monkeypatch):
         gateway_event("sign me up with alice@example.com for the newsletter", user_id="owner")
     )
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     _submit_form(plugin)
 
@@ -144,7 +144,7 @@ def test_user_request_is_never_persisted(monkeypatch):
 
     plugin._on_pre_gateway_dispatch(gateway_event(_NEWSLETTER_REQUEST, user_id="owner"))
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     _submit_form(plugin)
 
@@ -173,8 +173,120 @@ def test_stale_request_beyond_ttl_is_ignored(monkeypatch):
     )
 
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     _submit_form(plugin)
 
     payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
     assert "user_request_context" not in payload
+
+
+def test_user_context_setting_off_suppresses_attachment(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    plugin._set_llm_user_context(False)
+    fake_llm = _deny_llm()
+    plugin._PLUGIN_LLM = fake_llm
+
+    plugin._on_pre_gateway_dispatch(gateway_event(_NEWSLETTER_REQUEST, user_id="owner"))
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    _submit_form(plugin)
+
+    payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
+    assert "user_request_context" not in payload
+
+
+# --- cron context ---------------------------------------------------------
+
+_CRON_SESSION = "cron_aaaaaaaaaaaa_20260607_030107"
+_CRON_INSTRUCTION = "Every morning email me a summary at admin@example.com via the digest form"
+
+
+def _bind_cron(plugin):
+    plugin._on_pre_llm_call(session_id=_CRON_SESSION, platform="cron", sender_id="scheduler")
+    plugin._taint_session(_CRON_SESSION, {"communications"})
+
+
+def _stub_cron_record(plugin, monkeypatch, prompt=_CRON_INSTRUCTION):
+    monkeypatch.setattr(
+        plugin._CORE,
+        "_cron_job_record",
+        lambda _job_id: {"id": "aaaaaaaaaaaa", "prompt": prompt},
+    )
+
+
+def test_cron_context_off_by_default_not_attached(monkeypatch):
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    _stub_cron_record(plugin, monkeypatch)
+    fake_llm = _deny_llm()
+    plugin._PLUGIN_LLM = fake_llm
+
+    _bind_cron(plugin)
+    _submit_form(plugin, session_id=_CRON_SESSION)
+
+    payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
+    assert "cron_context" not in payload
+
+
+def test_cron_context_on_attaches_job_instruction(monkeypatch):
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    plugin._set_llm_cron_context(True)
+    _stub_cron_record(plugin, monkeypatch)
+    # Medium risk so the cron high-risk cap does not interfere with this check.
+    fake_llm = FakeSecurityLlm({
+        "outcome": "deny",
+        "risk_level": "medium",
+        "authorization_level": "unknown",
+        "rationale": "needs manual approval",
+    })
+    plugin._PLUGIN_LLM = fake_llm
+
+    _bind_cron(plugin)
+    _submit_form(plugin, session_id=_CRON_SESSION)
+
+    payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
+    instruction = payload["cron_context"]["sanitized_cron_instruction"]
+    assert "digest form" in instruction
+    # PII in the job prompt is redacted before it reaches the verifier.
+    assert "admin@example.com" not in json.dumps(payload)
+    assert "<email>" in instruction
+
+
+def test_cron_high_risk_stays_manual_even_with_cron_context(monkeypatch):
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    plugin._set_llm_cron_context(True)
+    _stub_cron_record(plugin, monkeypatch)
+    # Even an explicit, high-risk allow must not auto-approve on cron.
+    plugin._PLUGIN_LLM = _allow_llm()
+
+    _bind_cron(plugin)
+    result = _submit_form(plugin, session_id=_CRON_SESSION)
+
+    assert result is not None
+    assert "Approval ID:" in result["message"]
+    assert plugin._PENDING_APPROVALS
+    rows = plugin._activity_rows({}, limit=5)
+    assert any("cron high-risk" in row["reason"] for row in rows)
+
+
+def test_cron_context_low_risk_can_auto_approve(monkeypatch):
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    plugin._set_llm_cron_context(True)
+    _stub_cron_record(plugin, monkeypatch)
+    plugin._PLUGIN_LLM = FakeSecurityLlm({
+        "outcome": "allow",
+        "risk_level": "medium",
+        "authorization_level": "substantive",
+        "rationale": "routine job-authorized digest",
+    })
+
+    _bind_cron(plugin)
+    result = _submit_form(plugin, session_id=_CRON_SESSION)
+
+    assert result is None
+    assert not plugin._PENDING_APPROVALS

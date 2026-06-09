@@ -18,7 +18,7 @@ from support import *  # noqa: F403
 def test_approval_once_allows_matching_retry_then_expires():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     blocked = plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     assert blocked is not None
@@ -41,7 +41,7 @@ def test_approval_once_allows_matching_retry_then_expires():
 def test_pending_approval_id_is_contextual_without_llm():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     blocked = plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     assert blocked is not None
@@ -75,7 +75,7 @@ def test_approval_id_generation_does_not_call_llm_with_tool_metadata():
     save_privacy_config(plugin, mode="strict")
     plugin._PLUGIN_LLM = FakeSecurityLlm({"code": "unused"})
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call(
         "send_message",
@@ -89,7 +89,7 @@ def test_approval_id_generation_does_not_call_llm_with_tool_metadata():
 def test_approval_accepts_four_digit_id():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
@@ -105,7 +105,7 @@ def test_approval_accepts_four_digit_id():
 def test_approval_id_generation_avoids_recent_four_digit_codes(monkeypatch):
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     monkeypatch.setattr(plugin._CORE.secrets, "randbelow", lambda _limit: 1234)
     plugin._emit_activity(
         "blocked",
@@ -113,7 +113,7 @@ def test_approval_id_generation_avoids_recent_four_digit_codes(monkeypatch):
         tool_name="send_message",
         action_family="message_send",
         destination="friend",
-        data_classes={"email"},
+        data_classes={"communications"},
         reason="requires approval",
         approval_id="1234",
     )
@@ -126,7 +126,7 @@ def test_approval_id_generation_avoids_recent_four_digit_codes(monkeypatch):
 def test_approval_id_generation_reuses_codes_after_seven_days(monkeypatch):
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     monkeypatch.setattr(plugin._CORE.secrets, "randbelow", lambda _limit: 1234)
     current_time = plugin._now()
     monkeypatch.setattr(plugin, "_now", lambda: current_time - plugin._APPROVAL_ID_REUSE_SECONDS - 1)
@@ -136,7 +136,7 @@ def test_approval_id_generation_reuses_codes_after_seven_days(monkeypatch):
         tool_name="send_message",
         action_family="message_send",
         destination="friend",
-        data_classes={"email"},
+        data_classes={"communications"},
         reason="requires approval",
         approval_id="1234",
     )
@@ -151,8 +151,8 @@ def test_approval_session_allows_same_destination_only_same_session():
     plugin = load_plugin()
     bind_owner(plugin, session_id="s1")
     bind_owner(plugin, session_id="s2")
-    plugin._taint_session("s1", {"email"})
-    plugin._taint_session("s2", {"email"})
+    plugin._taint_session("s1", {"communications"})
+    plugin._taint_session("s2", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
@@ -169,7 +169,7 @@ def test_approval_always_persists_narrow_rule(tmp_path):
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin._PERSISTENT_RULES_CACHE = None
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
@@ -193,7 +193,7 @@ def test_approval_always_persists_narrow_rule(tmp_path):
 def test_approval_always_save_failure_keeps_pending_approval(monkeypatch):
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
@@ -209,7 +209,7 @@ def test_approval_always_save_failure_keeps_pending_approval(monkeypatch):
 def test_deny_keeps_retry_blocked():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
@@ -222,7 +222,7 @@ def test_deny_keeps_retry_blocked():
 def test_deny_alias_still_dismisses_pending_approval():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
@@ -236,7 +236,7 @@ def test_deny_alias_still_dismisses_pending_approval():
 def test_wrong_sender_cannot_approve():
     plugin = load_plugin()
     bind_owner(plugin, user_id="owner")
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
@@ -252,7 +252,7 @@ def test_configured_telegram_owner_can_approve_cron_approval(monkeypatch):
     cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin._on_pre_llm_call(session_id=cron_session, platform="cron", sender_id="scheduler")
-    plugin._taint_session(cron_session, {"email"})
+    plugin._taint_session(cron_session, {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id=cron_session)
     approval_id = first_pending_id(plugin)
@@ -274,7 +274,7 @@ def test_cron_approval_can_be_approved_from_separate_process(monkeypatch, tmp_pa
     cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     creator._on_pre_llm_call(session_id=cron_session, platform="cron", sender_id="scheduler")
-    creator._taint_session(cron_session, {"email"})
+    creator._taint_session(cron_session, {"communications"})
 
     creator._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id=cron_session)
     approval_id = first_pending_id(creator)
@@ -309,7 +309,7 @@ def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
     creator._PERSISTENT_RULES_PATH = rules_path
     creator._PERSISTENT_RULES_CACHE = None
     bind_owner(creator, session_id="s1", user_id="owner")
-    creator._taint_session("s1", {"email"})
+    creator._taint_session("s1", {"communications"})
 
     creator._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(creator)
@@ -336,7 +336,7 @@ def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
     runner._PERSISTENT_RULES_PATH = rules_path
     runner._PERSISTENT_RULES_CACHE = None
     bind_owner(runner, session_id="s1", user_id="owner")
-    runner._taint_session("s1", {"email"})
+    runner._taint_session("s1", {"communications"})
 
     assert runner._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
     data = json.loads(rules_path.read_text())
@@ -354,7 +354,7 @@ def test_cron_always_approval_is_scoped_to_same_cron_job(monkeypatch, tmp_path):
     second_run = "cron_aaaaaaaaaaaa_20260607_090812"
     other_job = "cron_bbbbbbbbbbbb_20260607_080012"
     plugin._on_pre_llm_call(session_id=first_run, platform="cron", sender_id="scheduler")
-    plugin._taint_session(first_run, {"email"})
+    plugin._taint_session(first_run, {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id=first_run)
     approval_id = first_pending_id(plugin)
@@ -372,11 +372,11 @@ def test_cron_always_approval_is_scoped_to_same_cron_job(monkeypatch, tmp_path):
     assert policy["rules"][0]["scope"] == "cron job Example Availability Check (aaaaaaaaaaaa)"
 
     plugin._on_pre_llm_call(session_id=second_run, platform="cron", sender_id="scheduler")
-    plugin._taint_session(second_run, {"email"})
+    plugin._taint_session(second_run, {"communications"})
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "retry"}, session_id=second_run) is None
 
     plugin._on_pre_llm_call(session_id=other_job, platform="cron", sender_id="scheduler")
-    plugin._taint_session(other_job, {"email"})
+    plugin._taint_session(other_job, {"communications"})
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "retry"}, session_id=other_job) is not None
 
 
@@ -384,7 +384,7 @@ def test_configured_telegram_owner_exception_is_cron_only(monkeypatch):
     plugin = load_plugin()
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "attacker")
     bind_owner(plugin, user_id="owner")
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
@@ -398,7 +398,7 @@ def test_configured_telegram_owner_exception_is_cron_only(monkeypatch):
 def test_expired_approval_cannot_approve(monkeypatch):
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)

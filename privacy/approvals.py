@@ -424,6 +424,24 @@ def _recent_user_request_for_owner(owner_hash: str) -> str:
         return sanitized
 
 
+def _cron_instruction_for_session(session_id: str | None) -> str:
+    """Sanitized standing instruction for a cron session's job, else "".
+
+    Sourced from the owner-authored job record (creation-time), never from live
+    run context. The raw prompt is redacted the same way as a user request.
+    """
+    if not _is_cron_session_id(session_id):
+        return ""
+    job_id = _cron_job_id_from_session(session_id)
+    if not job_id:
+        return ""
+    job = _cron_job_record(job_id)
+    instruction = str(job.get("prompt") or job.get("name") or "").strip()
+    if not instruction:
+        return ""
+    return _redact_command_for_llm(instruction)
+
+
 def _pop_command_owner(raw_args: str) -> str:
     key = raw_args.strip()
     with _LOCK:

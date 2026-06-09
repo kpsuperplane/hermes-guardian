@@ -29,7 +29,7 @@ def test_privacy_off_bypasses_guardian_but_not_security(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="off")
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
 
@@ -82,7 +82,7 @@ def test_read_only_privacy_does_not_auto_approve_messages(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="read-only")
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
 

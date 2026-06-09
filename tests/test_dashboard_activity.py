@@ -18,7 +18,7 @@ from support import *  # noqa: F403
 def test_dashboard_payload_filters_activity_by_decision():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     plugin._on_pre_tool_call("browser_navigate", {"url": "https://example.com"}, session_id="s1")
@@ -42,7 +42,7 @@ def test_activity_rows_and_datatables_include_contextual_metadata():
         destination="messaging",
         purpose="support",
         recipient_identity=recipient_identity,
-        data_classes={"email"},
+        data_classes={"communications"},
         reason="requires approval",
     )
 
@@ -75,7 +75,7 @@ def test_datatables_payload_paginates_and_counts(monkeypatch):
             tool_name=f"tool_{index:02d}",
             action_family="message_send",
             destination="friend",
-            data_classes={"email"},
+            data_classes={"communications"},
             reason=f"requires approval {index}",
         )
 
@@ -234,7 +234,7 @@ def test_activity_grouping_keeps_distinct_or_old_calls_separate():
         "tool_name": "browser_type",
         "action_family": "browser_type",
         "destination": "example.com",
-        "data_classes": "email",
+        "data_classes": "communications",
         "reason": "requires approval",
         "approval_id": "peg_latest",
         "rule_id": "",

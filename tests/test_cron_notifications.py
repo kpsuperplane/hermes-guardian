@@ -28,7 +28,7 @@ def test_cron_block_sends_one_sanitized_home_channel_notification(monkeypatch):
         lambda message, target: sent.append((message, target)),
     )
     bind_owner(plugin, session_id=cron_session)
-    plugin._taint_session(cron_session, {"email"})
+    plugin._taint_session(cron_session, {"communications"})
 
     first = plugin._on_pre_tool_call(
         "send_message",
@@ -52,7 +52,7 @@ def test_cron_block_sends_one_sanitized_home_channel_notification(monkeypatch):
     assert "Action: message_send" in message
     assert "Destination: messaging" in message
     assert "friend" not in message
-    assert "Data classes: email" in message
+    assert "Data classes: communications" in message
     assert "Approval ID:" not in message
     assert "Decision:" not in message
     assert "Approve future runs:" not in message
@@ -84,7 +84,7 @@ def test_cron_notification_defaults_to_job_delivery_targets(monkeypatch):
         lambda message, target: sent.append((message, target)),
     )
     bind_owner(plugin, session_id=cron_session)
-    plugin._taint_session(cron_session, {"email"})
+    plugin._taint_session(cron_session, {"communications"})
 
     result = plugin._on_pre_tool_call(
         "send_message",
@@ -195,7 +195,7 @@ def test_cron_notification_can_be_disabled(monkeypatch):
         lambda message, target: sent.append((message, target)),
     )
     bind_owner(plugin, session_id=cron_session)
-    plugin._taint_session(cron_session, {"email"})
+    plugin._taint_session(cron_session, {"communications"})
 
     result = plugin._on_pre_tool_call(
         "send_message",
@@ -219,7 +219,7 @@ def test_non_cron_block_does_not_send_cron_notification(monkeypatch):
         lambda message, target: sent.append((message, target)),
     )
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call(
         "send_message",

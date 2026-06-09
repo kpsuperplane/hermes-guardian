@@ -58,7 +58,7 @@ def test_llm_privacy_denial_falls_back_to_manual_approval(monkeypatch):
     })
     plugin._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call("send_message", {"to": "unknown", "text": "hello"}, session_id="s1")
 
@@ -81,7 +81,7 @@ def test_llm_verifier_input_includes_safe_contextual_metadata_without_raw_recipi
     })
     plugin._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call(
         "send_message",
@@ -193,7 +193,7 @@ def test_llm_privacy_still_hard_blocks_outbound_paste_endpoint(monkeypatch):
     })
     plugin._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call(
         "terminal",
@@ -336,13 +336,13 @@ def test_web_api_with_personal_args_blocks_even_without_prior_taint():
 
     assert result is not None
     assert "Action: web_api" in result["message"]
-    assert "email" in result["message"]
+    assert "contacts" in result["message"]
 
 
 def test_activity_log_omits_raw_private_tool_args():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     secret_text = "raw private sentence that must not be logged"
     plugin._on_pre_tool_call(

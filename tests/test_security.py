@@ -116,12 +116,12 @@ def test_pre_tool_call_blocks_security_sensitive_browser_url_before_execution():
 def test_security_sensitive_args_are_blocked_even_with_approval():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
     plugin._SESSION_APPROVALS["s1"] = [{
         "owner_hash": plugin._SESSIONS["s1"]["owner_hash"],
         "action_family": "browser_type",
         "destination": "example.com",
-        "data_classes": ["email"],
+        "data_classes": ["communications"],
         "fingerprint": "anything",
     }]
 
@@ -211,7 +211,7 @@ def test_transform_tool_result_removes_sensitive_list_items_entirely():
     assert parsed["hermes_guardian"]["suppressed_count"] == 1
 
 
-def test_transform_tool_result_marks_email_taint_even_for_normal_email():
+def test_transform_tool_result_marks_communications_taint_even_for_normal_email():
     plugin = load_plugin()
     bind_owner(plugin)
 
@@ -221,7 +221,7 @@ def test_transform_tool_result_marks_email_taint_even_for_normal_email():
         session_id="s1",
     ) is None
 
-    assert plugin._session_taint("s1") == {"email"}
+    assert plugin._session_taint("s1") == {"communications"}
 
 
 def test_transform_tool_result_logs_specific_source_taint_reason():
@@ -236,7 +236,7 @@ def test_transform_tool_result_logs_specific_source_taint_reason():
 
     rows = plugin._activity_rows({"decision": "tainted"}, limit=10)
     assert rows
-    assert rows[0]["reason"] == "tainted by email tool result (email)"
+    assert rows[0]["reason"] == "tainted by email tool result (communications)"
 
 
 def test_transform_tool_result_logs_specific_content_pattern_taint_reason():
@@ -244,14 +244,14 @@ def test_transform_tool_result_logs_specific_content_pattern_taint_reason():
     bind_owner(plugin)
 
     plugin._on_transform_tool_result(
-        tool_name="web_search",
+        tool_name="mcp_acme_lookup",
         result=json.dumps({"result": "Contact me at person@example.com"}),
         session_id="s1",
     )
 
     rows = plugin._activity_rows({"decision": "tainted"}, limit=10)
     assert rows
-    assert rows[0]["reason"] == "tainted by content pattern in web_search result (contacts, email)"
+    assert rows[0]["reason"] == "tainted by content pattern in mcp_acme_lookup result (contacts)"
 
 
 def test_transform_tool_result_source_based_taint_classes():

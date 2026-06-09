@@ -149,10 +149,13 @@ def _browser_result_has_private_context(value: Any) -> bool:
     text = _stringify_for_scan(value)
     if not text:
         return False
+    # NB: a bare email address is deliberately NOT a private-context signal —
+    # public pages carry support@/contact@ addresses, and treating those as proof
+    # of a logged-in context would defeat the ambient-business-email suppression
+    # in _web_content_taint_classes.
     return bool(
         _LANGUAGE_PACKS.browser_private_context_pattern.search(text)
         or re.search(r"\b(csrf|document\.cookie|localStorage|sessionStorage)\b", text, re.I)
-        or _EMAIL_ADDRESS_RE.search(text)
     )
 
 
@@ -169,12 +172,68 @@ def _classes_from_content(value: Any) -> set[str]:
     if not text:
         return set()
     classes: set[str] = set()
-    if _email_shaped_text(text) or _EMAIL_ADDRESS_RE.search(text):
-        classes.add("email")
+    # Email-record headers (From:/Subject:/Sender: …) are correspondence content;
+    # a bare address is an identifier, i.e. contact info.
+    if _email_shaped_text(text):
+        classes.add("communications")
+    if _EMAIL_ADDRESS_RE.search(text):
+        classes.add("contacts")
     if _PHONE_RE.search(text) or _PRIVATE_FIELD_RE.search(text):
         classes.add("contacts")
     if _SSN_RE.search(text):
         classes.add("documents")
+    return classes
+
+
+def _email_is_ambient_business(addr: str) -> bool:
+    """Business/public-facing address: a role mailbox or any non-consumer domain.
+
+    Such an address is generic contact info (e.g. support@acme.com,
+    hello@kevinpei.com) rather than the operator's private personal contact, so
+    it should not taint on its own when merely seen in web content. Only an
+    address at a known consumer provider (gmail.com, …) signals a person.
+    """
+    local, _, domain = str(addr or "").rpartition("@")
+    if not domain:
+        return False
+    if local.lower() in _ROLE_LOCALPARTS:
+        return True
+    return domain.lower() not in _CONSUMER_EMAIL_DOMAINS
+
+
+def _is_web_sourced_tool(tool_name: str) -> bool:
+    """True for browser/web-read tools whose results are page content."""
+    lower = str(tool_name or "").lower()
+    return lower.startswith("browser") or bool(_WEB_READ_TOOL_RE.match(lower))
+
+
+def _web_content_taint_classes(value: Any, session_id: str | None) -> set[str]:
+    """Confidence-gated taint for web/browser-sourced content.
+
+    Public pages routinely embed business contact info (support@…, a phone
+    number, an "address" label); tainting on those is noise. So contact-shaped
+    signals only taint when the host carries private context — the operator typed
+    credentials there, or the page shows logged-in/account markers. Structurally
+    unambiguous signals (an SSN, an email-record header block) taint regardless.
+
+    Tradeoff (intentional): a genuinely private page that never trips a login
+    marker and where nothing was typed reads as public, so a personal address on
+    it will not taint; the SSN/record-header checks remain as a backstop.
+    """
+    text = _stringify_for_scan(value)
+    if not text:
+        return set()
+    classes: set[str] = set()
+    if _email_shaped_text(text):
+        classes.add("communications")
+    if _SSN_RE.search(text):
+        classes.add("documents")
+    if not (_browser_has_private_input(session_id) or _browser_result_has_private_context(value)):
+        return classes
+    if _PHONE_RE.search(text) or _PRIVATE_FIELD_RE.search(text):
+        classes.add("contacts")
+    if any(not _email_is_ambient_business(addr) for addr in _EMAIL_ADDRESS_RE.findall(text)):
+        classes.add("contacts")
     return classes
 
 
@@ -326,6 +385,8 @@ def _taint_classes_for_tool_result(
     classes = _classes_from_tool_name(tool_name)
     if classes:
         return classes | override_taints
+    if _is_web_sourced_tool(tool_name):
+        return _web_content_taint_classes(result_value, session_id) | override_taints
     return _classes_from_content(result_value) | override_taints
 
 
@@ -511,7 +572,7 @@ def _intrinsic_mcp_source_classes(lower: str, args_text: str) -> set[str]:
     combined = f"{lower} {args_text}".lower()
     classes: set[str] = set()
     if re.search(r"(?:^|[^a-z0-9])(?:gmail|email|mail|inbox|message|slack|discord)(?:[^a-z0-9]|$)", combined):
-        classes.add("email")
+        classes.add("communications")
     if re.search(r"(?:^|[^a-z0-9])(?:drive|docs?|document|file|notion|sheet|slide)(?:[^a-z0-9]|$)", combined):
         classes.add("documents")
     if re.search(r"(?:^|[^a-z0-9])(?:calendar|event|meeting)(?:[^a-z0-9]|$)", combined):

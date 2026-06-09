@@ -22,6 +22,10 @@ export interface GuardianActionDeps {
   setPrivacyMode: (mode: string) => void;
   unknownTools: string;
   setUnknownTools: (mode: string) => void;
+  llmUserContext: boolean;
+  setLlmUserContext: (enabled: boolean) => void;
+  llmCronContext: boolean;
+  setLlmCronContext: (enabled: boolean) => void;
   showToast: (message?: unknown, variant?: ToastVariant) => void;
 }
 
@@ -33,12 +37,25 @@ function errText(err: unknown): string {
 // this out of GuardianPage leaves the page as a thin composition root that just
 // wires hooks to the presentational tabs.
 export function useGuardianActions(deps: GuardianActionDeps) {
-  const { policy, load, privacyMode, setPrivacyMode, unknownTools, setUnknownTools, showToast } =
-    deps;
+  const {
+    policy,
+    load,
+    privacyMode,
+    setPrivacyMode,
+    unknownTools,
+    setUnknownTools,
+    llmUserContext,
+    setLlmUserContext,
+    llmCronContext,
+    setLlmCronContext,
+    showToast,
+  } = deps;
 
   const [modeSaving, setModeSaving] = useState(false);
   const [languagePacksSaving, setLanguagePacksSaving] = useState(false);
   const [unknownToolsSaving, setUnknownToolsSaving] = useState(false);
+  const [userContextSaving, setUserContextSaving] = useState(false);
+  const [cronContextSaving, setCronContextSaving] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<RuleForm>(Object.assign({}, DEFAULT_FORM));
   const [formError, setFormError] = useState("");
@@ -104,6 +121,51 @@ export function useGuardianActions(deps: GuardianActionDeps) {
         showToast(errText(err), "error");
       })
       .finally(() => setUnknownToolsSaving(false));
+  }
+
+  function saveUserContext(enabled: boolean) {
+    if (enabled === llmUserContext) return;
+    const previous = llmUserContext;
+    setLlmUserContext(enabled);
+    setUserContextSaving(true);
+    api("/privacy/user-context", { method: "POST", body: JSON.stringify({ enabled }) })
+      .then((payload) => {
+        showToast(payload.message || "Saved.");
+        return load();
+      })
+      .catch((err) => {
+        setLlmUserContext(previous);
+        showToast(errText(err), "error");
+      })
+      .finally(() => setUserContextSaving(false));
+  }
+
+  function saveCronContext(enabled: boolean) {
+    if (enabled === llmCronContext) return;
+    const previous = llmCronContext;
+    const body: { enabled: boolean; confirm?: string } = { enabled };
+    if (enabled) {
+      if (
+        !window.confirm(
+          "Enable cron context? Cron jobs will supply their own stored instruction to the LLM approver as authorization evidence. High-risk cron egress still always requires manual approval.",
+        )
+      ) {
+        return;
+      }
+      body.confirm = "cron-context-on";
+    }
+    setLlmCronContext(enabled);
+    setCronContextSaving(true);
+    api("/privacy/cron-context", { method: "POST", body: JSON.stringify(body) })
+      .then((payload) => {
+        showToast(payload.message || "Saved.");
+        return load();
+      })
+      .catch((err) => {
+        setLlmCronContext(previous);
+        showToast(errText(err), "error");
+      })
+      .finally(() => setCronContextSaving(false));
   }
 
   function openCreateOverride() {
@@ -383,6 +445,8 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     // saving flags
     modeSaving,
     unknownToolsSaving,
+    userContextSaving,
+    cronContextSaving,
     languagePacksSaving,
     // rule modal
     showModal,
@@ -399,6 +463,8 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     // settings / tools
     saveMode,
     saveUnknownTools,
+    saveUserContext,
+    saveCronContext,
     patchSecurityRule,
     patchLanguagePack,
     setAllLanguagePacks,

@@ -82,10 +82,10 @@ PREFERRED_VERSION = "v1.2.1"
 # Privacy data class used to taint each suite's sessions (see assumption #2). Any
 # class triggers egress gating; these are chosen to read sensibly in activity logs.
 SUITE_TAINT = {
-    "workspace": "email",
+    "workspace": "communications",
     "travel": "documents",
     "banking": "documents",
-    "slack": "email",
+    "slack": "communications",
 }
 DEFAULT_TAINT = "documents"
 
@@ -101,11 +101,11 @@ DEFAULT_TAINT = "documents"
 #                   potential exfil staging surface, matching Guardian's model.
 TOOL_CLASSIFICATION: dict[str, tuple[Any, ...]] = {
     # ----- workspace: email -----
-    "get_unread_emails": ("source", "email"),
-    "get_sent_emails": ("source", "email"),
-    "get_received_emails": ("source", "email"),
-    "get_draft_emails": ("source", "email"),
-    "search_emails": ("source", "email"),
+    "get_unread_emails": ("source", "communications"),
+    "get_sent_emails": ("source", "communications"),
+    "get_received_emails": ("source", "communications"),
+    "get_draft_emails": ("source", "communications"),
+    "search_emails": ("source", "communications"),
     "send_email": ("sink", "message_send", "messaging"),
     "delete_email": ("sink", "tool_write", "mailbox"),
     # ----- workspace: contacts -----
@@ -169,8 +169,8 @@ TOOL_CLASSIFICATION: dict[str, tuple[Any, ...]] = {
     # ----- slack: reads -----
     "get_channels": ("read", None),
     "get_users_in_channel": ("read", None),
-    "read_channel_messages": ("source", "email"),
-    "read_inbox": ("source", "email"),
+    "read_channel_messages": ("source", "communications"),
+    "read_inbox": ("source", "communications"),
     "get_webpage": ("source", "documents"),
     # ----- slack: egress -----
     "send_direct_message": ("sink", "message_send", "messaging"),

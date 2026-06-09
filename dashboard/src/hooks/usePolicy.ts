@@ -10,6 +10,10 @@ export interface PolicyController {
   setPrivacyMode: (mode: string) => void;
   unknownTools: string;
   setUnknownTools: (mode: string) => void;
+  llmUserContext: boolean;
+  setLlmUserContext: (enabled: boolean) => void;
+  llmCronContext: boolean;
+  setLlmCronContext: (enabled: boolean) => void;
   load: () => Promise<void>;
 }
 
@@ -22,6 +26,8 @@ export function usePolicy(): PolicyController {
   const [error, setError] = useState("");
   const [privacyMode, setPrivacyMode] = useState("llm");
   const [unknownTools, setUnknownTools] = useState("gate");
+  const [llmUserContext, setLlmUserContext] = useState(true);
+  const [llmCronContext, setLlmCronContext] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -31,6 +37,8 @@ export function usePolicy(): PolicyController {
         setPolicy(value);
         setPrivacyMode(value.privacy_mode || value.privacy_policy || "llm");
         setUnknownTools(value.unknown_tools || "gate");
+        setLlmUserContext(value.llm_user_context !== false);
+        setLlmCronContext(value.llm_cron_context === true);
       })
       .catch((err: unknown) => {
         setError(String((err as Error)?.message || err));
@@ -52,6 +60,10 @@ export function usePolicy(): PolicyController {
     setPrivacyMode,
     unknownTools,
     setUnknownTools,
+    llmUserContext,
+    setLlmUserContext,
+    llmCronContext,
+    setLlmCronContext,
     load,
   };
 }

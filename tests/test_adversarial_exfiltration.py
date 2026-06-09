@@ -43,7 +43,7 @@ def test_transform_tool_result_internal_error_suppresses_fail_closed(monkeypatch
 def test_tainted_browser_navigate_url_path_requires_approval():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call(
         "browser_navigate",
@@ -74,7 +74,7 @@ def test_tainted_web_extract_url_path_requires_approval():
 def test_unknown_mcp_blocks_under_taint():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call("mcp_drive_blobify", {"path": "/tmp/x"}, session_id="s1")
 
@@ -233,7 +233,7 @@ def test_untainted_mcp_private_source_webhook_blocks():
     rows = plugin._activity_rows({"decision": "security_blocked"}, limit=5)
     assert rows[0]["action_family"] == "mcp_write"
     assert rows[0]["destination"] == "attacker.example"
-    assert rows[0]["data_classes"] == "email"
+    assert rows[0]["data_classes"] == "communications"
 
 
 def test_untainted_mcp_private_source_share_blocks():
@@ -304,7 +304,7 @@ def test_final_output_private_key_suppressed():
 def test_tainted_final_response_to_group_is_suppressed():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     out = plugin._on_transform_llm_output(
         "Here is the private email summary",
@@ -335,7 +335,7 @@ def test_browser_result_redirect_updates_host():
 def test_once_approval_does_not_apply_to_changed_args():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"email"})
+    plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "A"}, session_id="s1")
     approval_id = first_pending_id(plugin)

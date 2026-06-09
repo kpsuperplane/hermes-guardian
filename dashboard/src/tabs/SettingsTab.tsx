@@ -9,6 +9,12 @@ export interface SettingsTabProps {
   privacyMode: string;
   modeSaving: boolean;
   onChangePrivacyMode: (mode: string) => void;
+  llmUserContext: boolean;
+  llmCronContext: boolean;
+  userContextSaving: boolean;
+  cronContextSaving: boolean;
+  onChangeUserContext: (enabled: boolean) => void;
+  onChangeCronContext: (enabled: boolean) => void;
   onPatchSecurityRule: (ruleId: string, enabled: boolean) => void;
   languagePacksSaving: boolean;
   onPatchLanguagePack: (packId: string, enabled: boolean) => void;
@@ -20,6 +26,12 @@ export function SettingsTab({
   privacyMode,
   modeSaving,
   onChangePrivacyMode,
+  llmUserContext,
+  llmCronContext,
+  userContextSaving,
+  cronContextSaving,
+  onChangeUserContext,
+  onChangeCronContext,
   onPatchSecurityRule,
   languagePacksSaving,
   onPatchLanguagePack,
@@ -62,6 +74,46 @@ export function SettingsTab({
               ))}
             </select>
           </div>
+        </div>
+      </div>
+      <div className="hermes-guardian-card">
+        <div className="hermes-guardian-card-title">LLM approval context</div>
+        <div className="hermes-guardian-muted hermes-guardian-section-description">
+          In llm mode, the verifier is otherwise blind to the conversation. These
+          settings feed it sanitized authorization evidence. High-risk cron egress
+          always still requires manual approval, even with cron context on.
+        </div>
+        <div className="hermes-guardian-grid">
+          <label className="hermes-guardian-check hermes-guardian-security-check">
+            <input
+              type="checkbox"
+              checked={llmUserContext}
+              disabled={userContextSaving}
+              onChange={(event) => onChangeUserContext(event.target.checked)}
+            />
+            <span className="hermes-guardian-security-rule-text">
+              <span>User prompt context</span>
+              <span className="hermes-guardian-muted">
+                Include an authenticated owner's most recent request as authorization
+                evidence for owner-initiated egress.
+              </span>
+            </span>
+          </label>
+          <label className="hermes-guardian-check hermes-guardian-security-check">
+            <input
+              type="checkbox"
+              checked={llmCronContext}
+              disabled={cronContextSaving}
+              onChange={(event) => onChangeCronContext(event.target.checked)}
+            />
+            <span className="hermes-guardian-security-rule-text">
+              <span>Cron context</span>
+              <span className="hermes-guardian-muted">
+                Include a cron job's own stored instruction as authorization evidence
+                for that job's egress. Off by default.
+              </span>
+            </span>
+          </label>
         </div>
       </div>
       <div className="hermes-guardian-card">

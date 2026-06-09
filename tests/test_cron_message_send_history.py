@@ -38,7 +38,7 @@ def test_cron_message_send_block_recorded_in_dashboard_history(monkeypatch):
     )
 
     bind_owner(plugin, session_id=cron_session)
-    plugin._taint_session(cron_session, {"email"})
+    plugin._taint_session(cron_session, {"communications"})
 
     result = plugin._on_pre_tool_call(
         "send_message",

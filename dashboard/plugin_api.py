@@ -145,6 +145,9 @@ def _require_dashboard_confirmation(action: str, body: dict[str, Any]) -> None:
     if action == "tool_override" and str(body.get("egress") or "").strip().lower() == "ignore":
         if _confirmation_value(body) != "tool-ignore":
             raise HTTPException(status_code=400, detail="ignore tool override requires confirmation")
+    if action == "llm_cron_context" and _body_bool(body, "enabled"):
+        if _confirmation_value(body) != "cron-context-on":
+            raise HTTPException(status_code=400, detail="enabling cron context requires confirmation")
 
 
 def _json_mutation_result(request: Request, action: str, result: tuple[dict[str, Any], int]) -> JSONResponse:
@@ -245,6 +248,27 @@ async def set_unknown_tools(request: Request, body: dict[str, Any]) -> JSONRespo
         request,
         "unknown_tools",
         _guardian()._dashboard_unknown_tools_mode_action(str(body.get("mode") or "")),
+    )
+
+
+@router.post("/privacy/user-context")
+async def set_user_context(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    return _json_mutation_result(
+        request,
+        "llm_user_context",
+        _guardian()._dashboard_llm_user_context_action(_body_bool(body, "enabled")),
+    )
+
+
+@router.post("/privacy/cron-context")
+async def set_cron_context(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    _require_dashboard_confirmation("llm_cron_context", body)
+    return _json_mutation_result(
+        request,
+        "llm_cron_context",
+        _guardian()._dashboard_llm_cron_context_action(_body_bool(body, "enabled")),
     )
 
 

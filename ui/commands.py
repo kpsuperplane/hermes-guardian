@@ -19,6 +19,8 @@ _GUARDIAN_HELP_LINES = [
     "/guardian rule move <rule_id> before|after <other_rule_id>",
     "/guardian privacy mode strict|read-only|llm|off",
     "/guardian privacy unknown-tools gate|allow",
+    "/guardian privacy user-context on|off",
+    "/guardian privacy cron-context on|off",
     "/guardian tools",
     "/guardian tool set <match> [taints=a+b] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]",
     "/guardian tool delete <match_or_id>",
@@ -285,7 +287,7 @@ def _guardian_debug_command(tokens: list[str]) -> str:
         return (
             "Usage: /guardian debug action=<family> destination=<dest> "
             "classes=<class+class> [tool=<tool_name>]\n"
-            "Example: /guardian debug action=mcp_write destination=mcp:notion classes=email"
+            "Example: /guardian debug action=mcp_write destination=mcp:notion classes=communications"
         )
     result = _debug_decision(params)
     classes = ",".join(result["data_classes"]) or "none"
@@ -357,9 +359,23 @@ def _handle_guardian_command(raw_args: str = "") -> str:
     return "Invalid /guardian command. Try /guardian help."
 
 
+def _parse_on_off(token: str) -> bool | None:
+    text = str(token or "").strip().lower()
+    if text in {"on", "true", "yes", "enable", "enabled", "1"}:
+        return True
+    if text in {"off", "false", "no", "disable", "disabled", "0"}:
+        return False
+    return None
+
+
 def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
     if len(tokens) == 1:
-        return f"Privacy mode: {_privacy_policy()}\nUnknown-tools mode: {_unknown_tools_mode()}"
+        return (
+            f"Privacy mode: {_privacy_policy()}\n"
+            f"Unknown-tools mode: {_unknown_tools_mode()}\n"
+            f"LLM user-prompt context: {'on' if _llm_user_context_enabled() else 'off'}\n"
+            f"LLM cron context: {'on' if _llm_cron_context_enabled() else 'off'}"
+        )
     if len(tokens) == 3 and tokens[1].lower() == "mode":
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
@@ -370,9 +386,27 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
             return _global_mutation_denied_message()
         ok, message = _set_unknown_tools_mode(tokens[2])
         return message
+    if len(tokens) == 3 and tokens[1].lower() in {"user-context", "user_context"}:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        enabled = _parse_on_off(tokens[2])
+        if enabled is None:
+            return "Usage: /guardian privacy user-context on|off"
+        ok, message = _set_llm_user_context(enabled)
+        return message
+    if len(tokens) == 3 and tokens[1].lower() in {"cron-context", "cron_context"}:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        enabled = _parse_on_off(tokens[2])
+        if enabled is None:
+            return "Usage: /guardian privacy cron-context on|off"
+        ok, message = _set_llm_cron_context(enabled)
+        return message
     return (
         "Usage: /guardian privacy mode strict|read-only|llm|off | "
-        "/guardian privacy unknown-tools gate|allow"
+        "/guardian privacy unknown-tools gate|allow | "
+        "/guardian privacy user-context on|off | "
+        "/guardian privacy cron-context on|off"
     )
 
 
@@ -644,6 +678,8 @@ def _guardian_status(owner_hash: str) -> str:
         "Hermes Guardian status",
         f"Privacy mode: {_privacy_policy()}",
         f"Unknown tools: {_unknown_tools_mode()} ({len(_tool_overrides())} override(s))",
+        f"LLM context: user-prompt {'on' if _llm_user_context_enabled() else 'off'}, "
+        f"cron {'on' if _llm_cron_context_enabled() else 'off'}",
         f"Security rules: {len(_SECURITY_RULE_IDS) - len(disabled_security)} enabled, {len(disabled_security)} disabled",
         f"Language packs: {', '.join(pack.get('id', '') for pack in enabled_language_packs) or 'none'}",
         f"Taint classes: {', '.join(taint) if taint else 'none'}",
