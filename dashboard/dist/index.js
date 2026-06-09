@@ -916,7 +916,6 @@
               h("div", { className: "hermes-guardian-card-title" }, "Tool overrides"),
               h("div", { className: "hermes-guardian-muted" }, "Declare how Guardian treats specific tools: which private classes they read (taints) and whether they are a safe non-sink (No egress), forced to gate, or a specific action family. Overrides never bypass the Security Module."),
             ),
-            h(Button, { onClick: openCreateOverride }, "New override"),
           ),
           toolOverrides.length ? h("div", { className: "hermes-guardian-grid" },
             toolOverrides.map(function (override) {
@@ -946,6 +945,9 @@
               );
             }),
           ) : h("div", { className: "hermes-guardian-muted" }, "No tool overrides. Unrecognized tools follow the unknown-tools mode above."),
+          h("div", { className: "hermes-guardian-actions", style: { marginTop: "0.75rem" } },
+            h(Button, { onClick: openCreateOverride }, "New override"),
+          ),
         ),
       );
     }
