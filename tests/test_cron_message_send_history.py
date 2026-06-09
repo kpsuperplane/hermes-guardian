@@ -20,6 +20,11 @@ def test_cron_message_send_block_recorded_in_dashboard_history(monkeypatch):
     assert plugin._privacy_policy() == "llm"
     plugin._PLUGIN_LLM = None  # -> "LLM verifier unavailable"
 
+    # Pin the notify target so the test is hermetic: the default "origin"
+    # policy resolves targets from the host's ~/.hermes/cron/jobs.json, which
+    # is absent on CI runners (no target -> no notification thread).
+    monkeypatch.setenv("HERMES_GUARDIAN_CRON_NOTIFY_TO", "telegram:guardian-test")
+
     sent: list[tuple[str, str]] = []
     monkeypatch.setattr(
         plugin._CORE,
