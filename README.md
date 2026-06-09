@@ -1,4 +1,5 @@
 # Hermes Guardian
+Security and privacy policy controls for personal Hermes agents.
 
 [![Tests](https://github.com/kpsuperplane/hermes-guardian/actions/workflows/tests.yml/badge.svg)](https://github.com/kpsuperplane/hermes-guardian/actions/workflows/tests.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
@@ -7,7 +8,6 @@
 <img width="350" src="https://github.com/user-attachments/assets/7629a26c-5a44-4266-83e8-bd5c931b78d6" />
 
 
-Security and privacy policy controls for personal Hermes agents.
 
 Hermes Guardian is a user plugin for
 [Hermes Agent](https://github.com/NousResearch/hermes-agent). It protects the
