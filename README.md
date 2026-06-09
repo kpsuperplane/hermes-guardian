@@ -97,22 +97,6 @@ hermes-guardian
 Guardian registers a `/guardian` slash command and an integrated dashboard tab
 at `/guardian`.
 
-## Features
-
-- Block or suppress credentials, OTPs, reset links, magic links, account
-  verification links, security alerts, private keys, bearer tokens, JWTs,
-  cookies, and known upstream redaction placeholders.
-- Taint sessions after private sources are read, including email, contacts,
-  memory, documents, calendar, local system output, and private browser input.
-- Classify common Hermes egress families such as messaging, MCP writes, browser
-  typing/submission, terminal execution, local writes, cron writes, web/API
-  calls, model APIs, delegated tasks, and final responses.
-- Store sanitized activity rows and pending approvals in local SQLite.
-- Bind one-time approvals to an HMAC fingerprint of the exact tool arguments.
-- Provide slash commands, CLI maintenance commands, and a Hermes dashboard tab.
-- Send sanitized cron failure notifications at most once per cron run.
-- Use declarative multilingual language packs for semantic security detection.
-
 ## How It Works
 
 Guardian's core policy is intentionally small:
