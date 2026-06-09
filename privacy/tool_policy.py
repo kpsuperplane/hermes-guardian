@@ -682,6 +682,38 @@ def _is_browser_console_eval(args: Any) -> bool:
     return isinstance(args, dict) and args.get("expression") is not None
 
 
+def _browser_console_is_provable_read(args: Any) -> bool:
+    """True only when a console eval is provably a side-effect-free read.
+
+    A console eval whose expression only reads the DOM returns its result to the
+    agent and nothing more — the agent can already read page content through the
+    ungated read tools, so such a read is not egress and need not be gated or sent
+    to the LLM verifier. This is an allowlist, not a denylist: it returns True only
+    when every operation is recognized as a read, so it is fail-closed — anything it
+    cannot prove read-only (a network sink, navigation, any page/DOM write, a
+    credential-store access, dynamic code, an unknown or mutating call, obfuscation)
+    falls through to gating and the LLM verifier. The verifier is itself instructed
+    to allow genuine reads, so a conservative miss here only costs an extra check.
+    """
+    if not isinstance(args, dict):
+        return False
+    expression = str(args.get("expression") or "")
+    if not expression:
+        return False
+    # Any sink or side-effecting/credential construct disqualifies the read.
+    if _NETWORK_SINK_RE.search(expression) or _BROWSER_SIDE_EFFECT_RE.search(expression):
+        return False
+    # Every call site must be a recognized pure-read accessor (control keywords such
+    # as ``if (`` / ``return (`` and nameless invocations like an IIFE are not calls).
+    for match in _BROWSER_CALL_NAME_RE.finditer(expression):
+        name = match.group(1).lower()
+        if name in _BROWSER_NON_CALL_KEYWORDS:
+            continue
+        if name not in _BROWSER_SAFE_READ_CALL_NAMES:
+            return False
+    return True
+
+
 def _read_arg_classes(args: Any) -> set[str]:
     return _classes_from_content(args)
 
@@ -830,7 +862,9 @@ def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> To
             lambda: ToolAction(lower, _browser_host(session_id)),
         ),
         (
-            lower == "browser_console" and _is_browser_console_eval(args),
+            lower == "browser_console"
+            and _is_browser_console_eval(args)
+            and not _browser_console_is_provable_read(args),
             lambda: ToolAction("browser_console", _browser_host(session_id)),
         ),
         (
@@ -893,7 +927,11 @@ def _read_activity_for_tool(tool_name: str, args: Any, session_id: str | None = 
     lower = str(tool_name or "").lower()
     if lower == "send_message" and _arg_action(args, "send") == "list":
         return ("message_list", "messaging")
-    if lower == "browser_console" and not _is_browser_console_eval(args):
+    if lower == "browser_console" and (
+        not _is_browser_console_eval(args) or _browser_console_is_provable_read(args)
+    ):
+        # A console eval that is provably a side-effect-free read only reads the DOM
+        # back to the agent; log it as a read rather than gating it as egress.
         return ("browser_read", _browser_host(session_id))
     if not _WEB_READ_TOOL_RE.match(lower):
         return None

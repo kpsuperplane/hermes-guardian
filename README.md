@@ -31,8 +31,8 @@ Guardian adds two policy layers:
   OTPs, magic links, password resets, security alerts, sensitive account links,
   and similar access-sensitive content.
 - **Privacy Module**: session taint, egress classification, privacy modes,
-  optional declassification rules, and metadata-only activity history for
-  private data flows.
+  optional declassification rules, and a sanitized, largely metadata activity
+  history for private data flows.
 
   
 ## Why Guardian?
@@ -266,8 +266,9 @@ model visibility:
 - The verdict rationale is sanitized (emails, phones, tokens redacted) before it is
   shown or written to activity/approval storage, and the verifier is prompted to
   keep it class-level.
-- Persistent state (activity, approvals, dashboard, notifications) stays
-  metadata-only.
+- Persistent state (activity, approvals, dashboard, notifications) is otherwise
+  metadata-only; the sanitized rationale above is the one free-text field, and
+  its redaction is best-effort rather than structured (see Limitations).
 
 This assumes the verifier LLM shares the agent's trust boundary. Since you choose
 which LLMs Hermes connects to, that assumption is yours to own; enabling `llm` mode
@@ -505,8 +506,12 @@ matching copied phrase, Guardian can narrow the data classes in scope to the
 matched source classes plus any private-looking argument classes. If there is no
 match, if the text is too short, if it is paraphrased, or if provenance is
 missing, Guardian falls back to the full session taint. Raw source text is not
-stored in provenance, activity rows, approval records, or LLM verifier input,
-and security-sensitive strings are not indexed.
+stored in provenance, activity rows, or approval records, and the provenance
+fingerprints and their source text are never sent to the verifier either — only
+the source-class labels derived from a match are. (The verifier does separately
+receive the real action payload in `llm` mode; see the Privacy Modes section.
+That payload is the live call's arguments, not stored provenance.)
+Security-sensitive strings are not indexed.
 
 ## Egress Surfaces
 
@@ -517,7 +522,8 @@ These action families normally require approval when private data is in scope:
 - MCP read/search/query tools when arguments send query text or request bodies
   to a remote MCP service.
 - Browser typing, submission, dialogs, and raw CDP calls.
-- Terminal, shell, code execution, browser console, and computer-use actions.
+- Terminal, shell, code execution, computer-use actions, and browser console
+  evals that are not provably side-effect-free reads (see below).
 - Local writes, cron writes, kanban writes, and Home Assistant writes.
 - Web/search/navigation/API calls whose arguments can carry private data.
 - Model/media tools that may send context to another model or generation
@@ -529,6 +535,21 @@ These action families normally require approval when private data is in scope:
 Read-only browsing and search are allowed only when arguments do not send
 private-looking or tainted session-derived text outward. Content returned from
 those tools may still taint the session.
+
+A `browser_console` eval is classified by what its expression does. Reading page
+state — DOM nodes, form field values, page text, attributes — and returning it to
+the agent is a read, not an export: the agent already has read access to the page
+through the ungated read tools, and any later attempt to send that data onward is
+itself independently gated. Guardian recognizes such an eval as a read through a
+fail-closed allowlist (every operation must be a known pure-read accessor) and
+does not gate it. An eval that writes into the page (assigning to DOM/element
+properties, inserting nodes, setting attributes), submits a form, navigates,
+touches a credential store (cookies, web storage), runs dynamic code, or sends to
+a network sink (`fetch`/XHR/`sendBeacon`/`WebSocket`) is treated as egress —
+writing tainted data into an attacker-controlled page is an exfiltration channel
+even with no network call in the eval. Anything the allowlist cannot prove
+read-only falls through to normal gating (and, in `llm` mode, to a verifier that
+is likewise instructed to allow genuine reads).
 
 ## Tool Classification And Overrides
 
@@ -706,10 +727,11 @@ HERMES_GUARDIAN_DASHBOARD_MUTATIONS=0
 If `HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN` is set, mutation requests must
 include that value in `x-hermes-guardian-token`.
 
-The dashboard stores and displays sanitized metadata only. It does not store
-raw tool arguments, email bodies, typed text, tokenized URLs, file contents, or
-message content. Recipient context is displayed as a stable pseudonymous
-`recipient_<hash>` identity rather than the raw recipient value.
+The dashboard stores and displays sanitized metadata, plus the sanitized
+verdict rationale (a best-effort-redacted, length-capped free-text string). It
+does not store raw tool arguments, email bodies, typed text, tokenized URLs,
+file contents, or message content. Recipient context is displayed as a stable
+pseudonymous `recipient_<hash>` identity rather than the raw recipient value.
 
 ## Language Packs
 
@@ -765,9 +787,10 @@ HERMES_GUARDIAN_HISTORY_TIMEZONE=America/Los_Angeles
 Set a retention value to `0` to disable that specific limit. Set
 `HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS=0` to disable display grouping.
 
-Persistent state stores metadata only. If rules or activity state cannot be
-read or written, security-sensitive filtering still runs and private egress
-from tainted sessions fails closed.
+Persistent state stores metadata, plus the sanitized verdict rationale (a
+best-effort-redacted, length-capped free-text string; see Limitations). If
+rules or activity state cannot be read or written, security-sensitive filtering
+still runs and private egress from tainted sessions fails closed.
 
 ## Cron Notifications
 
@@ -1010,6 +1033,11 @@ systemctl restart hermes-gateway.service
 - Session taint is intentionally coarse. Volatile provenance can narrow copied
   phrase classes, but it is not a complete dependency proof and never makes
   missing provenance safe.
+- The persisted verdict rationale is a sanitized, length-capped free-text
+  string, not structured metadata. Redaction of emails, phones, and
+  credential-shaped tokens is best-effort, so a paraphrased private detail that
+  is none of those could persist in activity and approval storage for the
+  retention window.
 - Tool classification is heuristic. Unrecognized tools (unknown MCP tools, custom
   integrations, future Hermes tools) are gated conservatively under taint by
   default; declare trusted ones with tool overrides rather than disabling the

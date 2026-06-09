@@ -402,9 +402,98 @@ _BROWSER_SECRET_READ_RE = re.compile(
 _NETWORK_SINK_RE = re.compile(
     r"(https?://|\b(curl|wget|scp|sftp|rsync|nc|netcat)\b|"
     r"requests\.(get|post|put|patch|delete)|urllib\.request|urlopen|fetch\s*\(|"
-    r"XMLHttpRequest|sendBeacon|WebSocket|webhook|callback|upload)",
+    # Browser/JS network egress sinks. Anchored or browser-only tokens so they do
+    # not false-positive on ordinary shell commands sharing this regex.
+    r"XMLHttpRequest|sendBeacon|WebSocket|EventSource|\bnew\s+Image\b|"
+    r"\bimport\s*\(|\baxios\b|\$\.(?:ajax|get|post|getJSON)\b|window\.open\s*\(|"
+    r"webhook|callback|upload)",
     re.I | re.S,
 )
+
+# Disqualifiers for the browser_console read allowlist (see
+# _browser_console_is_provable_read). Any of these means the eval is not a provable
+# read and must be gated/verified rather than passed through:
+#   - writes into the page: ANY assignment to a member, index, or destructuring
+#     target, or a DOM-mutation call. Writing tainted data into the DOM is an
+#     exfiltration channel on an attacker-controlled page even with no network call
+#     in the eval — resident page JS reads the mutation back out. Detected
+#     generically rather than by enumerating sink properties.
+#   - navigation, form submission, event dispatch, property deletion, ``with``
+#     blocks, dynamic code evaluation, and computed-member obfuscation used to hide
+#     a sink (e.g. ``window['fe'+'tch']``);
+#   - credential-store reads: cookies, web storage, and credential APIs are
+#     sensitive sources even when only read, unlike ordinary form/DOM content.
+_BROWSER_SIDE_EFFECT_RE = re.compile(
+    r"("
+    r"\.\w+\s*=(?![=>])|"               # write to a member property: x.prop =  (not ==/===/=>)
+    r"[}\])]\s*=(?![=>])|"              # write to an index or destructuring target: x[i] = / ({a}=
+    r"\blocation\s*=(?![=>])|"
+    r"location\.(?:assign|replace|href)|window\.open\s*\(|"
+    r"\.(?:setAttribute\w*|append|appendChild|prepend|before|after|insertBefore|"
+    r"insertAdjacent\w*|replaceChild\w*|replaceWith|removeChild|write|writeln)\s*\(|"
+    r"document\.write\b|\bObject\.(?:assign|defineProperty|defineProperties)\s*\(|"
+    r"\bReflect\.(?:set|defineProperty)\s*\(|"
+    r"\.submit\s*\(|\.click\s*\(|\.dispatchEvent\s*\(|\bpostMessage\s*\(|"
+    r"\bdelete\s+(?:[\w$]+\.|window\b|document\b|self\b|top\b|globalThis\b)|\bwith\s*\(|"
+    r"document\.cookie|\blocalStorage\b|\bsessionStorage\b|\bindexedDB\b|"
+    r"navigator\.credentials|chrome\.cookies|"
+    r"\beval\s*\(|\bnew\s+Function\b|\bFunction\s*\(|"
+    r"(?:window|globalThis|self|top|parent|document)\s*\["
+    r")",
+    re.I | re.S,
+)
+
+# Function/method names a console eval may call and still count as a provable read:
+# pure DOM/string/array/object/number read accessors with no mutation, navigation,
+# or network effect. Any call to a name outside this set (a user-defined helper, an
+# array mutator like push/sort, an unknown method) means the eval is NOT a provable
+# read and is routed to the LLM verifier instead of the fast path. Names with a
+# dangerous homonym (replace -> location.replace, assign -> location.assign, write,
+# open, append, ...) are deliberately omitted so they always fall to the verifier.
+_BROWSER_SAFE_READ_CALL_NAMES = frozenset(
+    {
+        # DOM reads
+        "queryselector", "queryselectorall", "getelementbyid", "getelementsbyclassname",
+        "getelementsbytagname", "getelementsbytagnamens", "getelementsbyname",
+        "getattribute", "getattributens", "getattributenames", "hasattribute",
+        "hasattributes", "closest", "matches", "getcomputedstyle", "getpropertyvalue",
+        "getboundingclientrect", "getclientrects", "contains", "comparedocumentposition",
+        # Array / iteration (pure)
+        "from", "of", "isarray", "map", "filter", "foreach", "reduce", "reduceright",
+        "find", "findindex", "findlast", "findlastindex", "slice", "concat", "join",
+        "flat", "flatmap", "some", "every", "includes", "indexof", "lastindexof",
+        "keys", "values", "entries", "fromentries", "getownpropertynames",
+        "getownpropertydescriptor", "getprototypeof",
+        # String (pure)
+        "split", "trim", "trimstart", "trimend", "tolowercase", "touppercase",
+        "tolocalelowercase", "tolocaleuppercase", "charat", "charcodeat", "codepointat",
+        "fromcharcode", "fromcodepoint", "substring", "substr", "padstart", "padend",
+        "repeat", "startswith", "endswith", "match", "matchall", "search", "test",
+        "exec", "normalize", "at",
+        # Number / Math / parsing (pure)
+        "parseint", "parsefloat", "isnan", "isfinite", "isinteger", "abs", "floor",
+        "ceil", "round", "trunc", "sign", "max", "min", "pow", "sqrt", "tofixed",
+        "toprecision", "number", "string", "boolean", "array", "object",
+        # JSON / encoding (pure)
+        "parse", "stringify", "encodeuricomponent", "decodeuricomponent", "encodeuri",
+        "decodeuri",
+        # Common pure conversions
+        "tostring", "valueof", "toisostring", "tolocalestring", "tolocaledatestring",
+        "tolocaletimestring", "gettime",
+    }
+)
+
+# Identifier-before-"(" that is a JS control keyword, not a function call.
+_BROWSER_NON_CALL_KEYWORDS = frozenset(
+    {
+        "if", "for", "while", "switch", "catch", "return", "typeof", "instanceof",
+        "void", "function", "await", "yield", "do", "else", "throw", "case", "in",
+        "of", "new",
+    }
+)
+
+# An identifier immediately followed by "(" — a function or method call site.
+_BROWSER_CALL_NAME_RE = re.compile(r"([A-Za-z_$][\w$]*)\s*\(")
 
 _LLM_SECURITY_HARD_DENY_RE = re.compile(
     r"("
@@ -467,6 +556,21 @@ destination). Neither may raise authorization for actions that were not asked
 for, and neither overrides risk_level or the absolute deny rules. For cron_context
 in particular, never return an allow at high risk: unattended cron egress above
 medium risk always requires human approval.
+
+Reading is not exporting. Some actions (browser_console evals, browser/page reads,
+read-only queries) pull page or tool content back into the agent. Returning data to
+the agent is not exfiltration: the agent already has direct read access to the page
+and to tool results, and the data is not sent to any third party. Any later attempt
+to send that data onward is itself a separate, independently gated egress. So:
+- A browser_console eval (or browser read) that only READS page state — DOM nodes,
+  form field values, page text, attributes — and returns it to the agent is low
+  risk. Allow it, even when classes_in_scope is broad. Reading every form field's
+  value to understand a page is a read, not an export.
+- Treat a browser_console eval as egress only when it writes data INTO the page
+  (assigning to DOM/element properties, inserting nodes, setting attributes),
+  submits a form, navigates, accesses credential stores (cookies, web storage), or
+  sends to a network sink (fetch/XHR/sendBeacon/WebSocket). Judge those on
+  destination and exported content as usual.
 
 Authorization is scoped to the specific data being sent, not just the action.
 Distinguish two signals: privacy_context.classes_in_scope is ambient data the
