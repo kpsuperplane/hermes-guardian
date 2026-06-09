@@ -2,7 +2,9 @@
 
 ## Abstract
 
-Hermes Guardian is a privacy-aware egress and declassification layer for Hermes Agent. Its central security idea is not prompt-injection detection. Instead, Guardian assumes that untrusted text may influence the language model and places policy enforcement at the point where private information could leave the agent through tools, messages, browser actions, or other mediated outbound channels.
+Hermes Guardian is a privacy-aware egress and declassification layer for Hermes Agent. Its distinctive contribution is the *asset* it protects, not only the mechanism it uses. Credentials, API keys, and most PII have a recognizable signature — they match patterns, which is what scanner, DLP, and secret-detection tools key on. The content a personal agent most needs to read — an email body, a contact list, a calendar, a Notion page — has no signature; it is private only because of where it came from. Guardian treats this *provenance-private* content as its primary protected asset, tracking it by origin so that data with no detectable shape is still governed at egress.
+
+Its central security idea is not prompt-injection detection. Instead, Guardian assumes that untrusted text may influence the language model and places policy enforcement at the point where private information could leave the agent through tools, messages, browser actions, or other mediated outbound channels.
 
 In this model, Hermes provides the lower-level runtime controls: sandboxing, credential scoping, private-network protections, gateway authorization, dangerous-command checks, and other hygiene mechanisms. Guardian adds a semantic information-flow layer above those controls: it tracks when private context has entered a session, classifies outbound actions, and blocks or approval-gates flows that lack an explicit declassification rule.
 
@@ -26,6 +28,8 @@ That property depends on several assumptions:
 Under those assumptions, Guardian provides a useful confidentiality boundary for mediated tool use. Outside those assumptions, the hard boundary comes from Hermes runtime isolation and the surrounding OS/container/network configuration.
 
 The combined Hermes + Guardian stack is comparable in shape to modern industry agent-security systems: containment and credential minimization below, source/sink or action inspection above, and user approval for ambiguous or sensitive flows. It remains less formal than research systems such as CaMeL, RTBAS, and GAAP, but it is more directly deployable for a general-purpose local personal agent.
+
+What most distinguishes Guardian among practical, local-first, default-configured personal-agent guards is the asset it makes primary. Pattern-based tools — DLP, PII and secret scanners, CodeShield — protect signature-detectable data; they are structurally blind to content whose only marker of privacy is its provenance, because there is no pattern for them to match. Guardian's source-based taint protects that provenance-private content by origin, which is why its data classes are email, contacts, calendar, and documents rather than secret patterns: a different protected asset, not a weaker secret scanner. Two caveats keep this calibrated. The goal is an instantiation, not an invention — the GAAP / RTBAS / contextual-integrity lineage already targets personal-data confidentiality, so Guardian is its deployable, default form rather than a new claim about what to protect. And other tools can express non-credential data-flow rules: Invariant Guardrails, for example, can encode the email `get_inbox -> send_email` shape, but only given user-authored flow rules and a proxy deployment with a telemetry path. Guardian's narrower claim is that it makes provenance-private personal content the default protected asset, locally and without authored flow rules.
 
 ## Background: the agent exfiltration problem
 
@@ -443,7 +447,7 @@ Pipelock (by PipeLab) is an Apache-2.0 agent firewall distributed as a single Go
 | Enforcement point | Network boundary between agent and proxy | Hermes hook layer above tool dispatch |
 | Layer | Lower-layer containment | Upper-layer information-flow policy |
 
-Pipelock directly addresses the same-call source-and-sink exfiltration shape that Guardian explicitly defers to the host runtime (see "Same-call source and sink"). It is best read as a complementary lower layer — a concrete implementation of the network-isolation assumption Guardian depends on — not a substitute for Guardian's semantic declassification, which Pipelock does not attempt.
+Pipelock directly addresses the same-call source-and-sink exfiltration shape that Guardian explicitly defers to the host runtime (see "Same-call source and sink"). It is best read as a complementary lower layer — a concrete implementation of the network-isolation assumption Guardian depends on — not a substitute for Guardian's semantic declassification, which Pipelock does not attempt. Its DLP boundary, moreover, keys on credential *patterns*: it can catch a secret crossing the proxy by its signature, but an email body or contact list crossing the same boundary has no signature to match. That provenance-private content — private by origin rather than by shape — is exactly what Guardian's source-based taint governs and what a pattern-based DLP is structurally blind to.
 
 ### LLM Guard
 
@@ -456,7 +460,7 @@ Protect AI's LLM Guard is an MIT-licensed, self-hosted toolkit of roughly 35 inp
 | Flow enforcement | None; detection and sanitization only | Blocks or approval-gates classified egress under taint |
 | Locality | Local, self-hosted, offline-capable | Local-first, in-process |
 
-LLM Guard and Guardian share the local-first axis but sit on opposite ends of the detection-versus-enforcement axis. LLM Guard's scanner breadth exceeds Guardian's deterministic and language-pack detectors, and the two are composable: scanners as pre-ingestion hygiene, Guardian as post-ingestion flow control. Neither replaces the other.
+LLM Guard and Guardian share the local-first axis but sit on opposite ends of the detection-versus-enforcement axis. LLM Guard's scanner breadth exceeds Guardian's deterministic and language-pack detectors, and the two are composable: scanners as pre-ingestion hygiene, Guardian as post-ingestion flow control. Neither replaces the other. Crucially, LLM Guard's PII and secret scanners detect content by signature — patterns for keys, tokens, and recognizable PII. Content with no signature, such as an email body or a calendar's contents, is invisible to them; it is private only by provenance. Guardian protects exactly that class by origin, which is the complementary half that a per-message scanner cannot reach.
 
 ### OpenClaw PRISM
 
@@ -550,8 +554,8 @@ The two layers are complementary: low-level confinement controls capabilities; G
 | Hermes + Guardian | Containment below, semantic policy above | Medium to medium-high for mediated flows | Medium-high | Configuration dependence and lack of formal noninterference |
 | OpenAI / Anthropic / Microsoft managed stacks | Product-level sandboxing, runtime inspection, source/sink controls, governance | Medium | High | Lower transparency; platform-dependent details |
 | Invariant Guardrails / Gateway | DSL flow rules over a proxy trace, plus MCP scanning and trace viz | Medium for stated flows | High | Not local-only; remote-scan telemetry path |
-| Pipelock | Capability separation: secrets and network split across processes | Medium-high for the same-call case | Medium-high | No semantic declassification; structural-only |
-| LLM Guard | ~35 local input/output scanners | Low | High | Detection/sanitization only; no flow enforcement |
+| Pipelock | Capability separation: secrets and network split across processes | Medium-high for the same-call case | Medium-high | No semantic declassification; DLP keys on credential signatures, not provenance |
+| LLM Guard | ~35 local input/output scanners | Low | High | Detection/sanitization only, signature-based; blind to provenance-private content |
 | OpenClaw PRISM | In-process risk accumulation plus policy-enforced restrictions | Medium for stated model | Medium | Research maturity; broad scope over deep confidentiality proof |
 | CaMeL / RTBAS / GAAP | Formal or semi-formal control/data-flow or IFC architecture | High in stated model | Lower today | General-purpose product deployability |
 | OS sandbox + formal IFC + contextual policy | Hard boundary plus precise flow control | Highest | Low today | Complexity and usability |
@@ -561,6 +565,8 @@ The two layers are complementary: low-level confinement controls capabilities; G
 Guardian is accurately described as:
 
 > A privacy-aware egress and declassification layer for Hermes Agent. It tracks private context entering a session and blocks or approval-gates classified outbound actions through Hermes-mediated tools. It complements Hermes sandboxing, credential scoping, SSRF protection, gateway authorization, and dangerous-command approval.
+
+Its primary protected asset is provenance-private personal content — data that is confidential because of where it came from rather than because it matches a sensitive pattern — which is the half of the problem that signature-based scanners and DLP cannot see.
 
 Guardian is not accurately described as a complete prompt-injection solution or a proof of noninterference. It reduces prompt-injection data-exfiltration risk by enforcing a policy boundary at outbound tool use, under the assumptions that relevant actions are mediated and the Hermes runtime is appropriately constrained.
 

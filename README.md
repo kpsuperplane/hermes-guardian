@@ -7,10 +7,20 @@
 Security and privacy policy controls for personal Hermes agents.
 
 Hermes Guardian is a user plugin for
-[Hermes Agent](https://github.com/NousResearch/hermes-agent). It lets an agent
-read useful private context, such as email, contacts, documents, memory,
-calendar events, browser state, and local system output, while controlling where
-that context can leave through Hermes-mediated tools.
+[Hermes Agent](https://github.com/NousResearch/hermes-agent). It protects the
+private content a personal agent reads — an email body, a contact list, calendar
+entries, a Notion page, memory, and local system output — and controls where
+that content can leave through Hermes-mediated tools.
+
+What makes that content hard to protect is that most of it has no signature. A
+credential, API key, or most PII matches a recognizable pattern, which is exactly
+what scanner, DLP, and secret-detection tools key on. An email body, a friend
+list, a meeting's attendees, or a document does not match any pattern — it is
+private only because of *where it came from*, not because of how it is shaped.
+Pattern-based tools are structurally blind to content with no signature. Guardian
+protects this *provenance-private* content by its origin: once the agent reads a
+private source, the session is tainted regardless of what the content looks like,
+and outbound actions are gated accordingly.
 
 Guardian adds two policy layers:
 
@@ -23,9 +33,34 @@ Guardian adds two policy layers:
   
 ## Why Guardian?
 
-Modern agents need private context to be useful. They also have many outbound
-surfaces: messages, MCP writes, browser forms, URLs, search queries, terminal
-commands, code execution, model APIs, cron jobs, and final responses.
+Modern agents need private context to be useful, and the most useful context is
+also the least pattern-detectable. Credentials and secrets have signatures;
+scanner and DLP tools find them by shape. But the things a personal agent
+actually reads — your inbox, your contacts, your calendar, your notes — have no
+signature. They are private by *provenance*: the only thing that marks an email
+body as yours is that it came from your inbox. A tool that classifies by content
+pattern cannot see provenance-private data at all, because there is no pattern to
+match. Guardian's primary protected asset is exactly this content, tracked by
+origin rather than by shape.
+
+Among practical, local-first, default-configured personal-agent guards, treating
+provenance-private personal content as the primary protected asset is
+distinctive. Two honest caveats keep that claim calibrated:
+
+- The goal is not conceptually new. Guardian descends from a privacy-research
+  lineage — GAAP, RTBAS, and contextual integrity — that already targets
+  personal-data confidentiality. Guardian is the deployable, default
+  instantiation of that goal for an existing agent runtime, not a new idea about
+  what to protect.
+- Other tools *can* express non-credential data-flow rules. Invariant
+  Guardrails, for instance, can encode exactly the email `get_inbox -> send_email`
+  shape — but it requires user-authored flow rules and runs as an enterprise
+  proxy with a telemetry path. Guardian applies that kind of protection by
+  default, by provenance, and locally.
+
+Agents also have many outbound surfaces: messages, MCP writes, browser forms,
+URLs, search queries, terminal commands, code execution, model APIs, cron jobs,
+and final responses.
 
 Guardian treats those surfaces as egress. Once a session has observed private
 data, the active privacy mode evaluates classified outbound actions before they
@@ -302,6 +337,14 @@ status` and the dashboard policy snapshot surface a risk banner when
 `intrinsic_exfiltration` is disabled.
 
 ## Data Classes
+
+Guardian's data classes are categories of *provenance-private* content — content
+that is private because of where it came from, not because it matches a sensitive
+pattern. This is why the classes are email, contacts, calendar, and documents
+rather than credential or secret formats: Guardian protects a different asset
+than a secret scanner does. (Access-sensitive material that *does* have a
+signature — credentials, OTPs, tokens — is handled separately and more strictly
+by the Security Module.)
 
 Guardian tracks private context with these data classes:
 
