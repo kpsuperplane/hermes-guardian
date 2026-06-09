@@ -310,38 +310,105 @@ def _validated_llm_security_verdict(parsed: Any) -> dict[str, str]:
     }
 
 
+def _deny_cache_key(shape: dict[str, Any]) -> str:
+    return "|".join([
+        _normalize_session_id(shape.get("session_id")),
+        str(shape.get("owner_hash") or ""),
+        str(shape.get("fingerprint") or ""),
+    ])
+
+
+def _cached_deny_verdict(shape: dict[str, Any]) -> dict[str, str] | None:
+    """Return a recent cached DENY verdict for this exact action, if still fresh.
+
+    Only denials are cached, so a stale hit can never become a false allow; at
+    worst it re-denies an action that just became authorized, which self-corrects
+    after the short TTL.
+    """
+    key = _deny_cache_key(shape)
+    with _LOCK:
+        entry = _LLM_DENY_VERDICT_CACHE.get(key)
+        if not entry:
+            return None
+        timestamp, verdict = entry
+        if _now() - timestamp > _LLM_DENY_VERDICT_TTL_SECONDS:
+            _LLM_DENY_VERDICT_CACHE.pop(key, None)
+            return None
+        return dict(verdict)
+
+
+def _store_deny_verdict(shape: dict[str, Any], verdict: dict[str, str]) -> None:
+    # Never cache an allow (would risk a false allow on context change) or a
+    # transient fail-closed/unavailable verdict (risk_level "unknown").
+    if verdict.get("outcome") == "allow" or verdict.get("risk_level") == "unknown":
+        return
+    with _LOCK:
+        if len(_LLM_DENY_VERDICT_CACHE) > 512:
+            cutoff = _now() - _LLM_DENY_VERDICT_TTL_SECONDS
+            for cache_key, (timestamp, _v) in list(_LLM_DENY_VERDICT_CACHE.items()):
+                if timestamp < cutoff:
+                    _LLM_DENY_VERDICT_CACHE.pop(cache_key, None)
+        _LLM_DENY_VERDICT_CACHE[_deny_cache_key(shape)] = (_now(), dict(verdict))
+
+
+def _llm_verifier_unavailable_verdict(rationale: str) -> dict[str, str]:
+    return {
+        "outcome": "deny",
+        "risk_level": "unknown",
+        "authorization_level": "unknown",
+        "rationale": rationale,
+    }
+
+
 def _llm_security_verdict(shape: dict[str, Any], args: Any) -> dict[str, str]:
     llm = _PLUGIN_LLM
     if llm is None or not hasattr(llm, "complete_structured"):
-        return {
-            "outcome": "deny",
-            "risk_level": "unknown",
-            "authorization_level": "unknown",
-            "rationale": "LLM verifier unavailable",
+        return _llm_verifier_unavailable_verdict("LLM verifier unavailable")
+    _perf_mark_llm_invoked()
+    verifier_model = _llm_verifier_model()
+    input_text = json.dumps(_llm_verdict_input(shape, args), sort_keys=True)
+
+    def _call(use_model: bool) -> Any:
+        kwargs: dict[str, Any] = {
+            "instructions": _LLM_POLICY_INSTRUCTIONS,
+            "input": [{"type": "text", "text": input_text}],
+            "json_schema": _LLM_VERDICT_SCHEMA,
+            "temperature": 0,
+            "max_tokens": 240,
+            "timeout": 20,
+            "purpose": "hermes-guardian.security_llm",
+            "schema_name": "hermes_guardian_verdict",
         }
+        if use_model and verifier_model:
+            kwargs["model"] = verifier_model
+        return llm.complete_structured(**kwargs)
+
     try:
-        result = llm.complete_structured(
-            instructions=_LLM_POLICY_INSTRUCTIONS,
-            input=[{
-                "type": "text",
-                "text": json.dumps(_llm_verdict_input(shape, args), sort_keys=True),
-            }],
-            json_schema=_LLM_VERDICT_SCHEMA,
-            temperature=0,
-            max_tokens=240,
-            timeout=20,
-            purpose="hermes-guardian.security_llm",
-            schema_name="hermes_guardian_verdict",
-        )
+        result = _call(use_model=True)
+    except Exception as exc:
+        if verifier_model:
+            # The model override can be rejected (e.g. allow_model_override is not
+            # granted in config) or the fast model may be unavailable. Never
+            # fail-close the verifier on that: retry once on the default model so a
+            # misconfiguration degrades to "slower", not "deny everything".
+            logger.warning(
+                "%s: verifier model override %r failed (%s); retrying on default model",
+                _PLUGIN_NAME, verifier_model, exc,
+            )
+            try:
+                result = _call(use_model=False)
+            except Exception as exc2:
+                logger.warning("%s: LLM security verifier failed closed: %s", _PLUGIN_NAME, exc2)
+                return _llm_verifier_unavailable_verdict("LLM verifier failed closed")
+        else:
+            logger.warning("%s: LLM security verifier failed closed: %s", _PLUGIN_NAME, exc)
+            return _llm_verifier_unavailable_verdict("LLM verifier failed closed")
+
+    try:
         parsed = getattr(result, "parsed", None)
         if parsed is None and getattr(result, "text", ""):
             parsed = json.loads(str(result.text))
         return _validated_llm_security_verdict(parsed)
     except Exception as exc:
         logger.warning("%s: LLM security verifier failed closed: %s", _PLUGIN_NAME, exc)
-        return {
-            "outcome": "deny",
-            "risk_level": "unknown",
-            "authorization_level": "unknown",
-            "rationale": "LLM verifier failed closed",
-        }
+        return _llm_verifier_unavailable_verdict("LLM verifier failed closed")

@@ -125,6 +125,8 @@ export interface Policy {
   unknown_tools?: string;
   llm_user_context?: boolean;
   llm_cron_context?: boolean;
+  llm_verifier_model?: string;
+  llm_verifier_model_options?: string[];
   activity_max_rows?: number;
   activity_retention_days?: number;
   activity_group_seconds?: number;
@@ -197,4 +199,36 @@ export interface Toast {
   id: string;
   message: string;
   variant: ToastVariant;
+}
+
+export interface PerfStats {
+  count: number;
+  avg_ms: number;
+  p50_ms: number;
+  p95_ms: number;
+  max_ms: number;
+  total_ms: number;
+}
+
+export interface PerfHook extends PerfStats {
+  hook: string;
+  label: string;
+}
+
+export interface PerfSample {
+  ts: number;
+  hook: string;
+  tool_name: string;
+  duration_ms: number;
+  llm_invoked: boolean;
+  blocked: boolean;
+}
+
+export interface Performance {
+  overall: PerfStats;
+  by_hook: PerfHook[];
+  llm: PerfStats;
+  deterministic: PerfStats;
+  samples: PerfSample[];
+  window_size: number;
 }

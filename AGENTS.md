@@ -191,6 +191,7 @@ the tests/docs are updated accordingly:
     "unknown_tools": "gate",
     "llm_user_context": true,
     "llm_cron_context": false,
+    "llm_verifier_model": "",
     "rules": [],
     "tools": [
       {
@@ -234,16 +235,36 @@ channels. They are normalized by `_config_bool` and exposed through
 `_llm_user_context_enabled` / `_llm_cron_context_enabled` and the
 `_set_llm_user_context` / `_set_llm_cron_context` setters.
 
-Rule mutation helpers must preserve privacy rules, security rule settings, the
-`unknown_tools` mode, the `llm_user_context` / `llm_cron_context` flags, and
-`tools` overrides. This is covered by `tests/test_security_rules_config.py`,
-`tests/test_tool_overrides.py`, and `tests/test_llm_context_settings.py`.
+`privacy.llm_verifier_model` (default `""`) optionally pins the llm-mode verifier
+to a faster model than the agent's, passed to `complete_structured(model=...)`.
+Hermes gates per-plugin model selection, so it only takes effect when the operator
+sets `plugins.entries.hermes-guardian.llm.allow_model_override: true` in
+`config.yaml`. `_llm_security_verdict` is fail-safe: if the override is rejected or
+the model errors, it retries once on the default model rather than failing closed.
+The dashboard renders this as a dropdown: `_verifier_model_options` best-effort
+reads the operator's `allowed_models` for this plugin from `$HERMES_HOME/config.yaml`
+(optional PyYAML, guarded; only model strings are extracted, nothing is stored) and
+the snapshot exposes them as `llm_verifier_model_options`. No grant -> no options.
+Guardian also keeps a short-TTL, deny-only verdict cache (`_LLM_DENY_VERDICT_CACHE`)
+keyed by session+owner+fingerprint; only denials are cached, so a stale hit can
+never become a false allow.
 
-`activity.sqlite3` has two logical roles:
+Rule mutation helpers must preserve privacy rules, security rule settings, the
+`unknown_tools` mode, the `llm_user_context` / `llm_cron_context` flags,
+`llm_verifier_model`, and `tools` overrides. This is covered by
+`tests/test_security_rules_config.py`, `tests/test_tool_overrides.py`,
+`tests/test_llm_context_settings.py`, and `tests/test_verifier_model.py`.
+
+`activity.sqlite3` has three logical roles:
 
 - `activity`: sanitized audit/debug rows for dashboard, history, and tests.
 - `pending_approvals`: short-lived approval records, including cron approvals
   resolvable from another process.
+- `check_timings`: sanitized per-hook timing samples (hook, tool name, duration,
+  `llm_invoked`, `blocked`) recorded by `_record_check_timing` from the hook
+  wrappers in `hooks.py`, aggregated by `_performance_summary` for the dashboard
+  Performance tab. Timing is best-effort and must never alter a check's result.
+  Pruned with the same retention/row caps as `activity`.
 
 Schema changes should be backward-compatible through `ALTER TABLE` checks in
 `runtime/activity_store.py`; add migration tests when adding columns.
@@ -306,8 +327,9 @@ Keep `dashboard/plugin_api.py` as a thin adapter:
   (`tool-ignore`), and enabling cron context (`cron-context-on`).
 - Tool override, unknown-tools, and LLM-context routes (`POST /tools`,
   `PATCH /tools/{id}`, `DELETE /tools/{id}`, `POST /privacy/unknown-tools`,
-  `POST /privacy/user-context`, `POST /privacy/cron-context`) are thin adapters
-  over the `privacy/rules.py` mutators, like the other `_dashboard_*` actions.
+  `POST /privacy/user-context`, `POST /privacy/cron-context`,
+  `POST /privacy/verifier-model`) are thin adapters over the `privacy/rules.py`
+  mutators, like the other `_dashboard_*` actions.
 
 The dashboard is a React + TypeScript app. Source lives in `dashboard/src/`;
 `dashboard/dist/index.js` and `dashboard/dist/style.css` are committed build
@@ -349,6 +371,7 @@ Important user-facing commands:
 /guardian privacy unknown-tools gate|allow
 /guardian privacy user-context on|off
 /guardian privacy cron-context on|off
+/guardian privacy verifier-model <model_id|none>
 /guardian tools
 /guardian tool set <match> [taints=a+b] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]
 /guardian tool delete <match_or_id>

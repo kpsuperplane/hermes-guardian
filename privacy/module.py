@@ -248,7 +248,8 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
         )
         return {"action": "block", "message": _block_message(hard_reason)}, None
 
-    verdict = _llm_security_verdict(shape, args)
+    cached = _cached_deny_verdict(shape)
+    verdict = cached if cached is not None else _llm_security_verdict(shape, args)
     if (
         verdict.get("outcome") == "allow"
         and verdict.get("risk_level") == "high"
@@ -262,6 +263,10 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
             "outcome": "deny",
             "rationale": f"cron high-risk egress requires human approval ({verdict.get('rationale', '')})",
         }
+    if cached is None:
+        # Cache only freshly-computed denials so retried/looping blocked actions
+        # don't re-pay the verifier latency.
+        _store_deny_verdict(shape, verdict)
     if verdict.get("outcome") == "allow":
         reason = (
             f"llm {verdict.get('risk_level', 'unknown')}: "

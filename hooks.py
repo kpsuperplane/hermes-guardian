@@ -27,6 +27,33 @@ def _fail_closed_tool_result(reason: str) -> str:
     return json.dumps(_safe_stub(reason=reason), ensure_ascii=False)
 
 
+def _timed_hook_check(hook: str, tool_name: str, fn: Any) -> Any:
+    """Run a hook check, recording its wall-clock cost and whether it hit the LLM.
+
+    Timing is best-effort and never affects the check's result: a failure to
+    record is swallowed, and the check's own exceptions propagate unchanged after
+    the duration is logged.
+    """
+    _perf_begin_check()
+    start = time.perf_counter()
+    blocked = False
+    try:
+        result = fn()
+        blocked = result is not None
+        return result
+    finally:
+        try:
+            _record_check_timing(
+                hook,
+                duration_us=int((time.perf_counter() - start) * 1_000_000),
+                tool_name=tool_name,
+                llm_invoked=_perf_llm_invoked(),
+                blocked=blocked,
+            )
+        except Exception:
+            pass
+
+
 def _on_pre_llm_call_impl(
     session_id: str = "",
     platform: str = "",
@@ -79,11 +106,15 @@ def _on_pre_tool_call(
     **kwargs: Any,
 ) -> dict[str, str] | None:
     try:
-        return _on_pre_tool_call_impl(
-            tool_name=tool_name,
-            args=args,
-            session_id=session_id,
-            **kwargs,
+        return _timed_hook_check(
+            "pre_tool_call",
+            tool_name,
+            lambda: _on_pre_tool_call_impl(
+                tool_name=tool_name,
+                args=args,
+                session_id=session_id,
+                **kwargs,
+            ),
         )
     except (KeyboardInterrupt, SystemExit):
         raise
@@ -137,12 +168,16 @@ def _on_transform_tool_result(
     **kwargs: Any,
 ) -> str | None:
     try:
-        return _on_transform_tool_result_impl(
-            tool_name=tool_name,
-            result=result,
-            session_id=session_id,
-            status=status,
-            **kwargs,
+        return _timed_hook_check(
+            "transform_tool_result",
+            tool_name,
+            lambda: _on_transform_tool_result_impl(
+                tool_name=tool_name,
+                result=result,
+                session_id=session_id,
+                status=status,
+                **kwargs,
+            ),
         )
     except (KeyboardInterrupt, SystemExit):
         raise
@@ -173,7 +208,11 @@ def _on_pre_gateway_dispatch_impl(event: Any = None, **_: Any) -> dict[str, Any]
 
 def _on_pre_gateway_dispatch(event: Any = None, **kwargs: Any) -> dict[str, Any] | None:
     try:
-        return _on_pre_gateway_dispatch_impl(event=event, **kwargs)
+        return _timed_hook_check(
+            "pre_gateway_dispatch",
+            "gateway_message",
+            lambda: _on_pre_gateway_dispatch_impl(event=event, **kwargs),
+        )
     except (KeyboardInterrupt, SystemExit):
         raise
     except Exception:
@@ -199,7 +238,11 @@ def _on_transform_llm_output_impl(response_text: str = "", **kwargs: Any) -> str
 
 def _on_transform_llm_output(response_text: str = "", **kwargs: Any) -> str | None:
     try:
-        return _on_transform_llm_output_impl(response_text=response_text, **kwargs)
+        return _timed_hook_check(
+            "transform_llm_output",
+            "llm_output",
+            lambda: _on_transform_llm_output_impl(response_text=response_text, **kwargs),
+        )
     except (KeyboardInterrupt, SystemExit):
         raise
     except Exception:

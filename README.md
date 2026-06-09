@@ -276,15 +276,10 @@ opts into it.
 **Verifier latency.** By default the verifier runs on the agent's own model. If
 that is a large or reasoning model, each gated egress can take several seconds. A
 classification verdict does not need a frontier model, so you can point the
-verifier at a faster one:
+verifier at a faster one.
 
-```text
-/guardian privacy verifier-model gpt-5.4-mini   # or any fast model your provider exposes
-/guardian privacy verifier-model none            # back to the Hermes default
-```
-
-This needs a one-time config grant, because Hermes gates per-plugin model
-selection:
+Because Hermes gates per-plugin model selection, you first grant Guardian an
+allowlist in `~/.hermes/config.yaml` (one-time):
 
 ```yaml
 plugins:
@@ -292,16 +287,25 @@ plugins:
     hermes-guardian:
       llm:
         allow_model_override: true
-        allowed_models: [gpt-5.4-mini]   # optional allowlist
+        allowed_models: [gpt-5.4-mini, gpt-5.5]   # the models to offer
 ```
 
-Guardian is fail-safe here: if the override is rejected (grant missing) or the
-model is unavailable, it retries once on the default model rather than denying
-everything. A smaller model is faster but less sharp on subtle content/intent
-calls, so prefer a capable "mini"/"flash"-class model over the smallest. Guardian
-also caches *deny* verdicts briefly per session, so a retried blocked action does
-not re-pay the verifier latency (denials only — a cached deny can never become a
-false allow). Watch the effect in the **Performance** tab.
+Guardian reads that allowlist and offers exactly those models as a **dropdown** in
+the dashboard Settings tab (Verifier model) — no need to type model ids. You can
+also set it by slash command:
+
+```text
+/guardian privacy verifier-model gpt-5.4-mini
+/guardian privacy verifier-model none            # back to the Hermes default
+```
+
+Guardian is fail-safe: if the override is rejected (grant missing) or the model is
+unavailable, it retries once on the default model rather than denying everything. A
+smaller model is faster but less sharp on subtle content/intent calls, so prefer a
+capable "mini"/"flash"-class model over the smallest. Guardian also caches *deny*
+verdicts briefly per session, so a retried blocked action does not re-pay the
+verifier latency (denials only — a cached deny can never become a false allow).
+Watch the effect in the **Performance** tab.
 
 Both context channels are toggleable, in the dashboard Settings tab, by slash
 command, or directly in `guardian-rules.json` under `privacy`:

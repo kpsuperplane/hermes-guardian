@@ -145,6 +145,21 @@ def _ensure_activity_db() -> None:
                 conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_session_idx ON pending_approvals(session_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_expires_idx ON pending_approvals(expires_at)")
                 conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_cron_job_idx ON pending_approvals(cron_job_id)")
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS check_timings (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts INTEGER NOT NULL,
+                        hook TEXT NOT NULL,
+                        tool_name TEXT NOT NULL DEFAULT '',
+                        duration_us INTEGER NOT NULL,
+                        llm_invoked INTEGER NOT NULL DEFAULT 0,
+                        blocked INTEGER NOT NULL DEFAULT 0
+                    )
+                    """
+                )
+                conn.execute("CREATE INDEX IF NOT EXISTS check_timings_ts_idx ON check_timings(ts)")
+                conn.execute("CREATE INDEX IF NOT EXISTS check_timings_hook_idx ON check_timings(hook)")
             _ACTIVITY_DB_INITIALIZED = True
         except Exception as exc:
             logger.debug("%s: failed to initialize activity db: %s", _PLUGIN_NAME, exc)
@@ -221,6 +236,50 @@ def _emit_activity(
         logger.debug("%s: failed to write activity event: %s", _PLUGIN_NAME, exc)
 
 
+def _perf_begin_check() -> None:
+    """Reset per-thread timing scratch state at the start of a hook check."""
+    _CHECK_TIMING_STATE.llm_invoked = False
+
+
+def _perf_mark_llm_invoked() -> None:
+    """Flag that the current hook check invoked the LLM verifier (its main cost)."""
+    _CHECK_TIMING_STATE.llm_invoked = True
+
+
+def _perf_llm_invoked() -> bool:
+    return bool(getattr(_CHECK_TIMING_STATE, "llm_invoked", False))
+
+
+def _record_check_timing(
+    hook: str,
+    *,
+    duration_us: int,
+    tool_name: str = "",
+    llm_invoked: bool = False,
+    blocked: bool = False,
+) -> None:
+    """Persist sanitized per-check timing for the Performance dashboard."""
+    try:
+        _ensure_activity_db()
+        with _activity_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO check_timings (ts, hook, tool_name, duration_us, llm_invoked, blocked)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(_now()),
+                    str(hook or "")[:60],
+                    str(tool_name or "")[:120],
+                    max(0, int(duration_us)),
+                    1 if llm_invoked else 0,
+                    1 if blocked else 0,
+                ),
+            )
+    except Exception as exc:
+        logger.debug("%s: failed to write check timing: %s", _PLUGIN_NAME, exc)
+
+
 def _prune_activity_db(*, force: bool = False) -> dict[str, int]:
     """Bound activity DB size by age and row count.
 
@@ -242,6 +301,7 @@ def _prune_activity_db(*, force: bool = False) -> dict[str, int]:
             if retention_days > 0:
                 cutoff = int(now - retention_days * 86400)
                 deleted += conn.execute("DELETE FROM activity WHERE ts < ?", (cutoff,)).rowcount
+                conn.execute("DELETE FROM check_timings WHERE ts < ?", (cutoff,))
             if max_rows > 0:
                 deleted += conn.execute(
                     """
@@ -252,6 +312,15 @@ def _prune_activity_db(*, force: bool = False) -> dict[str, int]:
                     """,
                     (max_rows,),
                 ).rowcount
+                conn.execute(
+                    """
+                    DELETE FROM check_timings
+                    WHERE id NOT IN (
+                        SELECT id FROM check_timings ORDER BY ts DESC, id DESC LIMIT ?
+                    )
+                    """,
+                    (max_rows,),
+                )
             remaining = int(conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0])
         if deleted:
             # The table is bounded by row count / retention, so its file size

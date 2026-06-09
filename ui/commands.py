@@ -21,6 +21,7 @@ _GUARDIAN_HELP_LINES = [
     "/guardian privacy unknown-tools gate|allow",
     "/guardian privacy user-context on|off",
     "/guardian privacy cron-context on|off",
+    "/guardian privacy verifier-model <model_id|none>",
     "/guardian tools",
     "/guardian tool set <match> [taints=a+b] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]",
     "/guardian tool delete <match_or_id>",
@@ -374,7 +375,8 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
             f"Privacy mode: {_privacy_policy()}\n"
             f"Unknown-tools mode: {_unknown_tools_mode()}\n"
             f"LLM user-prompt context: {'on' if _llm_user_context_enabled() else 'off'}\n"
-            f"LLM cron context: {'on' if _llm_cron_context_enabled() else 'off'}"
+            f"LLM cron context: {'on' if _llm_cron_context_enabled() else 'off'}\n"
+            f"LLM verifier model: {_llm_verifier_model() or 'default'}"
         )
     if len(tokens) == 3 and tokens[1].lower() == "mode":
         if not _slash_admin_allowed(owner_hash):
@@ -402,11 +404,17 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
             return "Usage: /guardian privacy cron-context on|off"
         ok, message = _set_llm_cron_context(enabled)
         return message
+    if len(tokens) >= 3 and tokens[1].lower() in {"verifier-model", "verifier_model"}:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        ok, message = _set_llm_verifier_model(" ".join(tokens[2:]))
+        return message
     return (
         "Usage: /guardian privacy mode strict|read-only|llm|off | "
         "/guardian privacy unknown-tools gate|allow | "
         "/guardian privacy user-context on|off | "
-        "/guardian privacy cron-context on|off"
+        "/guardian privacy cron-context on|off | "
+        "/guardian privacy verifier-model <model_id|none>"
     )
 
 

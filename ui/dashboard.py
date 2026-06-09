@@ -167,6 +167,11 @@ def _dashboard_llm_cron_context_action(enabled: Any) -> tuple[dict[str, Any], in
     return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
 
 
+def _dashboard_llm_verifier_model_action(model: Any) -> tuple[dict[str, Any], int]:
+    ok, message = _set_llm_verifier_model(str(model or ""))
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+
+
 def _dashboard_tool_override_create_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     match = payload.get("match") or payload.get("tool") or payload.get("tool_name") or ""
     ok, message = _set_tool_override(

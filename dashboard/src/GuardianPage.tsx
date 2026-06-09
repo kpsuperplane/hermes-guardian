@@ -6,10 +6,12 @@ import { RuleModal } from "@/components/RuleModal";
 import { ToastRegion } from "@/components/ToastRegion";
 import { useGuardianActions } from "@/hooks/useGuardianActions";
 import { useHistory } from "@/hooks/useHistory";
+import { usePerformance } from "@/hooks/usePerformance";
 import { usePolicy } from "@/hooks/usePolicy";
 import { useToasts } from "@/hooks/useToasts";
 import { BlocksTab } from "@/tabs/BlocksTab";
 import { HistoryTab } from "@/tabs/HistoryTab";
+import { PerformanceTab } from "@/tabs/PerformanceTab";
 import { RulesTab } from "@/tabs/RulesTab";
 import { SettingsTab } from "@/tabs/SettingsTab";
 import { ToolsTab } from "@/tabs/ToolsTab";
@@ -20,6 +22,7 @@ const TABS: Array<[string, string]> = [
   ["rules", "Egress Rules"],
   ["blocks", "Recent Blocks"],
   ["history", "History"],
+  ["performance", "Performance"],
 ];
 
 export function GuardianPage() {
@@ -35,10 +38,13 @@ export function GuardianPage() {
     setLlmUserContext,
     llmCronContext,
     setLlmCronContext,
+    llmVerifierModel,
+    setLlmVerifierModel,
     load,
   } = usePolicy();
   const { toasts, showToast, dismissToast } = useToasts();
   const history = useHistory();
+  const performance = usePerformance();
   const actions = useGuardianActions({
     policy,
     load,
@@ -50,13 +56,30 @@ export function GuardianPage() {
     setLlmUserContext,
     llmCronContext,
     setLlmCronContext,
+    llmVerifierModel,
+    setLlmVerifierModel,
     showToast,
   });
 
   const [tab, setTab] = useState("settings");
 
+  // Warm the lazily-fetched tabs once on mount. The first plugin-API call to a
+  // given endpoint per page session pays a one-time multi-second cost on the
+  // host side (the handlers themselves are ~milliseconds: see _activity_*
+  // /_performance_summary). Only tabs that fetch their own data on open are
+  // affected — History (/activity/datatables) and Performance (/performance);
+  // the others render from the /policy snapshot already loaded on mount.
+  // Prefetching here lets that cost overlap the initial dashboard load instead
+  // of stalling the user's first click; subsequent opens hit the warmed paths.
+  useEffect(() => {
+    history.loadHistory(history.page, history.pageSize);
+    performance.loadPerformance();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (tab === "history") history.loadHistory(history.page, history.pageSize);
+    if (tab === "performance") performance.loadPerformance();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, history.page, history.pageSize]);
 
@@ -83,6 +106,7 @@ export function GuardianPage() {
             onClick={() => {
               load();
               if (tab === "history") history.loadHistory(history.page, history.pageSize);
+              if (tab === "performance") performance.loadPerformance();
             }}
           >
             Refresh
@@ -118,6 +142,9 @@ export function GuardianPage() {
           cronContextSaving={actions.cronContextSaving}
           onChangeUserContext={actions.saveUserContext}
           onChangeCronContext={actions.saveCronContext}
+          llmVerifierModel={llmVerifierModel}
+          verifierModelSaving={actions.verifierModelSaving}
+          onChangeVerifierModel={actions.saveVerifierModel}
           onPatchSecurityRule={actions.patchSecurityRule}
           languagePacksSaving={actions.languagePacksSaving}
           onPatchLanguagePack={actions.patchLanguagePack}
@@ -159,6 +186,13 @@ export function GuardianPage() {
           pageSize={history.pageSize}
           setPage={history.setPage}
           setPageSize={history.setPageSize}
+        />
+      ) : null}
+      {tab === "performance" ? (
+        <PerformanceTab
+          performance={performance.performance}
+          loading={performance.loading}
+          error={performance.error}
         />
       ) : null}
       {actions.showModal ? (

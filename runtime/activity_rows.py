@@ -647,6 +647,86 @@ def _runtime_risk_banners() -> list[dict[str, str]]:
     return banners
 
 
+def _perf_stats(durations_us: list[int]) -> dict[str, Any]:
+    n = len(durations_us)
+    if n == 0:
+        return {"count": 0, "avg_ms": 0.0, "p50_ms": 0.0, "p95_ms": 0.0, "max_ms": 0.0, "total_ms": 0.0}
+    ordered = sorted(durations_us)
+
+    def pct(p: float) -> int:
+        if n == 1:
+            return ordered[0]
+        idx = int(round((p / 100.0) * (n - 1)))
+        return ordered[min(max(idx, 0), n - 1)]
+
+    total = sum(ordered)
+    return {
+        "count": n,
+        "avg_ms": round(total / n / 1000.0, 3),
+        "p50_ms": round(pct(50) / 1000.0, 3),
+        "p95_ms": round(pct(95) / 1000.0, 3),
+        "max_ms": round(ordered[-1] / 1000.0, 3),
+        "total_ms": round(total / 1000.0, 3),
+    }
+
+
+_PERF_HOOK_LABELS = {
+    "pre_tool_call": "Tool call check",
+    "transform_tool_result": "Tool result scrub",
+    "transform_llm_output": "Final response check",
+    "pre_gateway_dispatch": "Inbound message scan",
+}
+
+
+def _performance_summary(*, sample_limit: int = 50) -> dict[str, Any]:
+    """Aggregate recent per-check timings for the Performance dashboard tab."""
+    _ensure_activity_db()
+    try:
+        with _activity_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT ts, hook, tool_name, duration_us, llm_invoked, blocked
+                FROM check_timings ORDER BY ts DESC, id DESC LIMIT 5000
+                """
+            ).fetchall()
+    except Exception:
+        rows = []
+
+    by_hook: dict[str, list[int]] = {}
+    llm_us: list[int] = []
+    deterministic_us: list[int] = []
+    all_us: list[int] = []
+    for row in rows:
+        dur = int(row["duration_us"])
+        all_us.append(dur)
+        by_hook.setdefault(str(row["hook"]), []).append(dur)
+        (llm_us if row["llm_invoked"] else deterministic_us).append(dur)
+
+    hooks = [
+        {"hook": hook, "label": _PERF_HOOK_LABELS.get(hook, hook), **_perf_stats(values)}
+        for hook, values in sorted(by_hook.items(), key=lambda item: -sum(item[1]))
+    ]
+    samples = [
+        {
+            "ts": int(row["ts"]),
+            "hook": str(row["hook"]),
+            "tool_name": str(row["tool_name"] or ""),
+            "duration_ms": round(int(row["duration_us"]) / 1000.0, 3),
+            "llm_invoked": bool(row["llm_invoked"]),
+            "blocked": bool(row["blocked"]),
+        }
+        for row in rows[:max(1, min(int(sample_limit), 500))]
+    ]
+    return {
+        "overall": _perf_stats(all_us),
+        "by_hook": hooks,
+        "llm": _perf_stats(llm_us),
+        "deterministic": _perf_stats(deterministic_us),
+        "samples": samples,
+        "window_size": len(rows),
+    }
+
+
 def _policy_snapshot() -> dict[str, Any]:
     with _LOCK:
         _prune_expired()
@@ -705,6 +785,8 @@ def _policy_snapshot() -> dict[str, Any]:
         "unknown_tools": _unknown_tools_mode(),
         "llm_user_context": _llm_user_context_enabled(),
         "llm_cron_context": _llm_cron_context_enabled(),
+        "llm_verifier_model": _llm_verifier_model(),
+        "llm_verifier_model_options": _verifier_model_options(),
         "tool_overrides": _tool_overrides_snapshot(),
         "tool_override_egress_options": sorted(_TOOL_OVERRIDE_EGRESS_VALUES),
         "all_privacy_classes": sorted(_ALL_PRIVACY_CLASSES),

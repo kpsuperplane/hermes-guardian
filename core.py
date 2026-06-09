@@ -203,8 +203,8 @@ _ACTIVITY_GROUP_SECONDS_ENV = "HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS"
 _HISTORY_TIMEZONE_ENV = "HERMES_GUARDIAN_HISTORY_TIMEZONE"
 _CRON_NOTIFY_TO_ENV = "HERMES_GUARDIAN_CRON_NOTIFY_TO"
 _HERMES_CLI_ENV = "HERMES_GUARDIAN_HERMES_CLI"
-_DEFAULT_ACTIVITY_MAX_ROWS = 10_000
-_DEFAULT_ACTIVITY_RETENTION_DAYS = 30
+_DEFAULT_ACTIVITY_MAX_ROWS = 100
+_DEFAULT_ACTIVITY_RETENTION_DAYS = 7
 _DEFAULT_ACTIVITY_GROUP_SECONDS = 60
 _DEFAULT_CRON_NOTIFY_TO = "origin"
 _ACTIVITY_PRUNE_INTERVAL_SECONDS = 300
@@ -227,6 +227,14 @@ _ACTIVITY_DB_INITIALIZED = False
 _LAST_ACTIVITY_PRUNE = 0.0
 _PLUGIN_LLM: Any | None = None
 _CRON_NOTIFICATIONS_SENT: set[str] = set()
+# Per-thread scratch state for measuring how long each Guardian hook check takes
+# (and whether it invoked the LLM verifier). Reset at the start of each hook.
+_CHECK_TIMING_STATE = threading.local()
+# Short-TTL cache of recent DENY verdicts, keyed by session + owner + exact action
+# fingerprint. Replaying a deny is fail-safe (it can never cause a false allow), so
+# this only spares the verifier latency on retried/looping blocked actions.
+_LLM_DENY_VERDICT_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
+_LLM_DENY_VERDICT_TTL_SECONDS = 60
 _ALL_PRIVACY_CLASSES = {
     "communications",
     "contacts",

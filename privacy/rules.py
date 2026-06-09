@@ -12,6 +12,11 @@ _UNKNOWN_TOOLS_MODES = {"gate", "allow"}
 # (a job's own stored instruction) defaults off because cron runs unattended.
 _DEFAULT_LLM_USER_CONTEXT = True
 _DEFAULT_LLM_CRON_CONTEXT = False
+# Optional model the llm-mode verifier should run on (empty = Hermes default).
+# A fast classification model (e.g. a "mini" variant) cuts verifier latency
+# dramatically vs. a reasoning model. Requires the operator to grant
+# plugins.entries.hermes-guardian.llm.allow_model_override in config.yaml.
+_DEFAULT_LLM_VERIFIER_MODEL = ""
 # Action families a user may assign to a custom/unknown tool via a tool override.
 # "ignore" marks a tool as a safe non-sink; "gate" forces tool_unknown gating.
 _TOOL_OVERRIDE_EGRESS_FAMILIES = {
@@ -84,6 +89,7 @@ def _default_privacy_config() -> dict[str, Any]:
             "unknown_tools": _DEFAULT_UNKNOWN_TOOLS,
             "llm_user_context": _DEFAULT_LLM_USER_CONTEXT,
             "llm_cron_context": _DEFAULT_LLM_CRON_CONTEXT,
+            "llm_verifier_model": _DEFAULT_LLM_VERIFIER_MODEL,
             "rules": [],
             "tools": [],
         },
@@ -126,6 +132,14 @@ def _normalize_rule_classes(raw: Any, *, allow_star: bool = True) -> list[str]:
         if text in _ALL_PRIVACY_CLASSES and text not in classes:
             classes.append(text)
     return sorted(classes)
+
+
+def _normalize_verifier_model(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"none", "default", "auto"}:
+        return ""
+    text = re.sub(r"[^A-Za-z0-9_.:/@-]+", "", text)
+    return text[:120]
 
 
 def _normalize_unknown_tools_mode(value: Any) -> str:
@@ -361,6 +375,7 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
             "llm_cron_context": _config_bool(
                 privacy.get("llm_cron_context"), default=_DEFAULT_LLM_CRON_CONTEXT
             ),
+            "llm_verifier_model": _normalize_verifier_model(privacy.get("llm_verifier_model")),
             "rules": normalized_rules,
             "tools": _normalize_tool_overrides(privacy.get("tools")),
         },
@@ -392,6 +407,8 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
     for context_key in ("llm_user_context", "llm_cron_context"):
         if context_key in privacy and not isinstance(privacy.get(context_key), (bool, int, str)):
             raise ValueError(f"privacy rule file has invalid privacy.{context_key}")
+    if "llm_verifier_model" in privacy and not isinstance(privacy.get("llm_verifier_model"), str):
+        raise ValueError("privacy rule file has invalid privacy.llm_verifier_model")
     security = parsed.get("security")
     if security is not None:
         if not isinstance(security, dict):
@@ -612,6 +629,110 @@ def _set_llm_user_context(enabled: bool) -> tuple[bool, str]:
 
 def _set_llm_cron_context(enabled: bool) -> tuple[bool, str]:
     return _set_llm_context_flag("llm_cron_context", enabled, "cron context")
+
+
+def _llm_verifier_model() -> str:
+    return _normalize_verifier_model(
+        _load_privacy_config().get("privacy", {}).get("llm_verifier_model")
+    )
+
+
+def _set_llm_verifier_model(model: str) -> tuple[bool, str]:
+    normalized = _normalize_verifier_model(model)
+    data = _load_privacy_config()
+    privacy = dict(data.get("privacy") or {})
+    privacy["llm_verifier_model"] = normalized
+    next_data = {
+        "version": _PRIVACY_RULE_FILE_VERSION,
+        "privacy": privacy,
+        "security": dict(data.get("security") or {}),
+        "language_packs": dict(data.get("language_packs") or {}),
+    }
+    if not _save_privacy_config(next_data):
+        return False, "Failed to save verifier model; Guardian remains unchanged."
+    if normalized:
+        return True, (
+            f"LLM verifier model set to {normalized}. Requires "
+            "plugins.entries.hermes-guardian.llm.allow_model_override in config; "
+            "Guardian falls back to the default model if the override is rejected."
+        )
+    return True, "LLM verifier model cleared (using the Hermes default model)."
+
+
+def _hermes_home_dir() -> Path:
+    raw = os.environ.get("HERMES_HOME", "").strip()
+    return Path(raw).expanduser() if raw else (Path.home() / ".hermes")
+
+
+def _read_host_yaml_best_effort(path: Path) -> dict[str, Any]:
+    """Read a host YAML file (config / model cache) defensively.
+
+    PyYAML ships with the Hermes runtime venv but is not a hard dependency of this
+    plugin, so the import and the read are both optional: any failure returns {}.
+    Only model-name strings are ever extracted; the rest of the file (which may
+    contain secrets) is parsed transiently and discarded, never stored or logged.
+    """
+    try:
+        import yaml  # type: ignore
+    except Exception:
+        return {}
+    try:
+        if not path.exists():
+            return {}
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _discover_verifier_model_options() -> list[str]:
+    """Best-effort list of models the operator has made selectable for the verifier.
+
+    Source of truth is the operator's own Hermes config: a plugin may only run on
+    a model the host trust gate permits, so the dropdown mirrors exactly that. When
+    `allow_model_override` is granted with a concrete `allowed_models` list, those
+    are the options; with a wildcard (any model) we suggest models already seen on
+    this install. Without the grant nothing is selectable (it would not take effect).
+    """
+    home = _hermes_home_dir()
+    config = _read_host_yaml_best_effort(home / "config.yaml")
+    plugin_llm = (
+        (((config.get("plugins") or {}).get("entries") or {}).get(_PLUGIN_NAME) or {}).get("llm")
+        if isinstance(config, dict)
+        else None
+    )
+    options: list[str] = []
+    if isinstance(plugin_llm, dict) and _config_bool(plugin_llm.get("allow_model_override"), default=False):
+        allowed = plugin_llm.get("allowed_models")
+        allowed_list = allowed if isinstance(allowed, list) else ([allowed] if allowed else [])
+        concrete = [str(model) for model in allowed_list if model and str(model) != "*"]
+        if concrete:
+            options += concrete
+        else:
+            default_model = str((config.get("model") or {}).get("default") or "")
+            if default_model:
+                options.append(default_model)
+            cache = _read_host_yaml_best_effort(home / "context_length_cache.yaml")
+            for key in (cache.get("context_lengths") or {}):
+                options.append(str(key).split("@", 1)[0].strip())
+    seen: set[str] = set()
+    out: list[str] = []
+    for model in options:
+        normalized = _normalize_verifier_model(model)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            out.append(normalized)
+        if len(out) >= 40:
+            break
+    return out
+
+
+def _verifier_model_options() -> list[str]:
+    options = _discover_verifier_model_options()
+    current = _llm_verifier_model()
+    if current and current not in options:
+        options.append(current)
+    return options
 
 
 def _tool_overrides() -> list[dict[str, Any]]:

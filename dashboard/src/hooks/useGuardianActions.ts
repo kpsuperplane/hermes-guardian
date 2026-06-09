@@ -26,6 +26,8 @@ export interface GuardianActionDeps {
   setLlmUserContext: (enabled: boolean) => void;
   llmCronContext: boolean;
   setLlmCronContext: (enabled: boolean) => void;
+  llmVerifierModel: string;
+  setLlmVerifierModel: (model: string) => void;
   showToast: (message?: unknown, variant?: ToastVariant) => void;
 }
 
@@ -48,6 +50,8 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     setLlmUserContext,
     llmCronContext,
     setLlmCronContext,
+    llmVerifierModel,
+    setLlmVerifierModel,
     showToast,
   } = deps;
 
@@ -56,6 +60,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
   const [unknownToolsSaving, setUnknownToolsSaving] = useState(false);
   const [userContextSaving, setUserContextSaving] = useState(false);
   const [cronContextSaving, setCronContextSaving] = useState(false);
+  const [verifierModelSaving, setVerifierModelSaving] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<RuleForm>(Object.assign({}, DEFAULT_FORM));
   const [formError, setFormError] = useState("");
@@ -166,6 +171,24 @@ export function useGuardianActions(deps: GuardianActionDeps) {
         showToast(errText(err), "error");
       })
       .finally(() => setCronContextSaving(false));
+  }
+
+  function saveVerifierModel(nextModel: string) {
+    const model = text(nextModel).trim();
+    if (model === (llmVerifierModel || "")) return;
+    const previous = llmVerifierModel;
+    setLlmVerifierModel(model);
+    setVerifierModelSaving(true);
+    api("/privacy/verifier-model", { method: "POST", body: JSON.stringify({ model }) })
+      .then((payload) => {
+        showToast(payload.message || "Saved.");
+        return load();
+      })
+      .catch((err) => {
+        setLlmVerifierModel(previous);
+        showToast(errText(err), "error");
+      })
+      .finally(() => setVerifierModelSaving(false));
   }
 
   function openCreateOverride() {
@@ -447,6 +470,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     unknownToolsSaving,
     userContextSaving,
     cronContextSaving,
+    verifierModelSaving,
     languagePacksSaving,
     // rule modal
     showModal,
@@ -465,6 +489,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     saveUnknownTools,
     saveUserContext,
     saveCronContext,
+    saveVerifierModel,
     patchSecurityRule,
     patchLanguagePack,
     setAllLanguagePacks,

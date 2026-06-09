@@ -170,6 +170,11 @@ async def policy() -> dict[str, Any]:
     return _guardian()._policy_snapshot()
 
 
+@router.get("/performance")
+async def performance() -> dict[str, Any]:
+    return _guardian()._performance_summary()
+
+
 @router.get("/activity")
 async def activity(limit: int = 200) -> dict[str, Any]:
     safe_limit = max(1, min(int(limit), 1000))
@@ -269,6 +274,16 @@ async def set_cron_context(request: Request, body: dict[str, Any]) -> JSONRespon
         request,
         "llm_cron_context",
         _guardian()._dashboard_llm_cron_context_action(_body_bool(body, "enabled")),
+    )
+
+
+@router.post("/privacy/verifier-model")
+async def set_verifier_model(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    return _json_mutation_result(
+        request,
+        "llm_verifier_model",
+        _guardian()._dashboard_llm_verifier_model_action(str(body.get("model") or "")),
     )
 
 

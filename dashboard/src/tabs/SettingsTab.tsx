@@ -15,6 +15,9 @@ export interface SettingsTabProps {
   cronContextSaving: boolean;
   onChangeUserContext: (enabled: boolean) => void;
   onChangeCronContext: (enabled: boolean) => void;
+  llmVerifierModel: string;
+  verifierModelSaving: boolean;
+  onChangeVerifierModel: (model: string) => void;
   onPatchSecurityRule: (ruleId: string, enabled: boolean) => void;
   languagePacksSaving: boolean;
   onPatchLanguagePack: (packId: string, enabled: boolean) => void;
@@ -32,11 +35,15 @@ export function SettingsTab({
   cronContextSaving,
   onChangeUserContext,
   onChangeCronContext,
+  llmVerifierModel,
+  verifierModelSaving,
+  onChangeVerifierModel,
   onPatchSecurityRule,
   languagePacksSaving,
   onPatchLanguagePack,
   onSetAllLanguagePacks,
 }: SettingsTabProps) {
+  const verifierModelOptions = (policy && policy.llm_verifier_model_options) || [];
   const securityRules = (policy && policy.security_rules) || [];
   const languagePacks = (policy && policy.language_packs) || [];
   const optionalLanguagePacks = languagePacks.filter((pack) => pack.required !== true);
@@ -76,6 +83,7 @@ export function SettingsTab({
           </div>
         </div>
       </div>
+      {privacyMode === "llm" ? (
       <div className="hermes-guardian-card">
         <div className="hermes-guardian-card-title">LLM approval context</div>
         <div className="hermes-guardian-muted hermes-guardian-section-description">
@@ -118,7 +126,34 @@ export function SettingsTab({
             </span>
           </label>
         </div>
+        <div className="hermes-guardian-card-head">
+          <div>
+            <div className="hermes-guardian-card-title">Verifier model</div>
+            <div className="hermes-guardian-muted">
+              Run the verifier on a faster model than the agent's to cut latency.
+              Options come from this plugin's <code>allowed_models</code> in your Hermes
+              config; grant <code>plugins.entries.hermes-guardian.llm.allow_model_override</code> to
+              populate them. Guardian falls back to the default model if an override is rejected.
+            </div>
+          </div>
+          <div className="hermes-guardian-actions">
+            <select
+              className="hermes-guardian-select"
+              value={llmVerifierModel || ""}
+              disabled={verifierModelSaving}
+              onChange={(event) => onChangeVerifierModel(event.target.value)}
+            >
+              <option value="">Default (agent model)</option>
+              {verifierModelOptions.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
+      ) : null}
       <div className="hermes-guardian-card">
         <div className="hermes-guardian-card-title">Security policy</div>
         {securityRules.length ? (
