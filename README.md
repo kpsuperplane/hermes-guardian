@@ -91,7 +91,7 @@ hermes plugins list --plain --no-bundled
 Expected result:
 
 ```text
-enabled      git      3.0.0    hermes-guardian
+hermes-guardian
 ```
 
 Guardian registers a `/guardian` slash command and an integrated dashboard tab
