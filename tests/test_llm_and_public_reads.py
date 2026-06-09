@@ -330,7 +330,7 @@ def test_web_api_with_personal_args_blocks_even_without_prior_taint():
 
     result = plugin._on_pre_tool_call(
         "webhook_post",
-        {"url": "https://example.com/hook", "body": "email kevin@example.com"},
+        {"url": "https://example.com/hook", "body": "email owner@example.com"},
         session_id="s1",
     )
 

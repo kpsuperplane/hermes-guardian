@@ -140,7 +140,14 @@ the tests/docs are updated accordingly:
 - `read-only` mode should auto-approve only metadata-verified low-risk actions.
   Anything uncertain falls back to manual approval.
 - `llm` mode must send only sanitized metadata to the verifier. Raw private
-  content must not enter `_llm_verdict_input`.
+  content must not enter `_llm_verdict_input`. The one conversation-derived input
+  is `user_request_context`: a sanitized excerpt of the most recent inbound
+  message from an authenticated session owner (CLI or configured gateway owner),
+  captured at gateway dispatch after the Security Module clears it. It is the
+  user turn only (never system prompt, tool results, or model output), redacted,
+  held in volatile owner-keyed state, never persisted, and treated as
+  authorization evidence only — it must not override `risk_level` or absolute
+  deny rules, and group/cron/unauthenticated senders must never populate it.
 - Final model responses are egress. Tainted responses to owner-private CLI/DM
   destinations may pass; tainted responses to group, cron, or unknown
   destinations are suppressed.
@@ -245,7 +252,7 @@ When adding a new Hermes tool family:
 The dashboard is integrated through `dashboard/manifest.json` at `/guardian`.
 API routes are mounted under `/api/plugins/hermes-guardian/`.
 
-`guardian.hermes.kevinpei.com` and the standalone
+`guardian.example.com` and the standalone
 `hermes-guardian-dashboard.service` are retired. Do not use, restart, or debug
 that standalone service for normal dashboard work. The supported UI surface is
 the Hermes dashboard plugin tab served by `hermes-dashboard.service`.

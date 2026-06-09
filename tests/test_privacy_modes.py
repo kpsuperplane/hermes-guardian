@@ -152,7 +152,7 @@ def test_env_helper_ignores_old_privacy_egress_guard_names(monkeypatch):
         ("send_message", {"action": "list"}, None, None),
         ("send_message", {"to": "friend", "text": "hello"}, None, ("message_send", "messaging")),
         ("browser_snapshot", {}, None, None),
-        ("web_search", {"query": "kevin@example.com"}, None, ("web_read", "web_search")),
+        ("web_search", {"query": "owner@example.com"}, None, ("web_read", "web_search")),
         ("api_request", {"url": "https://example.com"}, None, ("web_api", "example.com")),
         ("image_generate", {"prompt": "hello"}, None, ("model_api", "image_generate")),
         ("cronjob", {"action": "create", "deliver": "telegram"}, None, ("cron_write", "cron")),

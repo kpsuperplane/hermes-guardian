@@ -310,7 +310,7 @@ def test_tainted_final_response_to_group_is_suppressed():
         "Here is the private email summary",
         session_id="s1",
         platform="discord",
-        sender_id="kevin",
+        sender_id="owner",
         chat_type="group",
     )
 

@@ -68,13 +68,13 @@ def test_guardian_rule_add_defaults_platform_slash_to_caller_scope(tmp_path):
     plugin._PERSISTENT_RULES_CACHE = None
     command = "rule add allow action=message_send destination=friend classes=email"
 
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian {command}", user_id="kevin"))
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian {command}", user_id="owner"))
     response = plugin._handle_guardian_command(command)
 
     assert "Added privacy allow rule" in response
     data = json.loads((tmp_path / "rules.json").read_text())
     rule = data["privacy"]["rules"][0]
-    assert rule["scope"]["owner_hash"] == plugin._hash_identity("telegram", "kevin")
+    assert rule["scope"]["owner_hash"] == plugin._hash_identity("telegram", "owner")
     assert rule["match"]["data_classes"] == ["email"]
     assert rule["match"]["purpose"] == "*"
     assert rule["match"]["recipient_identity"] == "*"
@@ -120,7 +120,7 @@ def test_non_owner_slash_cannot_create_global_or_cron_rule(tmp_path):
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin._PERSISTENT_RULES_CACHE = None
     global_command = "rule add allow action=message_send destination=friend classes=email owner=*"
-    cron_command = "rule add allow action=message_send destination=friend classes=email cron=41c2974734f8"
+    cron_command = "rule add allow action=message_send destination=friend classes=email cron=aaaaaaaaaaaa"
 
     plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian {global_command}", user_id="attacker"))
     global_response = plugin._handle_guardian_command(global_command)
@@ -136,7 +136,7 @@ def test_guardian_rule_move_requires_target_rule_permission(tmp_path):
     plugin = load_plugin()
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin._PERSISTENT_RULES_CACHE = None
-    kevin_owner = plugin._hash_identity("telegram", "kevin")
+    kevin_owner = plugin._hash_identity("telegram", "owner")
     other_owner = plugin._hash_identity("telegram", "other")
     save_privacy_config(plugin, rules=[
         privacy_rule(rule_id="rule_kevin", destination="friend", data_classes=["email"], owner_hash=kevin_owner),
@@ -144,7 +144,7 @@ def test_guardian_rule_move_requires_target_rule_permission(tmp_path):
     ])
 
     command = "rule move rule_kevin after rule_other"
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian {command}", user_id="kevin"))
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian {command}", user_id="owner"))
     response = plugin._handle_guardian_command(command)
 
     data = json.loads((tmp_path / "rules.json").read_text())

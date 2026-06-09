@@ -49,15 +49,15 @@ def test_policy_snapshot_includes_cron_rule_scope(tmp_path):
     plugin = load_plugin()
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin._PERSISTENT_RULES_CACHE = None
-    plugin._CORE._cron_job_name = lambda job_id: "Ritz-Carlton AX 2026 availability check" if job_id == "41c2974734f8" else ""
+    plugin._CORE._cron_job_name = lambda job_id: "Example Availability Check" if job_id == "aaaaaaaaaaaa" else ""
     save_privacy_config(plugin, rules=[
         privacy_rule(
             rule_id="rule_test",
             action_family="browser_type",
             destination="www.google.com",
             data_classes=["email"],
-            cron_job_id="41c2974734f8",
-            cron_job_name="Ritz-Carlton AX 2026 availability check",
+            cron_job_id="aaaaaaaaaaaa",
+            cron_job_name="Example Availability Check",
         )
     ])
 
@@ -66,9 +66,9 @@ def test_policy_snapshot_includes_cron_rule_scope(tmp_path):
 
     assert rule["action_family"] == "browser_type"
     assert rule["destination"] == "www.google.com"
-    assert rule["cron_job_id"] == "41c2974734f8"
-    assert rule["cron_job_name"] == "Ritz-Carlton AX 2026 availability check"
-    assert rule["scope"] == "cron job Ritz-Carlton AX 2026 availability check (41c2974734f8)"
+    assert rule["cron_job_id"] == "aaaaaaaaaaaa"
+    assert rule["cron_job_name"] == "Example Availability Check"
+    assert rule["scope"] == "cron job Example Availability Check (aaaaaaaaaaaa)"
 
 
 def test_policy_snapshot_includes_persistent_rule_metadata(tmp_path):

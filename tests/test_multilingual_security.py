@@ -45,7 +45,7 @@ def test_spanish_private_field_labels_taint_content_and_args():
 
     result = plugin._on_pre_tool_call(
         "web_search",
-        {"query": "buscar correo electrónico de Kevin"},
+        {"query": "buscar correo electrónico de Alex"},
         session_id="s1",
     )
 
@@ -149,10 +149,10 @@ def test_world_language_auth_code_labels_detected(text):
 @pytest.mark.parametrize(
     ("query", "needle"),
     [
-        ("البريد الإلكتروني الخاص بKevin", "البريد الإلكتروني"),
-        ("buscar endereço de Kevin", "endereço"),
-        ("найти телефон Kevin", "телефон"),
-        ("tìm email của Kevin", "email"),
+        ("البريد الإلكتروني الخاص بAlex", "البريد الإلكتروني"),
+        ("buscar endereço de Alex", "endereço"),
+        ("найти телефон Alex", "телефон"),
+        ("tìm email của Alex", "email"),
     ],
 )
 def test_world_language_private_field_labels_taint_args(query, needle):

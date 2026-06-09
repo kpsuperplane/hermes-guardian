@@ -112,6 +112,10 @@ def _prune_expired() -> None:
                 _RECENT_COMMAND_OWNERS[key] = fresh
             else:
                 _RECENT_COMMAND_OWNERS.pop(key, None)
+        request_cutoff = _now() - _USER_REQUEST_TTL_SECONDS
+        for owner_hash, (timestamp, _text) in list(_RECENT_OWNER_REQUESTS.items()):
+            if timestamp < request_cutoff:
+                _RECENT_OWNER_REQUESTS.pop(owner_hash, None)
 
 
 def _terminal_command_is_low_risk(args: Any) -> bool:
@@ -223,7 +227,8 @@ def _llm_hard_deny_reason(shape: dict[str, Any], args: Any) -> str | None:
 
 
 def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:
-    return {
+    user_request = _recent_user_request_for_owner(shape.get("owner_hash", ""))
+    payload: dict[str, Any] = {
         "planned_action": {
             "tool_name": shape.get("tool_name", ""),
             "action_family": shape.get("action_family", ""),
@@ -241,6 +246,11 @@ def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:
             "manual_approval_available_if_denied": True,
         },
     }
+    if user_request:
+        # Present only for authenticated owner origins; sanitized authorization
+        # evidence, not an instruction (see _LLM_POLICY_INSTRUCTIONS).
+        payload["user_request_context"] = {"sanitized_user_request": user_request}
+    return payload
 
 
 def _validated_llm_security_verdict(parsed: Any) -> dict[str, str]:

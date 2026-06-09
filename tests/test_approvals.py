@@ -235,7 +235,7 @@ def test_deny_alias_still_dismisses_pending_approval():
 
 def test_wrong_sender_cannot_approve():
     plugin = load_plugin()
-    bind_owner(plugin, user_id="kevin")
+    bind_owner(plugin, user_id="owner")
     plugin._taint_session("s1", {"email"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
@@ -249,14 +249,14 @@ def test_wrong_sender_cannot_approve():
 
 def test_configured_telegram_owner_can_approve_cron_approval(monkeypatch):
     plugin = load_plugin()
-    cron_session = "cron_41c2974734f8_20260607_030107"
-    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "kevin")
+    cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin._on_pre_llm_call(session_id=cron_session, platform="cron", sender_id="scheduler")
     plugin._taint_session(cron_session, {"email"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id=cron_session)
     approval_id = first_pending_id(plugin)
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always", user_id="kevin"))
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always", user_id="owner"))
     response = plugin._handle_guardian_command(f"approve {approval_id} always")
 
     assert "Approved message_send" in response
@@ -271,8 +271,8 @@ def test_cron_approval_can_be_approved_from_separate_process(monkeypatch, tmp_pa
     creator._ACTIVITY_DB_INITIALIZED = False
     creator._PERSISTENT_RULES_PATH = rules_path
     creator._PERSISTENT_RULES_CACHE = {"rules": []}
-    cron_session = "cron_41c2974734f8_20260607_030107"
-    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "kevin")
+    cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     creator._on_pre_llm_call(session_id=cron_session, platform="cron", sender_id="scheduler")
     creator._taint_session(cron_session, {"email"})
 
@@ -284,7 +284,7 @@ def test_cron_approval_can_be_approved_from_separate_process(monkeypatch, tmp_pa
     approver._ACTIVITY_DB_INITIALIZED = False
     approver._PERSISTENT_RULES_PATH = rules_path
     approver._PERSISTENT_RULES_CACHE = {"rules": []}
-    approver._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always", user_id="kevin"))
+    approver._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always", user_id="owner"))
     response = approver._handle_guardian_command(f"approve {approval_id} always")
 
     assert "Approved message_send" in response
@@ -308,7 +308,7 @@ def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
     creator._ACTIVITY_DB_INITIALIZED = False
     creator._PERSISTENT_RULES_PATH = rules_path
     creator._PERSISTENT_RULES_CACHE = None
-    bind_owner(creator, session_id="s1", user_id="kevin")
+    bind_owner(creator, session_id="s1", user_id="owner")
     creator._taint_session("s1", {"email"})
 
     creator._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
@@ -319,7 +319,7 @@ def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
     approver._ACTIVITY_DB_INITIALIZED = False
     approver._PERSISTENT_RULES_PATH = rules_path
     approver._PERSISTENT_RULES_CACHE = None
-    approver._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} once", user_id="kevin"))
+    approver._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} once", user_id="owner"))
     response = approver._handle_guardian_command(f"approve {approval_id} once")
 
     assert "Approved message_send" in response
@@ -335,7 +335,7 @@ def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
     runner._ACTIVITY_DB_INITIALIZED = False
     runner._PERSISTENT_RULES_PATH = rules_path
     runner._PERSISTENT_RULES_CACHE = None
-    bind_owner(runner, session_id="s1", user_id="kevin")
+    bind_owner(runner, session_id="s1", user_id="owner")
     runner._taint_session("s1", {"email"})
 
     assert runner._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
@@ -348,28 +348,28 @@ def test_cron_always_approval_is_scoped_to_same_cron_job(monkeypatch, tmp_path):
     plugin = load_plugin()
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin._PERSISTENT_RULES_CACHE = None
-    plugin._CORE._cron_job_name = lambda job_id: "Ritz-Carlton AX 2026 availability check" if job_id == "41c2974734f8" else ""
-    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "kevin")
-    first_run = "cron_41c2974734f8_20260607_030107"
-    second_run = "cron_41c2974734f8_20260607_090812"
-    other_job = "cron_993fbb2dc5a4_20260607_080012"
+    plugin._CORE._cron_job_name = lambda job_id: "Example Availability Check" if job_id == "aaaaaaaaaaaa" else ""
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    first_run = "cron_aaaaaaaaaaaa_20260607_030107"
+    second_run = "cron_aaaaaaaaaaaa_20260607_090812"
+    other_job = "cron_bbbbbbbbbbbb_20260607_080012"
     plugin._on_pre_llm_call(session_id=first_run, platform="cron", sender_id="scheduler")
     plugin._taint_session(first_run, {"email"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id=first_run)
     approval_id = first_pending_id(plugin)
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always", user_id="kevin"))
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always", user_id="owner"))
     response = plugin._handle_guardian_command(f"approve {approval_id} always")
 
-    assert "always for cron job Ritz-Carlton AX 2026 availability check (41c2974734f8)" in response
+    assert "always for cron job Example Availability Check (aaaaaaaaaaaa)" in response
     data = json.loads((tmp_path / "rules.json").read_text())
-    assert data["privacy"]["rules"][0]["scope"]["cron_job_id"] == "41c2974734f8"
-    assert data["privacy"]["rules"][0]["scope"]["cron_job_name"] == "Ritz-Carlton AX 2026 availability check"
+    assert data["privacy"]["rules"][0]["scope"]["cron_job_id"] == "aaaaaaaaaaaa"
+    assert data["privacy"]["rules"][0]["scope"]["cron_job_name"] == "Example Availability Check"
     rules_text = plugin._handle_guardian_command("rules")
-    assert "Scope: [Cron] Ritz-Carlton AX 2026 availability check" in rules_text
+    assert "Scope: [Cron] Example Availability Check" in rules_text
     policy = plugin._policy_snapshot()
-    assert policy["rules"][0]["cron_job_id"] == "41c2974734f8"
-    assert policy["rules"][0]["scope"] == "cron job Ritz-Carlton AX 2026 availability check (41c2974734f8)"
+    assert policy["rules"][0]["cron_job_id"] == "aaaaaaaaaaaa"
+    assert policy["rules"][0]["scope"] == "cron job Example Availability Check (aaaaaaaaaaaa)"
 
     plugin._on_pre_llm_call(session_id=second_run, platform="cron", sender_id="scheduler")
     plugin._taint_session(second_run, {"email"})
@@ -383,7 +383,7 @@ def test_cron_always_approval_is_scoped_to_same_cron_job(monkeypatch, tmp_path):
 def test_configured_telegram_owner_exception_is_cron_only(monkeypatch):
     plugin = load_plugin()
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "attacker")
-    bind_owner(plugin, user_id="kevin")
+    bind_owner(plugin, user_id="owner")
     plugin._taint_session("s1", {"email"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")

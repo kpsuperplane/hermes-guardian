@@ -102,7 +102,7 @@ def test_facade_monkeypatches_sync_to_core_for_bridged_calls(monkeypatch):
 
     monkeypatch.setattr(plugin, "_now", lambda: 123.0)
 
-    plugin._on_pre_llm_call(session_id="s1", platform="telegram", sender_id="kevin")
+    plugin._on_pre_llm_call(session_id="s1", platform="telegram", sender_id="owner")
 
     assert plugin._CORE._now() == 123.0
 

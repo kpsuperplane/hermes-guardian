@@ -275,7 +275,7 @@ def _guardian_block_message(approval: dict[str, Any]) -> str:
         f"Destination: {approval['destination']}\n"
         f"{action_detail_line}"
         f"Data classes: {classes}\n\n"
-        "Kevin can approve with:\n"
+        "You can approve with:\n"
         f"/guardian approve {approval['id']} once\n"
         f"/guardian approve {approval['id']} session\n"
         f"/guardian approve {approval['id']} always\n"
@@ -377,6 +377,51 @@ def _remember_command_owner(raw_args: str, owner_hash: str) -> None:
         return
     with _LOCK:
         _RECENT_COMMAND_OWNERS.setdefault(key, []).append((_now(), owner_hash))
+
+
+def _owner_is_authenticated(owner_hash: str) -> bool:
+    """True only for the CLI owner or a configured gateway owner.
+
+    Group/cron/unauthenticated senders are excluded, so their inbound text is
+    never trusted as authorization evidence for the LLM verifier.
+    """
+    return bool(owner_hash) and (
+        owner_hash == _CLI_OWNER_HASH or owner_hash in _configured_owner_hashes()
+    )
+
+
+def _remember_user_request(event: Any) -> None:
+    """Cache a sanitized excerpt of an authenticated owner's inbound message.
+
+    Stored in volatile, owner-keyed process state only. The raw text is never
+    persisted; emails, phones, tokens, and URL paths are redacted before storage.
+    """
+    text = getattr(event, "text", "")
+    if not isinstance(text, str) or not text.strip():
+        return
+    owner_hash = _owner_hash_from_event(event)
+    if not _owner_is_authenticated(owner_hash):
+        return
+    sanitized = _redact_command_for_llm(text.strip())
+    if not sanitized:
+        return
+    with _LOCK:
+        _RECENT_OWNER_REQUESTS[owner_hash] = (_now(), sanitized)
+
+
+def _recent_user_request_for_owner(owner_hash: str) -> str:
+    """Most recent fresh sanitized request for an authenticated owner, else ""."""
+    if not _owner_is_authenticated(owner_hash):
+        return ""
+    with _LOCK:
+        entry = _RECENT_OWNER_REQUESTS.get(owner_hash)
+        if not entry:
+            return ""
+        timestamp, sanitized = entry
+        if _now() - timestamp > _USER_REQUEST_TTL_SECONDS:
+            _RECENT_OWNER_REQUESTS.pop(owner_hash, None)
+            return ""
+        return sanitized
 
 
 def _pop_command_owner(raw_args: str) -> str:

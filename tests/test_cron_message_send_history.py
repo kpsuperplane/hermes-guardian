@@ -14,7 +14,7 @@ from support import *  # noqa: F403
 
 def test_cron_message_send_block_recorded_in_dashboard_history(monkeypatch):
     plugin = load_plugin()
-    cron_session = "cron_41c2974734f8_20260608_093642"
+    cron_session = "cron_aaaaaaaaaaaa_20260608_093642"
 
     # Incident conditions: llm mode (default) with the verifier unavailable.
     assert plugin._privacy_policy() == "llm"
@@ -29,7 +29,7 @@ def test_cron_message_send_block_recorded_in_dashboard_history(monkeypatch):
     monkeypatch.setattr(
         plugin._CORE,
         "_cron_job_name",
-        lambda _job_id: "Ritz-Carlton AX 2026 availability check",
+        lambda _job_id: "Example Availability Check",
     )
     monkeypatch.setattr(
         plugin._CORE,

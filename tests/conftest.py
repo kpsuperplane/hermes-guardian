@@ -13,7 +13,12 @@ def clear_guardian_env(monkeypatch):
     monkeypatch.delenv("HERMES_GUARDIAN_STATE_DIR", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_LANGUAGE_PACKS", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_CRON_NOTIFY_TO", raising=False)
-    monkeypatch.delenv("HERMES_GUARDIAN_HERMES_CLI", raising=False)
+    # Safety net: never let a test reach the real Telegram sender. Even if a test
+    # resolves a delivery target and forgets to stub the send, the CLI fallback is
+    # a no-op and there is no bot token. Tests use synthetic cron job ids, so the
+    # default "origin" policy also resolves no real target.
+    monkeypatch.setenv("HERMES_GUARDIAN_HERMES_CLI", "/bin/true")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_ALLOWED_USERS", raising=False)

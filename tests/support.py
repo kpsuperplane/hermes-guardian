@@ -84,7 +84,7 @@ def parse_json(value: str):
     return json.loads(value)
 
 
-def gateway_event(text: str, *, user_id: str = "kevin", platform: str = "telegram"):
+def gateway_event(text: str, *, user_id: str = "owner", platform: str = "telegram"):
     return SimpleNamespace(
         text=text,
         source=SimpleNamespace(
@@ -95,7 +95,7 @@ def gateway_event(text: str, *, user_id: str = "kevin", platform: str = "telegra
     )
 
 
-def bind_owner(plugin, *, session_id: str = "s1", user_id: str = "kevin"):
+def bind_owner(plugin, *, session_id: str = "s1", user_id: str = "owner"):
     plugin._on_pre_llm_call(session_id=session_id, platform="telegram", sender_id=user_id)
 
 

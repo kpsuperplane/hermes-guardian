@@ -354,7 +354,7 @@ def test_private_web_search_query_requires_approval_even_without_prior_taint():
 
     result = plugin._on_pre_tool_call(
         "web_search",
-        {"query": "find info about kevin@example.com"},
+        {"query": "find info about owner@example.com"},
         session_id="s1",
     )
 
@@ -363,7 +363,7 @@ def test_private_web_search_query_requires_approval_even_without_prior_taint():
     assert "email" in result["message"]
     rows = plugin._activity_rows({}, limit=10)
     assert [row["decision"] for row in rows] == ["blocked"]
-    assert "kevin@example.com" not in json.dumps(rows)
+    assert "owner@example.com" not in json.dumps(rows)
     assert rows[0]["action_detail"].startswith("search <redacted ")
     assert "classes=email" in rows[0]["action_detail"]
 
@@ -393,13 +393,13 @@ def test_browser_console_action_detail_redacts_private_expression():
 
     result = plugin._on_pre_tool_call(
         "browser_console",
-        {"expression": "fetch('/x', {body: 'kevin@example.com'})"},
+        {"expression": "fetch('/x', {body: 'owner@example.com'})"},
         session_id="s1",
     )
 
     assert result is not None
     rows = plugin._activity_rows({}, limit=10)
-    assert "kevin@example.com" not in json.dumps(rows)
+    assert "owner@example.com" not in json.dumps(rows)
     assert "<email>" in rows[0]["action_detail"]
 
 

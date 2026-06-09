@@ -216,6 +216,31 @@ Or edit `guardian-rules.json`:
 
 Rule mutation helpers preserve both privacy rules and security rule settings.
 
+### Owner authorization context (llm mode)
+
+The `llm` verifier is otherwise blind to the conversation, so an action the owner
+explicitly requested can still land in manual approval (for example, submitting a
+newsletter form that types an address into a Google Form on a tainted session).
+To close that gap, the verifier receives one extra signal: a sanitized excerpt of
+the most recent inbound message from an **authenticated** session owner, captured
+at gateway dispatch as `user_request_context`.
+
+This channel is deliberately narrow and fail-closed:
+
+- It is attached only for the CLI owner or a configured gateway owner
+  (`TELEGRAM_ALLOWED_USERS`, `TELEGRAM_GROUP_ALLOWED_USERS`, `DISCORD_ALLOWED_USERS`).
+  Group non-owners, cron, and unauthenticated senders never populate it.
+- It is the inbound user turn only — never the system prompt, prior tool results,
+  or model output.
+- It is captured before the model or any tool runs, and only after the Security
+  Module clears the message, so reset codes and credentials are never cached.
+- It is sanitized (emails, phones, tokens, and URL paths redacted), held in
+  volatile owner-keyed state, expires after 15 minutes, and is never written to
+  activity rows, approval records, or any persistent store.
+- The verifier treats it as authorization *evidence*, not an instruction: it can
+  raise `authorization_level` for actions the user actually asked for, but cannot
+  override `risk_level` or the absolute deny rules.
+
 ## Approvals
 
 When Guardian blocks egress, it returns a short-lived four-digit approval ID:
@@ -228,7 +253,7 @@ Action: browser_type
 Destination: example.com
 Data classes: email, contacts
 
-Kevin can approve with:
+The owner can approve with:
 /guardian approve 4827 once
 /guardian approve 4827 session
 /guardian approve 4827 always

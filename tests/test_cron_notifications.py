@@ -18,10 +18,10 @@ from support import *  # noqa: F403
 def test_cron_block_sends_one_sanitized_home_channel_notification(monkeypatch):
     plugin = load_plugin()
     sent = []
-    cron_session = "cron_41c2974734f8_20260607_030107"
+    cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
 
     monkeypatch.setenv("HERMES_GUARDIAN_CRON_NOTIFY_TO", "telegram")
-    monkeypatch.setattr(plugin._CORE, "_cron_job_name", lambda _job_id: "Ritz-Carlton AX 2026 availability check")
+    monkeypatch.setattr(plugin._CORE, "_cron_job_name", lambda _job_id: "Example Availability Check")
     monkeypatch.setattr(
         plugin._CORE,
         "_send_cron_notification_message",
@@ -47,8 +47,8 @@ def test_cron_block_sends_one_sanitized_home_channel_notification(monkeypatch):
     message, target = sent[0]
     assert target == "telegram"
     assert "Hermes Guardian blocked a cron job action." in message
-    assert "Job: Ritz-Carlton AX 2026 availability check" in message
-    assert "Job ID: 41c2974734f8" in message
+    assert "Job: Example Availability Check" in message
+    assert "Job ID: aaaaaaaaaaaa" in message
     assert "Action: message_send" in message
     assert "Destination: messaging" in message
     assert "friend" not in message
@@ -67,15 +67,15 @@ def test_cron_block_sends_one_sanitized_home_channel_notification(monkeypatch):
 def test_cron_notification_defaults_to_job_delivery_targets(monkeypatch):
     plugin = load_plugin()
     sent = []
-    cron_session = "cron_41c2974734f8_20260607_030107"
+    cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
 
     monkeypatch.setattr(
         plugin._CORE,
         "_cron_job_record",
         lambda _job_id: {
-            "id": "41c2974734f8",
-            "name": "Ritz-Carlton AX 2026 availability check",
-            "deliver": ["telegram:-1003947695146:75", "local"],
+            "id": "aaaaaaaaaaaa",
+            "name": "Example Availability Check",
+            "deliver": ["telegram:-1000000000000:75", "local"],
         },
     )
     monkeypatch.setattr(
@@ -95,8 +95,8 @@ def test_cron_notification_defaults_to_job_delivery_targets(monkeypatch):
     assert result is not None
     assert wait_for(lambda: len(sent) == 1)
     message, target = sent[0]
-    assert target == "telegram:-1003947695146:75"
-    assert "Job: Ritz-Carlton AX 2026 availability check" in message
+    assert target == "telegram:-1000000000000:75"
+    assert "Job: Example Availability Check" in message
 
 
 def test_cron_notification_uses_telegram_copy_button_sender(monkeypatch):
@@ -116,12 +116,12 @@ def test_cron_notification_uses_telegram_copy_button_sender(monkeypatch):
 
     plugin._send_cron_notification_message(
         "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 always\n",
-        "telegram:-1003947695146:75",
+        "telegram:-1000000000000:75",
     )
 
     assert sent == [(
         "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 always\n",
-        "telegram:-1003947695146:75",
+        "telegram:-1000000000000:75",
         "/guardian approve 1234 always",
     )]
 
@@ -174,19 +174,19 @@ def test_cron_notification_falls_back_to_cli_when_telegram_copy_sender_fails(mon
 
     plugin._send_cron_notification_message(
         "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 always\n",
-        "telegram:-1003947695146:75",
+        "telegram:-1000000000000:75",
     )
 
     assert calls
     command, kwargs = calls[0]
-    assert command == [plugin._hermes_cli_path(), "send", "--to", "telegram:-1003947695146:75", "--quiet", "--file", "-"]
+    assert command == [plugin._hermes_cli_path(), "send", "--to", "telegram:-1000000000000:75", "--quiet", "--file", "-"]
     assert kwargs["input"] == "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 always\n"
 
 
 def test_cron_notification_can_be_disabled(monkeypatch):
     plugin = load_plugin()
     sent = []
-    cron_session = "cron_41c2974734f8_20260607_030107"
+    cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
 
     monkeypatch.setenv("HERMES_GUARDIAN_CRON_NOTIFY_TO", "off")
     monkeypatch.setattr(

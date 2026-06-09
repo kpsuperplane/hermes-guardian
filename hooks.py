@@ -163,7 +163,12 @@ def _on_pre_gateway_dispatch_impl(event: Any = None, **_: Any) -> dict[str, Any]
         raw_args = text.strip()[len("/guardian"):].strip()
         _remember_command_owner(raw_args, _owner_hash_from_event(event))
         return None
-    return _security_pre_gateway_dispatch(event)
+    security_result = _security_pre_gateway_dispatch(event)
+    if security_result is None:
+        # Only cache the request after the Security Module clears the message,
+        # so sensitive content (reset codes, credentials) is never stored.
+        _remember_user_request(event)
+    return security_result
 
 
 def _on_pre_gateway_dispatch(event: Any = None, **kwargs: Any) -> dict[str, Any] | None:

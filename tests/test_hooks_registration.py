@@ -41,13 +41,13 @@ def test_transform_llm_output_removes_sensitive_email_rows_from_final_response()
     transformed = plugin._on_transform_llm_output(
         response_text=(
             "Loaded your 3 most recent inbox emails:\n\n"
-            "1. From: Kevin Pei <...@hotmail.com>\n"
+            "1. From: Alex Rivera <...@hotmail.com>\n"
             "   Subject: Hello\n"
             "   ID: normal\n\n"
             "2. From: GitHub <noreply@github.com>\n"
             "   Subject: [redacted sensitive subject]\n"
             "   ID: sensitive-a\n\n"
-            "3. From: Kevin Pei <...@hotmail.com>\n"
+            "3. From: Alex Rivera <...@hotmail.com>\n"
             "   Subject: One time [redacted]\n"
             "   ID: sensitive-b\n"
         )

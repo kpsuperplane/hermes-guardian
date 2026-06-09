@@ -158,16 +158,16 @@ def test_transform_tool_result_removes_sensitive_plain_text_records():
         result=(
             "From: GitHub\n"
             "Subject: A new public key was added\n\n"
-            "From: Kevin Pei\n"
+            "From: Alex Rivera\n"
             "Subject: Hello\n"
             "Body: How are you?\n\n"
-            "From: Kevin Pei\n"
+            "From: Alex Rivera\n"
             "Subject: One time [redacted]\n"
         ),
     )
 
     parsed = parse_json(transformed)
-    assert parsed["result"] == "From: Kevin Pei\nSubject: Hello\nBody: How are you?"
+    assert parsed["result"] == "From: Alex Rivera\nSubject: Hello\nBody: How are you?"
     assert parsed["hermes_guardian"]["suppressed_count"] == 2
     assert parsed["hermes_guardian"]["reason"] == "security key change"
 

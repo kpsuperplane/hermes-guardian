@@ -242,7 +242,7 @@ def test_tainted_final_response_to_owner_private_destination_is_allowed():
         "private summary",
         session_id="s1",
         platform="telegram",
-        sender_id="kevin",
+        sender_id="owner",
         chat_type="private",
     )
 

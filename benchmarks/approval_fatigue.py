@@ -248,7 +248,7 @@ def _workflows() -> tuple[Workflow, ...]:
         ),
         Workflow(
             name="cron_digest",
-            session_id="cron_41c2974734f8_20260607_030107",
+            session_id="cron_aaaaaaaaaaaa_20260607_030107",
             platform="cron",
             sender_id="scheduler",
             steps=(
@@ -258,7 +258,7 @@ def _workflows() -> tuple[Workflow, ...]:
                     "send_digest",
                     "tool",
                     "send_message",
-                    {"to": "telegram:-1003947695146:75", "text": "Digest for BENCH-SECRET-EMAIL-BODY"},
+                    {"to": "telegram:-1000000000000:75", "text": "Digest for BENCH-SECRET-EMAIL-BODY"},
                     expected_prompt=True,
                 ),
                 Step(
