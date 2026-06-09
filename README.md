@@ -4,6 +4,8 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Hermes Plugin](https://img.shields.io/badge/Hermes-plugin-0f766e.svg)](https://github.com/NousResearch/hermes-agent)
 
+<img width="400" alt="CleanShot 2026-06-08 at 22 40 52@2x" src="https://github.com/user-attachments/assets/17a265ad-80c3-482c-8c67-269574dc820c" />
+
 Security and privacy policy controls for personal Hermes agents.
 
 Hermes Guardian is a user plugin for
@@ -30,8 +32,6 @@ Guardian adds two policy layers:
 - **Privacy Module**: session taint, egress classification, privacy modes,
   optional declassification rules, and metadata-only activity history for
   private data flows.
-
-  <img width="400" alt="CleanShot 2026-06-08 at 22 38 35@2x" src="https://github.com/user-attachments/assets/cf6eed1b-2e00-47e0-a690-59f883aaf987" />
 
   
 ## Why Guardian?
