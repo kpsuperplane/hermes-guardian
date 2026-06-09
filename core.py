@@ -66,11 +66,56 @@ _language = _load_relative_module("language_packs.runtime", "language_packs/runt
 _PLUGIN_NAME = "hermes-guardian"
 _FORMER_PLUGIN_NAME = "privacy-egress-guard"
 _COMMAND_NAME = "guardian"
-_UNSAFE_DIAGNOSTICS_FLAG = Path(__file__).with_name(".unsafe-diagnostics")
-_PERSISTENT_RULES_PATH = Path(__file__).with_name("guardian-rules.json")
+
+# Persistent state (activity DB, allow rules, HMAC key, diagnostics flag) lives
+# next to the plugin code by default. Set HERMES_GUARDIAN_STATE_DIR to point every
+# runtime context (gateway, CLI, cron) at one shared directory; legacy co-located
+# files are migrated into it on first use so the dashboard never loses history or
+# the operator's saved allow rules.
+_STATE_FILENAMES = ("guardian-rules.json", "activity.sqlite3", ".guardian-hmac-key", ".unsafe-diagnostics")
+
+
+def _migrate_legacy_state(legacy_dir: Path, state_dir: Path) -> None:
+    if legacy_dir == state_dir:
+        return
+    for name in _STATE_FILENAMES:
+        src = legacy_dir / name
+        dst = state_dir / name
+        if not src.exists() or dst.exists():
+            continue
+        tmp = dst.with_name(dst.name + ".migrating.tmp")
+        tmp.write_bytes(src.read_bytes())
+        if name == ".guardian-hmac-key":
+            try:
+                tmp.chmod(0o600)
+            except OSError:
+                pass
+        os.replace(tmp, dst)
+
+
+def _resolve_state_dir() -> Path:
+    override = os.environ.get("HERMES_GUARDIAN_STATE_DIR", "").strip()
+    if not override:
+        return _PLUGIN_ROOT
+    state_dir = Path(override).expanduser()
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        _migrate_legacy_state(_PLUGIN_ROOT, state_dir)
+    except Exception as exc:
+        logger.warning(
+            "%s: state dir %s unusable (%s); falling back to plugin dir",
+            _PLUGIN_NAME, state_dir, exc,
+        )
+        return _PLUGIN_ROOT
+    return state_dir
+
+
+_STATE_DIR = _resolve_state_dir()
+_UNSAFE_DIAGNOSTICS_FLAG = _STATE_DIR / ".unsafe-diagnostics"
+_PERSISTENT_RULES_PATH = _STATE_DIR / "guardian-rules.json"
 _PERSISTENT_RULES_MTIME: float | None = None
-_ACTIVITY_DB_PATH = Path(__file__).with_name("activity.sqlite3")
-_GUARDIAN_HMAC_KEY_PATH = Path(__file__).with_name(".guardian-hmac-key")
+_ACTIVITY_DB_PATH = _STATE_DIR / "activity.sqlite3"
+_GUARDIAN_HMAC_KEY_PATH = _STATE_DIR / ".guardian-hmac-key"
 _APPROVAL_TTL_SECONDS = 10 * 60
 _APPROVAL_ID_REUSE_SECONDS = 7 * 24 * 60 * 60
 _RECENT_COMMAND_TTL_SECONDS = 30
