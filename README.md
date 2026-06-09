@@ -35,21 +35,6 @@ pattern cannot see provenance-private data at all, because there is no pattern t
 match. Guardian's primary protected asset is exactly this content, tracked by
 origin rather than by shape.
 
-Among practical, local-first, default-configured personal-agent guards, treating
-provenance-private personal content as the primary protected asset is
-distinctive. Two honest caveats keep that claim calibrated:
-
-- The goal is not conceptually new. Guardian descends from a privacy-research
-  lineage — GAAP, RTBAS, and contextual integrity — that already targets
-  personal-data confidentiality. Guardian is the deployable, default
-  instantiation of that goal for an existing agent runtime, not a new idea about
-  what to protect.
-- Other tools *can* express non-credential data-flow rules. Invariant
-  Guardrails, for instance, can encode exactly the email `get_inbox -> send_email`
-  shape — but it requires user-authored flow rules and runs as an enterprise
-  proxy with a telemetry path. Guardian applies that kind of protection by
-  default, by provenance, and locally.
-
 Agents also have many outbound surfaces: messages, MCP writes, browser forms,
 URLs, search queries, terminal commands, code execution, model APIs, cron jobs,
 and final responses.
