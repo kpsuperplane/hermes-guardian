@@ -30,6 +30,9 @@ Guardian adds two policy layers:
 - **Privacy Module**: session taint, egress classification, privacy modes,
   optional declassification rules, and metadata-only activity history for
   private data flows.
+
+  <img width="400" alt="CleanShot 2026-06-08 at 22 38 35@2x" src="https://github.com/user-attachments/assets/cf6eed1b-2e00-47e0-a690-59f883aaf987" />
+
   
 ## Why Guardian?
 
