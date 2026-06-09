@@ -42,6 +42,9 @@ def test_recognized_read_tools_not_gated_under_taint():
     assert plugin._on_pre_tool_call("gmail_get", {"id": "1"}, session_id="s1") is None
     assert plugin._on_pre_tool_call("cronjob", {"action": "list"}, session_id="s1") is None
     assert plugin._on_pre_tool_call("browser_navigate", {"url": "https://example.com"}, session_id="s1") is None
+    # skill_view is a read-only built-in (the read counterpart to skill_manage)
+    # and must not be mistaken for an unknown sink under taint.
+    assert plugin._on_pre_tool_call("skill_view", {"name": "deep-research"}, session_id="s1") is None
 
 
 def test_unknown_tools_allow_mode_reverts_to_legacy_allow():

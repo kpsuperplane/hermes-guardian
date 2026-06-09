@@ -147,7 +147,11 @@ def test_unavailable_hmac_key_suppresses_result_fail_closed(tmp_path):
     assert "fail-closed" in parsed["hermes_guardian"]["reason"]
 
 
-def test_raw_content_absent_from_session_activity_approval_and_llm_input():
+def test_raw_content_stays_out_of_storage_but_reaches_llm_verifier():
+    # In llm mode the verifier (the same provider the agent already uses) reads the
+    # real payload so it can judge content/intent. Persistent state stays
+    # metadata-only: raw content must never enter session state, activity rows, or
+    # approval records.
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake_llm = FakeSecurityLlm({
@@ -167,16 +171,18 @@ def test_raw_content_absent_from_session_activity_approval_and_llm_input():
     )
 
     assert result is not None
-    combined = "\n".join(
+    storage = "\n".join(
         [
             repr(plugin._SESSIONS),
             json.dumps(plugin._activity_rows({}, limit=20), sort_keys=True),
             json.dumps(plugin._PENDING_APPROVALS, sort_keys=True),
-            json.dumps(fake_llm.calls, sort_keys=True, default=str),
         ]
     )
-    assert COPIED_EMAIL_PHRASE not in combined
-    assert "provenance-v1" not in combined
+    assert COPIED_EMAIL_PHRASE not in storage
+    assert "provenance-v1" not in storage
+    # The verifier input, by contrast, deliberately carries the real payload.
+    llm_input = json.dumps(fake_llm.calls, sort_keys=True, default=str)
+    assert COPIED_EMAIL_PHRASE in llm_input
 
 
 def test_reset_clears_provenance_but_session_end_does_not():

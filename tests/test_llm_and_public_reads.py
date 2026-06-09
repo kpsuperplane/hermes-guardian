@@ -70,7 +70,7 @@ def test_llm_privacy_denial_falls_back_to_manual_approval(monkeypatch):
     assert any("llm high" in row["reason"] for row in rows)
 
 
-def test_llm_verifier_input_includes_safe_contextual_metadata_without_raw_recipient():
+def test_llm_verifier_input_carries_real_payload_with_pseudonymous_planned_action():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake_llm = FakeSecurityLlm({
@@ -91,15 +91,16 @@ def test_llm_verifier_input_includes_safe_contextual_metadata_without_raw_recipi
 
     payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
     planned = payload["planned_action"]
-    encoded = json.dumps(payload, sort_keys=True)
+    # planned_action stays metadata-only (pseudonymous recipient, normalized purpose).
     assert planned["destination"] == "messaging"
     assert planned["purpose"] == "support_followup"
     assert planned["recipient_identity"].startswith("recipient_")
-    assert "friend@example.com" not in encoded
-    assert "private summary" not in encoded
+    # The action payload is now the real content so the verifier can judge it.
+    assert payload["action_arguments"]["text"] == "private summary"
+    assert payload["action_arguments"]["to"] == "friend@example.com"
 
 
-def test_llm_verifier_input_summarizes_unclassified_strings_under_unknown_keys():
+def test_llm_verifier_input_carries_real_argument_content():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake_llm = FakeSecurityLlm({
@@ -120,11 +121,73 @@ def test_llm_verifier_input_summarizes_unclassified_strings_under_unknown_keys()
     )
 
     payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
-    encoded = json.dumps(payload, sort_keys=True)
-    assert raw_note not in encoded
-    assert payload["sanitized_arguments"]["notes"]["redacted"] is True
-    assert payload["sanitized_arguments"]["notes"]["length"] == len(raw_note)
-    assert "word_count" in payload["sanitized_arguments"]["notes"]["shape"]
+    assert payload["action_arguments"]["notes"] == raw_note
+
+
+def test_llm_verifier_input_still_redacts_security_sensitive_payload():
+    plugin = load_plugin()
+
+    summary = plugin._safe_arg_summary_for_llm({"text": "your verification code is 845213"})
+
+    assert summary["text"] == "<redacted: security-sensitive content>"
+
+
+def test_url_redactor_returns_string_for_malformed_url():
+    # _sanitize_url_for_llm feeds command/context redaction via re.sub, so it must
+    # return a string even for an unparseable URL.
+    plugin = load_plugin()
+
+    assert plugin._sanitize_url_for_llm("http://") == "<redacted-url>"
+    assert isinstance(plugin._redact_command_for_llm("visit http:// now"), str)
+
+
+_CAL_EVENT = "Dentist appointment with Dr. Sarah Lee on Tuesday at 3:00 PM, 200 Main Street, bring insurance card"
+
+
+def _verdict_input_for_submit(plugin, typed, session_id="s1"):
+    args = {"text": typed}
+    shape = plugin._approval_shape(
+        session_id=session_id,
+        tool_name="browser_type",
+        action_family="browser_type",
+        destination="docs.google.com",
+        data_classes=plugin._data_classes_for_egress(session_id, args),
+        args=args,
+    )
+    return plugin._llm_verdict_input(shape, args)
+
+
+def test_verdict_input_exposes_real_content_and_provenance_of_export():
+    # A calendar event the agent read, then submits into a form, reaches the verifier
+    # as both the real text AND a calendar-sourced provenance label.
+    plugin = load_plugin()
+    plugin._record_provenance_from_tool_result(
+        "s1", "calendar_list_events", {"summary": _CAL_EVENT}, {"calendar"}
+    )
+    plugin._taint_session("s1", {"calendar"})
+
+    payload = _verdict_input_for_submit(plugin, _CAL_EVENT)
+
+    assert payload["action_arguments"]["text"] == _CAL_EVENT
+    assert payload["privacy_context"]["exported_source_classes"] == ["calendar"]
+
+
+def test_verdict_input_distinguishes_email_payload_from_ambient_calendar_scope():
+    # Calendar is ambiently in scope (read earlier), but the agent submits a bare
+    # email address. The payload carries no tracked private source, so the verifier
+    # sees an email export, not the calendar.
+    plugin = load_plugin()
+    plugin._record_provenance_from_tool_result(
+        "s1", "calendar_list_events", {"summary": _CAL_EVENT}, {"calendar"}
+    )
+    plugin._taint_session("s1", {"calendar"})
+
+    payload = _verdict_input_for_submit(plugin, "reader@example.com")
+
+    assert payload["action_arguments"]["text"] == "reader@example.com"
+    assert payload["privacy_context"]["exported_source_classes"] == []
+    # Ambient scope still reflects the calendar read, but it is not being exported.
+    assert "calendar" in payload["privacy_context"]["classes_in_scope"]
 
 
 def test_llm_privacy_hard_block_skips_model_and_pending_approval(monkeypatch):

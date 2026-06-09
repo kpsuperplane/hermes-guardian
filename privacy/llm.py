@@ -140,10 +140,10 @@ def _read_only_auto_approves(shape: dict[str, Any], args: Any) -> bool:
     return False
 
 
-def _sanitize_url_for_llm(value: str) -> Any:
+def _sanitize_url_for_llm(value: str) -> str:
     parsed = urlparse(value)
     if not parsed.scheme or not parsed.hostname:
-        return _string_shape_summary_for_llm(value)
+        return "<redacted-url>"
     netloc = parsed.hostname.lower()
     try:
         port = parsed.port
@@ -164,29 +164,33 @@ def _redact_command_for_llm(command: str) -> str:
     return command[:500]
 
 
-def _string_shape_summary_for_llm(value: str, *, reason: str | None = None, classes: list[str] | None = None) -> dict[str, Any]:
-    return {
-        "redacted": True,
-        "length": len(value),
-        "privacy_classes": list(classes or []),
-        "security_sensitive": bool(reason),
-        "shape": {
-            "has_url": bool(_extract_urls(value)),
-            "has_email": bool(_EMAIL_ADDRESS_RE.search(value)),
-            "has_phone": bool(_PHONE_RE.search(value)),
-            "has_token_like": bool(re.search(r"\b[A-Za-z0-9_-]{24,}\b", value)),
-            "word_count": len(re.findall(r"\w+", value)),
-        },
-    }
+_LLM_PAYLOAD_VALUE_MAX_CHARS = 2000
 
 
-def _safe_arg_summary_for_llm(value: Any, *, key: str = "", depth: int = 0) -> Any:
+def _payload_string_for_llm(value: str) -> str:
+    """Return the real string for the verifier, with security-sensitive content removed.
+
+    In llm mode the verifier sees the actual action payload (the same LLM/provider
+    already processes all of this content as the agent), so it can judge whether the
+    content matches the authorized intent. Security-sensitive content is still
+    stripped: such args are hard-blocked upstream before privacy runs, and this is
+    defense in depth. Credential-shaped tokens are removed even inside benign text,
+    and length is bounded.
+    """
+    if _sensitive_reason(value):
+        return "<redacted: security-sensitive content>"
+    redacted = re.sub(r"\b[A-Za-z0-9_-]{24,}\b", "<token-like>", value)
+    if len(redacted) > _LLM_PAYLOAD_VALUE_MAX_CHARS:
+        redacted = redacted[:_LLM_PAYLOAD_VALUE_MAX_CHARS] + "<...truncated>"
+    return redacted
+
+
+def _safe_arg_summary_for_llm(value: Any, *, depth: int = 0) -> Any:
     if depth > 4:
         return "<max-depth>"
-    key_l = str(key or "").lower()
     if isinstance(value, dict):
         return {
-            str(k)[:80]: _safe_arg_summary_for_llm(v, key=str(k), depth=depth + 1)
+            str(k)[:80]: _safe_arg_summary_for_llm(v, depth=depth + 1)
             for k, v in list(value.items())[:40]
         }
     if isinstance(value, list):
@@ -194,18 +198,23 @@ def _safe_arg_summary_for_llm(value: Any, *, key: str = "", depth: int = 0) -> A
     if isinstance(value, tuple):
         return [_safe_arg_summary_for_llm(item, depth=depth + 1) for item in value[:20]]
     if isinstance(value, str):
-        reason = _sensitive_reason(value)
-        classes = sorted(_classes_from_content(value))
-        if key_l in _LLM_URL_KEYS:
-            return _sanitize_url_for_llm(value)
-        if key_l in _LLM_COMMAND_OR_CODE_KEYS:
-            return _redact_command_for_llm(value)
-        if key_l in _LLM_CONTENT_KEYS or reason or classes:
-            return _string_shape_summary_for_llm(value, reason=reason, classes=classes)
-        return _string_shape_summary_for_llm(value, reason=reason, classes=classes)
+        return _payload_string_for_llm(value)
     if isinstance(value, (int, float, bool)) or value is None:
         return value
     return f"<{type(value).__name__}>"
+
+
+def _sanitize_rationale(text: str) -> str:
+    """Strip personal data from a verdict rationale before it is shown or stored.
+
+    The rationale is persisted into activity/approval rows. The verifier is also
+    prompted to keep it class-level, but redact defensively: emails, phones, and
+    credential-shaped tokens never reach at-rest storage.
+    """
+    text = _EMAIL_ADDRESS_RE.sub("<email>", str(text or ""))
+    text = _PHONE_RE.sub("<phone>", text)
+    text = re.sub(r"\b[A-Za-z0-9_-]{24,}\b", "<token-like>", text)
+    return text.strip()[:240]
 
 
 def _llm_hard_deny_reason(shape: dict[str, Any], args: Any) -> str | None:
@@ -238,10 +247,19 @@ def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:
             "data_classes": sorted(shape.get("data_classes") or []),
             "argument_shape_fingerprint": shape.get("fingerprint", ""),
         },
-        "sanitized_arguments": _safe_arg_summary_for_llm(args),
+        # The actual action payload, with security-sensitive content removed. The
+        # verifier reads the real content so it can check it against the authorized
+        # intent (e.g. notice an email field carrying a calendar event).
+        "action_arguments": _safe_arg_summary_for_llm(args),
         "privacy_context": {
             "session_has_private_data": bool(shape.get("data_classes")),
+            # Ambient classes the session has READ (may be broader than what this
+            # call exports). Do not treat presence here as proof of export.
             "classes_in_scope": sorted(shape.get("data_classes") or []),
+            # Private sources the submitted arguments PROVABLY carry (object-level
+            # provenance over this call's payload). This is what is actually being
+            # exported now. Empty means no tracked private content matched.
+            "exported_source_classes": sorted(_provenance_match_classes(shape.get("session_id"), args)),
             "security_sensitive_content_already_hard_blocked": True,
             "manual_approval_available_if_denied": True,
         },
@@ -288,7 +306,7 @@ def _validated_llm_security_verdict(parsed: Any) -> dict[str, str]:
         "outcome": outcome,
         "risk_level": risk_level[:32],
         "authorization_level": authorization_level[:32],
-        "rationale": rationale[:1000],
+        "rationale": _sanitize_rationale(rationale),
     }
 
 

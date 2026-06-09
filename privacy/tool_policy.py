@@ -715,6 +715,7 @@ _KNOWN_BUILTIN_TOOL_NAMES = frozenset({
     "todo",
     "memory",
     "skill_manage",
+    "skill_view",
     "ha_call_service",
     "computer_use",
     "delegate_task",

@@ -6,6 +6,16 @@ def _activity_connect() -> sqlite3.Connection:
     _ACTIVITY_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(_ACTIVITY_DB_PATH), timeout=2.0)
     conn.row_factory = sqlite3.Row
+    # WAL lets dashboard reads (e.g. the history page) proceed against a
+    # consistent snapshot while activity writes are in flight, instead of
+    # blocking on the writer's lock up to the busy timeout. synchronous=NORMAL
+    # is the safe/standard pairing for WAL. Both are best-effort; an old SQLite
+    # or a read-only volume simply keeps the previous (rollback-journal) mode.
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except sqlite3.Error:
+        pass
     return conn
 
 
@@ -244,9 +254,18 @@ def _prune_activity_db(*, force: bool = False) -> dict[str, int]:
                 ).rowcount
             remaining = int(conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0])
         if deleted:
+            # The table is bounded by row count / retention, so its file size
+            # self-limits at steady state -- a full VACUUM after every prune is
+            # unnecessary churn and (before WAL) was the main source of the
+            # multi-second exclusive lock that stalled dashboard reads. Just
+            # truncate the WAL so it doesn't grow unbounded; this does not block
+            # concurrent readers the way VACUUM does.
             with _activity_connect() as conn:
                 conn.isolation_level = None
-                conn.execute("VACUUM")
+                try:
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except sqlite3.Error:
+                    pass
     except Exception as exc:
         logger.debug("%s: failed to prune activity db: %s", _PLUGIN_NAME, exc)
     return {"deleted": int(deleted or 0), "remaining": remaining}

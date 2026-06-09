@@ -166,6 +166,25 @@ def test_datatables_payload_sort_whitelist_and_invalid_sort_fallback(monkeypatch
     assert [row["tool"] for row in fallback_payload["data"]] == ["alpha", "zeta"]
 
 
+def test_activity_db_uses_wal_so_reads_dont_block_on_writes():
+    # Regression: the history page stalled ~2s because reads blocked on the
+    # writer's lock (rollback-journal mode) while activity was being written and
+    # VACUUM'd. WAL lets readers proceed against a snapshot instead. Pin the mode
+    # so it can't silently revert to a blocking journal.
+    plugin = load_plugin()
+    plugin._emit_activity("blocked", session_id="s1", tool_name="t", reason="r")
+
+    with plugin._activity_connect() as conn:
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+    assert str(mode).lower() == "wal"
+
+    # Pruning must not knock the DB out of WAL (it previously ran a full VACUUM).
+    plugin._prune_activity_db(force=True)
+    with plugin._activity_connect() as conn:
+        mode_after_prune = conn.execute("PRAGMA journal_mode").fetchone()[0]
+    assert str(mode_after_prune).lower() == "wal"
+
+
 def test_activity_grouping_collapses_quick_same_tool_calls():
     plugin = load_plugin()
     rows = [

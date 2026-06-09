@@ -79,8 +79,11 @@ export function SettingsTab({
       <div className="hermes-guardian-card">
         <div className="hermes-guardian-card-title">LLM approval context</div>
         <div className="hermes-guardian-muted hermes-guardian-section-description">
-          In llm mode, the verifier is otherwise blind to the conversation. These
-          settings feed it sanitized authorization evidence. High-risk cron egress
+          In llm mode, the verifier reads the real action payload (the same model
+          Hermes already runs as the agent) so it can check content against intent;
+          security-sensitive content is still stripped and stored rationales are
+          sanitized. This assumes the verifier LLM shares the agent's trust boundary.
+          The settings below feed it authorization evidence; high-risk cron egress
           always still requires manual approval, even with cron context on.
         </div>
         <div className="hermes-guardian-grid">

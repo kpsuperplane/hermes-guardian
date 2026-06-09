@@ -139,8 +139,19 @@ the tests/docs are updated accordingly:
   disable Security Module blocking/suppression.
 - `read-only` mode should auto-approve only metadata-verified low-risk actions.
   Anything uncertain falls back to manual approval.
-- `llm` mode must send only sanitized metadata to the verifier. Raw private
-  content must not enter `_llm_verdict_input`. The one conversation-derived input
+- `llm` mode sends the verifier the real action payload (`action_arguments`) so
+  it can judge content against intent. This is deliberate: the verifier is the
+  same model/provider (`ctx.llm`) the agent already uses to process all of this
+  content, so redacting it from the verifier protects nothing against the
+  provider while crippling its judgment. The boundary still preserved is
+  at-rest/storage, not model visibility: security-sensitive content is still
+  stripped from the payload (`_payload_string_for_llm` — and such args are
+  hard-blocked upstream anyway), credential-shaped tokens are removed, and the
+  verdict rationale is sanitized (`_sanitize_rationale`) before it is shown or
+  stored. Persistent state stays metadata-only regardless (see below). This
+  relaxation assumes the configured verifier LLM shares the agent's trust
+  boundary; the owner is responsible for which LLMs they connect.
+  The one conversation-derived input
   is `user_request_context`: a sanitized excerpt of the most recent inbound
   message from an authenticated session owner (CLI or configured gateway owner),
   captured at gateway dispatch after the Security Module clears it. It is the
@@ -154,6 +165,14 @@ the tests/docs are updated accordingly:
   sanitized stored instruction. Because cron runs unattended, a cron job may
   never self-authorize high-risk egress: a high-risk `allow` verdict on a cron
   session is always downgraded to manual approval, even with cron context on.
+  Authorization is data-class-scoped, not action-only. The verifier input
+  distinguishes ambient `classes_in_scope` (what the session has read) from
+  per-argument `source_classes` and `exported_source_classes` (object-level
+  provenance over this call's payload — what is actually being exported). These
+  are sanitized class labels, never raw content. Context channels authorize only
+  the data classes intrinsic to the request, so authorization cannot launder an
+  export whose provenance shows content from a source the request did not call
+  for (e.g. a calendar event submitted into an email subscription form).
 - Final model responses are egress. Tainted responses to owner-private CLI/DM
   destinations may pass; tainted responses to group, cron, or unknown
   destinations are suppressed.
@@ -431,7 +450,9 @@ sharing process-global state across tests.
 - Adding a normal import that works when a file is imported directly but fails
   when `core.py` exec-loads it.
 - Storing raw tool args or content in activity rows, approval records, dashboard
-  payloads, notification messages, or LLM verifier input.
+  payloads, or notification messages. (The `llm` verifier input is the deliberate
+  exception — it receives the real payload — but its output rationale and all
+  persisted state must still be sanitized.)
 - Letting privacy allow rules bypass Security Module findings.
 - Treating unknown MCP tools as safe reads under taint.
 - Allowing URL paths, query strings, search text, browser typed text, shell

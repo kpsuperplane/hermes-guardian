@@ -182,7 +182,7 @@ private-context egress is handled by default:
 | --- | --- |
 | `strict` | Require manual approval for tainted egress by default. Optional allow rules can preapprove known routes. |
 | `read-only` | Auto-approve only metadata-verified low-risk reads; ask for approval otherwise. Optional rules can further narrow or preapprove routes. |
-| `llm` | Run deterministic hard blocks first, then ask a sanitized LLM verifier for low-risk judgment. Optional rules can override known routes. |
+| `llm` | Run deterministic hard blocks first, then ask an LLM verifier for low-risk judgment. The verifier reads the real action payload (see note below). Optional rules can override known routes. |
 | `off` | Disable private-egress approval checks. Security-sensitive content is still blocked. |
 
 The default mode is `llm`.
@@ -240,6 +240,34 @@ This channel is deliberately narrow and fail-closed:
 - The verifier treats it as authorization *evidence*, not an instruction: it can
   raise `authorization_level` for actions the user actually asked for, but cannot
   override `risk_level` or the absolute deny rules.
+- Authorization is scoped to the data actually being sent, not just the action.
+  The verifier reads the real `action_arguments` (below) and also gets
+  `exported_source_classes` — the private sources the payload provably carries —
+  separately from the ambient classes the session has merely read. A request
+  authorizes only the data classes intrinsic to it, so "subscribe me to this
+  newsletter" cannot launder a calendar event into the form: a bare email address
+  still auto-approves, but a calendar event in the same field does not, even though
+  both ran with the calendar ambiently in scope.
+
+**What the verifier sees.** In `llm` mode the verifier receives the **real action
+payload**, not a redacted shape of it, so it can check that the content matches the
+authorized intent. This is intentional: the verifier is the *same* model/provider
+Hermes already uses as the agent, which processes all of this content anyway —
+redacting it from the verifier would protect nothing against the provider while
+blinding the check. The boundary that is still enforced is at-rest exposure, not
+model visibility:
+
+- Security-sensitive content (credentials, OTPs, reset links) is still stripped
+  from the payload, and credential-shaped tokens are removed.
+- The verdict rationale is sanitized (emails, phones, tokens redacted) before it is
+  shown or written to activity/approval storage, and the verifier is prompted to
+  keep it class-level.
+- Persistent state (activity, approvals, dashboard, notifications) stays
+  metadata-only.
+
+This assumes the verifier LLM shares the agent's trust boundary. Since you choose
+which LLMs Hermes connects to, that assumption is yours to own; enabling `llm` mode
+opts into it.
 
 Both context channels are toggleable, in the dashboard Settings tab, by slash
 command, or directly in `guardian-rules.json` under `privacy`:
