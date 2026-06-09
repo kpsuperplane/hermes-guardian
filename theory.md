@@ -29,8 +29,6 @@ Under those assumptions, Guardian provides a useful confidentiality boundary for
 
 The combined Hermes + Guardian stack is comparable in shape to modern industry agent-security systems: containment and credential minimization below, source/sink or action inspection above, and user approval for ambiguous or sensitive flows. It remains less formal than research systems such as CaMeL, RTBAS, and GAAP, but it is more directly deployable for a general-purpose local personal agent.
 
-What most distinguishes Guardian among practical, local-first, default-configured personal-agent guards is the asset it makes primary. Pattern-based tools — DLP, PII and secret scanners, CodeShield — protect signature-detectable data; they are structurally blind to content whose only marker of privacy is its provenance, because there is no pattern for them to match. Guardian's source-based taint protects that provenance-private content by origin, which is why its data classes are email, contacts, calendar, and documents rather than secret patterns: a different protected asset, not a weaker secret scanner. Two caveats keep this calibrated. The goal is an instantiation, not an invention — the GAAP / RTBAS / contextual-integrity lineage already targets personal-data confidentiality, so Guardian is its deployable, default form rather than a new claim about what to protect. And other tools can express non-credential data-flow rules: Invariant Guardrails, for example, can encode the email `get_inbox -> send_email` shape, but only given user-authored flow rules and a proxy deployment with a telemetry path. Guardian's narrower claim is that it makes provenance-private personal content the default protected asset, locally and without authored flow rules.
-
 ## Background: the agent exfiltration problem
 
 Prompt injection is dangerous in personal agents because the agent often combines three capabilities:
@@ -41,15 +39,11 @@ Prompt injection is dangerous in personal agents because the agent often combine
 
 This combination is sometimes called the “lethal trifecta.” A malicious email, web page, calendar event, or document does not need to break the model in a dramatic way. It only has to influence the agent to encode private information into a URL, search query, browser action, message, API call, file upload, or final response.
 
-Traditional prompt-injection defenses often focus on recognizing malicious instructions. That approach is useful as hygiene, but it is brittle. Attackers can paraphrase instructions, hide them in data, encode them, or frame them as legitimate workflow steps.
-
-Guardian uses a different enforcement point. It treats prompt injection as an expected failure mode and focuses on egress:
+Guardian treats prompt injection as an expected failure mode and enforces at egress instead of trying to recognize malicious instructions (see the Abstract):
 
 ```text
 Private source observed -> session becomes tainted -> outbound action requires policy
 ```
-
-This turns the problem from “Did the model understand the instruction hierarchy correctly?” into “Is this classified private context allowed to flow to this destination through this action?”
 
 ## Threat model
 
@@ -201,7 +195,7 @@ Security-rule toggles are administrative model changes, not declassification dec
 
 Guardian's operational surfaces are designed to preserve the same policy semantics across slash commands, CLI helpers, and the dashboard. Dashboard mutation routes call the same policy mutation functions used by the command surfaces, and dashboard mutations can be disabled or guarded by an admin token.
 
-The persisted activity and dashboard model is metadata-only. Activity rows, approval records, policy snapshots, dashboard payloads, and cron notifications should not contain raw private bodies, typed browser text, document contents, credentials, tokenized URL paths or queries, full command payloads carrying secrets, raw message recipients, or other raw content-bearing arguments. The LLM-verifier input is the deliberate exception and is *not* in this list: in `llm` mode it carries the real action payload (security-sensitive content stripped) so the verifier can check content against intent — this is verifier input, not persisted state, and the trust-boundary reasoning for it is set out in the *Coarse declassification context* section below. Intrinsic same-call blocks persist only bounded metadata such as action family, destination host or network class, purpose token, pseudonymous recipient identity, data classes, and a sanitized reason; that persisted reason is a best-effort-redacted, length-capped free-text string rather than structured metadata, and other action details are reduced to bounded summaries and redaction notes.
+The persisted activity and dashboard model is metadata-only. Activity rows, approval records, policy snapshots, dashboard payloads, and cron notifications should not contain raw private bodies, typed browser text, document contents, credentials, tokenized URL paths or queries, full command payloads carrying secrets, raw message recipients, or other raw content-bearing arguments. The LLM-verifier input is the deliberate exception and is *not* in this list: in `llm` mode it carries the real action payload so the verifier can check content against intent — verifier input, not persisted state, with the full relaxation rationale and its at-rest caveat set out in *Coarse declassification context* below. Intrinsic same-call blocks persist only bounded metadata such as action family, destination host or network class, purpose token, pseudonymous recipient identity, data classes, and a sanitized reason, with other action details reduced to bounded summaries and redaction notes.
 
 ## The mediated-flow property
 
@@ -387,6 +381,8 @@ OpenAI’s link-safety work highlights URL-based exfiltration as a distinct risk
 
 ## Comparison with industry systems
 
+Two axes organize the comparisons that follow: detection versus flow enforcement, and managed/enterprise versus local-first.
+
 ### OpenAI / ChatGPT agent defenses
 
 OpenAI’s public agent-security framing emphasizes constraining risky actions, protecting sensitive data, and using source/sink-style analysis rather than relying exclusively on model obedience. OpenAI has also described URL-based data exfiltration as a concrete agent risk: a link path or query string can carry private information even when the chat transcript does not visibly display the data.
@@ -414,7 +410,7 @@ Anthropic’s public security work emphasizes filesystem and network isolation f
 | Private connector egress | Product dependent | Explicit approval/rule model for mediated flows |
 | Primary risk boundary | Sandbox correctness and configuration | Complete mediation, classifier accuracy, and runtime containment |
 
-Anthropic-style containment and Guardian address different layers. Sandboxing limits reachability. Guardian governs semantically meaningful outbound flows after legitimate data access.
+Anthropic-style containment and Guardian address different layers: sandboxing limits reachability, Guardian governs outbound flows after legitimate data access.
 
 ### Microsoft Copilot Studio / enterprise runtime protection
 
@@ -431,7 +427,7 @@ Guardian sits in the same general family as enterprise runtime action inspection
 
 ## Comparison with open-source agent guards
 
-The industry comparisons above are mostly managed or enterprise products. Guardian also shares a quadrant with several open-source tools aimed at the same personal/self-hosted agent operator. These are the most directly comparable systems, and the two axes used elsewhere in this document — detection versus flow enforcement, and managed/enterprise versus local-first — separate them cleanly.
+The industry comparisons above are mostly managed or enterprise products. Guardian also shares a quadrant with several open-source tools aimed at the same personal/self-hosted agent operator — the most directly comparable systems, which the two axes above separate cleanly.
 
 ### Invariant Guardrails / Gateway
 
@@ -446,7 +442,7 @@ Invariant Labs' Guardrails (with its companion Gateway proxy) is the closest pol
 | Locality and telemetry | Self-hostable, but `mcp-scan`'s remote scanning shares tool names and descriptions with the vendor's servers (invariantlabs.ai historically, Snyk after the acquisition) | Local-first; classification and policy evaluation do not call out to a vendor service |
 | Track record | Published vulnerability research and named attack classes | No comparable public CVE or attack-discovery record |
 
-Invariant is more mature and more expressive than Guardian on the policy axis: it offers a real flow DSL, a trace viewer, and a research and CVE track record Guardian does not have. Guardian's narrower contributions are that it is fully local-first with no vendor-telemetry path, and that it is integrated directly into Hermes hooks rather than relying on a separate proxy.
+Invariant is the more mature and expressive system on the policy axis; Guardian's narrower edge is being fully local-first with no vendor-telemetry path and integrated into Hermes hooks rather than a separate proxy.
 
 ### Pipelock
 
@@ -459,7 +455,7 @@ Pipelock (by PipeLab) is an Apache-2.0 agent firewall distributed as a single Go
 | Enforcement point | Network boundary between agent and proxy | Hermes hook layer above tool dispatch |
 | Layer | Lower-layer containment | Upper-layer information-flow policy |
 
-Pipelock directly addresses the same-call source-and-sink exfiltration shape that Guardian explicitly defers to the host runtime (see "Same-call source and sink"). It is best read as a complementary lower layer — a concrete implementation of the network-isolation assumption Guardian depends on — not a substitute for Guardian's semantic declassification, which Pipelock does not attempt. Its DLP boundary, moreover, keys on credential *patterns*: it can catch a secret crossing the proxy by its signature, but an email body or contact list crossing the same boundary has no signature to match. That provenance-private content — private by origin rather than by shape — is exactly what Guardian's source-based taint governs and what a pattern-based DLP is structurally blind to.
+Pipelock is best read as a complementary lower layer — a concrete implementation of the network-isolation assumption Guardian depends on (see "Same-call source and sink") — not a substitute for Guardian's semantic declassification, which it does not attempt. Its DLP boundary, moreover, keys on credential signatures and is structurally blind to provenance-private content such as an email body or contact list (see the asset distinction in the Abstract).
 
 ### LLM Guard
 
@@ -472,7 +468,7 @@ Protect AI's LLM Guard is an MIT-licensed, self-hosted toolkit of roughly 35 inp
 | Flow enforcement | None; detection and sanitization only | Blocks or approval-gates classified egress under taint |
 | Locality | Local, self-hosted, offline-capable | Local-first, in-process |
 
-LLM Guard and Guardian share the local-first axis but sit on opposite ends of the detection-versus-enforcement axis. LLM Guard's scanner breadth exceeds Guardian's deterministic and language-pack detectors, and the two are composable: scanners as pre-ingestion hygiene, Guardian as post-ingestion flow control. Neither replaces the other. Crucially, LLM Guard's PII and secret scanners detect content by signature — patterns for keys, tokens, and recognizable PII. Content with no signature, such as an email body or a calendar's contents, is invisible to them; it is private only by provenance. Guardian protects exactly that class by origin, which is the complementary half that a per-message scanner cannot reach.
+LLM Guard and Guardian share the local-first axis but sit on opposite ends of detection versus enforcement, and the two are composable: scanners as pre-ingestion hygiene, Guardian as post-ingestion flow control. LLM Guard's signature-based scanners are likewise blind to provenance-private content such as an email body or a calendar's contents (see the asset distinction in the Abstract).
 
 ### OpenClaw PRISM
 
@@ -485,7 +481,7 @@ OpenClaw PRISM is the closest research analog to Guardian for a personal-agent g
 | Scope of checks | Injection, unsafe tool execution, credential leakage, control-file tampering | Confidentiality egress and declassification over mediated sinks |
 | Integration | In-process, zero-fork plugin | In-process Hermes hooks |
 
-PRISM and Guardian occupy nearly the same niche — an in-process, local-first security layer for a tool-augmented personal agent — and overlap on several mechanisms (LLM-assisted scanning, policy-enforced restrictions). PRISM's risk-accumulation model and broader lifecycle coverage are more ambitious than Guardian's per-action egress focus; Guardian's contribution is the specific taint-and-declassification treatment of confidentiality flows rather than a general risk score.
+PRISM and Guardian occupy nearly the same niche; PRISM's risk-accumulation model and broader lifecycle coverage are more ambitious, while Guardian's contribution is the specific taint-and-declassification treatment of confidentiality flows rather than a general risk score.
 
 ## Comparison with theoretical systems
 

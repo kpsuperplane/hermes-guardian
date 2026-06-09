@@ -254,25 +254,13 @@ This channel is deliberately narrow and fail-closed:
   both ran with the calendar ambiently in scope.
 
 **What the verifier sees.** In `llm` mode the verifier receives the **real action
-payload**, not a redacted shape of it, so it can check that the content matches the
-authorized intent. This is intentional: the verifier is the *same* model/provider
-Hermes already uses as the agent, which processes all of this content anyway —
-redacting it from the verifier would protect nothing against the provider while
-blinding the check. The boundary that is still enforced is at-rest exposure, not
-model visibility:
-
-- Security-sensitive content (credentials, OTPs, reset links) is still stripped
-  from the payload, and credential-shaped tokens are removed.
-- The verdict rationale is sanitized (emails, phones, tokens redacted) before it is
-  shown or written to activity/approval storage, and the verifier is prompted to
-  keep it class-level.
-- Persistent state (activity, approvals, dashboard, notifications) is otherwise
-  metadata-only; the sanitized rationale above is the one free-text field, and
-  its redaction is best-effort rather than structured (see Limitations).
-
-This assumes the verifier LLM shares the agent's trust boundary. Since you choose
-which LLMs Hermes connects to, that assumption is yours to own; enabling `llm` mode
-opts into it.
+payload** — with security-sensitive content and credential-shaped tokens stripped —
+not a redacted shape, so it can check that content matches the authorized intent.
+At-rest storage stays metadata-only apart from the sanitized verdict rationale
+(best-effort redaction, see Limitations). Enabling `llm` mode assumes the verifier
+LLM shares the agent's trust boundary; since you choose which LLMs Hermes connects
+to, that assumption is yours to own. The full trust-boundary rationale is in theory's
+[Coarse declassification context](./theory.md#coarse-declassification-context).
 
 **Verifier latency.** By default the verifier runs on the agent's own model. If
 that is a large or reasoning model, each gated egress can take several seconds. A
@@ -463,13 +451,11 @@ status` and the dashboard policy snapshot surface a risk banner when
 
 ## Data Classes
 
-Guardian's data classes are categories of *provenance-private* content — content
-that is private because of where it came from, not because it matches a sensitive
-pattern. This is why the classes are communications, contacts, calendar, and
-documents rather than credential or secret formats: Guardian protects a different asset
-than a secret scanner does. (Access-sensitive material that *does* have a
-signature — credentials, OTPs, tokens — is handled separately and more strictly
-by the Security Module.)
+Guardian's data classes are categories of *provenance-private* content — private by
+origin, not by pattern (see [Why Guardian?](#why-guardian)). This is why they are
+communications, contacts, calendar, and documents rather than credential or secret
+formats; access-sensitive material that *does* have a signature (credentials, OTPs,
+tokens) is handled separately and more strictly by the Security Module.
 
 Guardian tracks private context with these data classes:
 
@@ -538,18 +524,15 @@ those tools may still taint the session.
 
 A `browser_console` eval is classified by what its expression does. Reading page
 state — DOM nodes, form field values, page text, attributes — and returning it to
-the agent is a read, not an export: the agent already has read access to the page
-through the ungated read tools, and any later attempt to send that data onward is
-itself independently gated. Guardian recognizes such an eval as a read through a
-fail-closed allowlist (every operation must be a known pure-read accessor) and
-does not gate it. An eval that writes into the page (assigning to DOM/element
-properties, inserting nodes, setting attributes), submits a form, navigates,
-touches a credential store (cookies, web storage), runs dynamic code, or sends to
-a network sink (`fetch`/XHR/`sendBeacon`/`WebSocket`) is treated as egress —
-writing tainted data into an attacker-controlled page is an exfiltration channel
-even with no network call in the eval. Anything the allowlist cannot prove
-read-only falls through to normal gating (and, in `llm` mode, to a verifier that
-is likewise instructed to allow genuine reads).
+the agent is a read, not egress, recognized through a fail-closed allowlist (every
+operation must be a known pure-read accessor) and not gated. An eval that writes
+into the page (DOM/element properties, inserting nodes, setting attributes),
+submits a form, navigates, touches a credential store (cookies, web storage), runs
+dynamic code, or sends to a network sink (`fetch`/XHR/`sendBeacon`/`WebSocket`) is
+treated as egress — an in-page write is itself an exfiltration channel even with no
+network call. Anything the allowlist cannot prove read-only falls through to normal
+gating (and, in `llm` mode, to a verifier likewise instructed to allow genuine
+reads).
 
 ## Tool Classification And Overrides
 

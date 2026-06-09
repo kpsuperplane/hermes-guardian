@@ -8,3 +8,8 @@
 # Install with:
 #   pip install -r requirements-dev.txt
 pytest==8.3.4
+
+# Optional at plugin runtime (the host Hermes venv provides it), but the test
+# suite reads host config / model-cache YAML to exercise verifier-model option
+# discovery, so it must be present in CI for those code paths to run.
+PyYAML==6.0.3
