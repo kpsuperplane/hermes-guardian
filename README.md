@@ -7,23 +7,11 @@ Security and privacy policy controls for personal Hermes agents.
 
 <img width="350" src="https://github.com/user-attachments/assets/7629a26c-5a44-4266-83e8-bd5c931b78d6" />
 
-
-
 Hermes Guardian is a user plugin for
 [Hermes Agent](https://github.com/NousResearch/hermes-agent). It protects the
 private content a personal agent reads — an email body, a contact list, calendar
 entries, a Notion page, memory, and local system output — and controls where
 that content can leave through Hermes-mediated tools.
-
-What makes that content hard to protect is that most of it has no signature. A
-credential, API key, or most PII matches a recognizable pattern, which is exactly
-what scanner, DLP, and secret-detection tools key on. An email body, a friend
-list, a meeting's attendees, or a document does not match any pattern — it is
-private only because of *where it came from*, not because of how it is shaped.
-Pattern-based tools are structurally blind to content with no signature. Guardian
-protects this *provenance-private* content by its origin: once the agent reads a
-private source, the session is tainted regardless of what the content looks like,
-and outbound actions are gated accordingly.
 
 Guardian adds two policy layers:
 
