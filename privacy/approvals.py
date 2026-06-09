@@ -268,13 +268,16 @@ def _guardian_block_message(approval: dict[str, Any]) -> str:
     classes = ", ".join(approval.get("data_classes") or ["private"])
     action_detail = str(approval.get("action_detail") or "").strip()
     action_detail_line = f"Action detail: {action_detail}\n" if action_detail else ""
+    reason = str(approval.get("reason") or "").strip()
+    reason_line = f"Reason: {reason}\n" if reason else ""
     return (
         "Hermes Guardian blocked this egress.\n\n"
         f"Approval ID: {approval['id']}\n"
         f"Action: {approval['action_family']}\n"
         f"Destination: {approval['destination']}\n"
         f"{action_detail_line}"
-        f"Data classes: {classes}\n\n"
+        f"Data classes: {classes}\n"
+        f"{reason_line}\n"
         "You can approve with:\n"
         f"/guardian approve {approval['id']} once\n"
         f"/guardian approve {approval['id']} session\n"
