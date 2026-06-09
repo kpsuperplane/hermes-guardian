@@ -1,0 +1,12 @@
+/* Aggregated entry for the Guardian dashboard stylesheet. Built to
+   dist/style.css. Co-located component/tab CSS is imported here in cascade
+   order: shared shell + form primitives first, then component and tab chrome. */
+@import "./base.css";
+@import "./forms.css";
+@import "../components/Button.css";
+@import "../components/Modal.css";
+@import "../components/ToastRegion.css";
+@import "../components/RiskBanners.css";
+@import "../tabs/SettingsTab.css";
+@import "../tabs/ToolsTab.css";
+@import "../tabs/HistoryTab.css";

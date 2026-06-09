@@ -1,0 +1,17 @@
+.hermes-guardian-risk-banners {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.hermes-guardian-risk-banner {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.hermes-guardian-risk-severity {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}

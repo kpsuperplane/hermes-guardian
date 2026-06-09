@@ -38,8 +38,11 @@ def test_dashboard_policy_snapshot_includes_risk_banners():
 def test_dashboard_static_renders_risk_banners():
     static_js = (Path(__file__).resolve().parents[1] / "dashboard" / "dist" / "index.js").read_text()
 
+    # The bundle is built from src/ (see dashboard/README.md); assert on the
+    # data binding and the rendered class names rather than an internal symbol,
+    # which minification renames.
     assert "risk_banners" in static_js
-    assert "renderRiskBanners" in static_js
+    assert "hermes-guardian-risk-banner" in static_js
 
 
 def test_policy_snapshot_includes_cron_rule_scope(tmp_path):

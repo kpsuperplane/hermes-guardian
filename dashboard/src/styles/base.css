@@ -1,0 +1,199 @@
+.hermes-guardian {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+}
+
+.hermes-guardian * {
+  box-sizing: border-box;
+}
+
+.hermes-guardian-topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.hermes-guardian-title {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.hermes-guardian-subtitle,
+.hermes-guardian-muted {
+  color: var(--color-muted-foreground);
+  font-size: 0.85rem;
+}
+
+.hermes-guardian-tabs {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.hermes-guardian-tab {
+  appearance: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-muted-foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  padding: 0.55rem 0.7rem;
+}
+
+.hermes-guardian-tab:hover,
+.hermes-guardian-tab-active {
+  color: var(--color-foreground);
+}
+
+.hermes-guardian-tab-active {
+  border-bottom-color: var(--color-ring);
+}
+
+.hermes-guardian-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.hermes-guardian-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-card) 92%, transparent);
+  color: var(--color-card-foreground);
+  padding: 1rem;
+}
+
+.hermes-guardian-card-head,
+.hermes-guardian-rule-head,
+.hermes-guardian-block-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.hermes-guardian-card-title,
+.hermes-guardian-rule-title,
+.hermes-guardian-block-title {
+  font-weight: 700;
+}
+
+.hermes-guardian-section-description {
+  margin-top: 0.25rem;
+}
+
+.hermes-guardian-rule-description {
+  max-width: 58rem;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.hermes-guardian-rule-main {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.hermes-guardian-rule-subline {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.hermes-guardian-rule-id {
+  color: var(--color-muted-foreground);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+
+.hermes-guardian-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.hermes-guardian-actions .hermes-guardian-select {
+  width: auto;
+}
+
+.hermes-guardian-disabled-action {
+  display: inline-flex;
+}
+
+.hermes-guardian-rule-disabled {
+  background: color-mix(in srgb, var(--color-muted) 52%, transparent);
+}
+
+.hermes-guardian-rule-disabled .hermes-guardian-rule-main,
+.hermes-guardian-rule-disabled .hermes-guardian-rule-meta,
+.hermes-guardian-rule-disabled .hermes-guardian-chips {
+  opacity: 0.58;
+}
+
+.hermes-guardian-rule-meta,
+.hermes-guardian-block-meta {
+  display: flex;
+  gap: 0.5rem 0.75rem;
+  flex-wrap: wrap;
+  color: var(--color-muted-foreground);
+  font-size: 0.76rem;
+  margin-top: 0.45rem;
+}
+
+.hermes-guardian-chip {
+  display: inline-flex;
+  border: 1px solid color-mix(in srgb, var(--color-border) 75%, transparent);
+  border-radius: 999px;
+  color: var(--color-muted-foreground);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.72rem;
+  padding: 0.1rem 0.45rem;
+}
+
+.hermes-guardian-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.25rem;
+  border: 1px solid color-mix(in srgb, var(--color-ring) 35%, var(--color-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-ring) 10%, var(--color-card));
+  color: var(--color-foreground);
+  font-size: 0.72rem;
+  font-weight: 650;
+  padding: 0.1rem 0.5rem;
+}
+
+.hermes-guardian-chips {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-top: 0.55rem;
+}
+
+.hermes-guardian-banner {
+  border: 1px solid color-mix(in srgb, var(--color-destructive) 50%, var(--color-border));
+  border-radius: var(--radius);
+  color: var(--color-destructive);
+  padding: 0.65rem 0.8rem;
+  font-size: 0.84rem;
+}
+
+@media (max-width: 720px) {
+  .hermes-guardian-card {
+    padding: 0.75rem;
+  }
+}

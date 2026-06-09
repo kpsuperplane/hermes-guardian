@@ -1,0 +1,40 @@
+.hermes-guardian-button,
+.hermes-guardian-secondary,
+.hermes-guardian-danger {
+  appearance: none;
+  min-height: 2rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 0.25rem);
+  background: color-mix(in srgb, var(--color-card) 70%, transparent);
+  color: var(--color-foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.38rem 0.65rem;
+}
+
+.hermes-guardian-button {
+  border-color: var(--color-ring);
+  background: color-mix(in srgb, var(--color-ring) 16%, var(--color-card));
+}
+
+.hermes-guardian-danger {
+  border-color: color-mix(in srgb, var(--color-destructive) 60%, var(--color-border));
+  color: var(--color-destructive);
+}
+
+.hermes-guardian-button:disabled,
+.hermes-guardian-secondary:disabled,
+.hermes-guardian-danger:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+@media (max-width: 720px) {
+  .hermes-guardian-button,
+  .hermes-guardian-secondary,
+  .hermes-guardian-danger {
+    min-height: 2.75rem;
+  }
+}

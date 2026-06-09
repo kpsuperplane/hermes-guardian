@@ -1,0 +1,32 @@
+.hermes-guardian-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, black 45%, transparent);
+  padding: 1rem;
+}
+
+.hermes-guardian-modal {
+  width: min(780px, 100%);
+  max-height: min(760px, calc(100dvh - 2rem));
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-card);
+  color: var(--color-card-foreground);
+  padding: 1rem;
+  box-shadow: 0 24px 70px color-mix(in srgb, black 28%, transparent);
+}
+
+.hermes-guardian-modal-body {
+  display: grid;
+  gap: 1rem;
+}
+
+@media (max-width: 720px) {
+  .hermes-guardian-modal {
+    padding: 0.75rem;
+  }
+}
