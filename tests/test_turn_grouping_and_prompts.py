@@ -259,7 +259,7 @@ def test_slash_activity_groups_by_turn_with_nested_checks(monkeypatch):
                           action_family="web_read", reason="public read")
 
     out = plugin._handle_guardian_command("activity 5")
-    assert "**Turn**" in out
+    assert "👤 · " in out  # a user turn header (⏲️ for cron)
     assert "2 checks" in out
     assert "subscribe me to the newsletter" in out  # prompt shown when persisted
     assert "browser_type" in out and "web_read" in out  # both checks nested under the turn
@@ -281,6 +281,20 @@ def test_slash_activity_robot_prefix_marks_llm_involved_checks(monkeypatch):
     assert "✅🤖 `browser_type`" in out
     assert "❌🤖 `send_message`" in out
     assert "❌ `terminal`" in out and "❌🤖 `terminal`" not in out
+
+
+def test_cron_turns_flagged_and_use_clock_label():
+    plugin = load_plugin()
+    # Synthetic cron session id (no real identifiers); its label starts with "cron_".
+    plugin._emit_activity(
+        "blocked", session_id="cron_0123456789ab_20260101_090000",
+        tool_name="send_message", action_family="message_send", reason="r",
+    )
+    turns = plugin._activity_turns_payload({"start": "0", "length": "25"})["turns"]
+    assert turns and turns[0]["is_cron"] is True
+    # The slash header uses the ⏲️ clock label for cron turns.
+    out = plugin._handle_guardian_command("activity 5")
+    assert "⏲️ · " in out and "👤" not in out
 
 
 def _load_plugin_api():

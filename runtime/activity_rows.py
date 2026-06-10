@@ -602,6 +602,8 @@ def _activity_turns_payload(params: dict[str, str]) -> dict[str, Any]:
                 "turn_id": "" if gkey.startswith("row_") else gkey,
                 "user_prompt": prompt,
                 "ts": max(int(row.get("ts") or 0) for row in rows),
+                # A cron run's session id (and its truncated label) starts with "cron_".
+                "is_cron": any(str(row.get("session_label") or "").startswith("cron_") for row in rows),
                 "rows": [_activity_datatables_row(row) for row in rows],
             }
         )

@@ -211,11 +211,8 @@
 
 .hermes-guardian-turn-label {
   flex: 0 0 auto;
-  font-weight: 700;
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-muted-foreground);
+  font-size: 1rem;
+  line-height: 1;
 }
 
 /* The prompt is constrained to a single line and ellipsized if it overflows. */

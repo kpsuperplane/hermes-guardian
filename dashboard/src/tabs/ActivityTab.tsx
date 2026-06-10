@@ -474,7 +474,12 @@ function TurnCard(props: { turn: ActivityTurn; onNavigate: (tab: TabId) => void 
       >
         <span className="hermes-guardian-chevron" aria-hidden="true">▸</span>
         <div className="hermes-guardian-turn-card-title">
-          <span className="hermes-guardian-turn-label">Turn</span>
+          <span
+            className="hermes-guardian-turn-label"
+            title={turn.is_cron ? "Cron job" : "User turn"}
+          >
+            {turn.is_cron ? "⏲️" : "👤"}
+          </span>
           {prompt ? (
             <span className="hermes-guardian-turn-prompt">{prompt}</span>
           ) : (

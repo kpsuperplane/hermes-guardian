@@ -197,6 +197,7 @@ export interface ActivityTurn {
   turn_id?: string;
   user_prompt?: string;
   ts?: number;
+  is_cron?: boolean;
   rows?: ActivityRow[];
 }
 

@@ -200,8 +200,10 @@ def _guardian_history_command(
             if text_value:
                 prompt = text_value
                 break
+        is_cron = any(str(r.get("session_label") or "").startswith("cron_") for r in turn_rows)
+        label = "⏲️" if is_cron else "👤"
         lines.append("")
-        lines.append(f"**Turn** · {when} · {n} check{'s' if n != 1 else ''}")
+        lines.append(f"{label} · {when} · {n} check{'s' if n != 1 else ''}")
         if prompt:
             lines.append(f"> {_clip_text(prompt, 200, ellipsis='...', fallback='')}")
         for check in turn_rows[:_MAX_CHECKS_PER_TURN]:
