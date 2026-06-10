@@ -102,10 +102,25 @@ class Capability:
 # hosts. The action_subtype is a normalized verb for the resolver + audit.
 #
 # These are the §7 "_egress_tool_action family table" rows, given a destination kind.
+# NOTE on the generic/unknown sink families (``mcp_unknown``, ``tool_write``,
+# ``tool_unknown``): these are NOT content-to-own-store writes whose connector + verb
+# Guardian recognizes (those are ``mcp_write`` / ``local_write`` / ``kanban_write`` /
+# draft). They are the catch-all action sinks — an unrecognized MCP verb, or a generic
+# write/delete/admin/financial tool the override table routes here (delete_file,
+# create_calendar_event, send_money, ...). Their destination string is a coarse SERVICE
+# label, not a proven self content store, and the ACTION itself is unproven. Resolving
+# them via the self-store allowlist would be an "ownership/verb absence means safe"
+# inference — exactly what charter invariant #2/#4 forbids — and would let a tainted
+# session egress through an unknown verb on a self connector (the agentdojo
+# ``delete_file`` / external-participant ``create_calendar_event`` leaks). So they map to
+# the ``opaque`` kind, which the resolver does not match against the self allowlist; it
+# falls through to unknown -> external and gates under taint, fail-closed. A
+# participant-free self write through a RECOGNIZED family keeps its self resolution, so
+# the FP win is preserved.
 _FAMILY_TO_DEST_KIND = {
     "mcp_write": "store",
     "mcp_read_query": "store",
-    "mcp_unknown": "store",
+    "mcp_unknown": "opaque",
     "message_send": "messaging",
     "message_list": "messaging",
     "local_write": "local",
@@ -125,8 +140,8 @@ _FAMILY_TO_DEST_KIND = {
     "browser_cdp": "browser",
     "computer_use": "local",
     "delegate_task": "subagent",
-    "tool_write": "store",
-    "tool_unknown": "store",
+    "tool_write": "opaque",
+    "tool_unknown": "opaque",
     "final_response": "messaging",
 }
 
@@ -193,6 +208,49 @@ _OUTWARD_SHARING_VERB_RE = re.compile(
     r"add_permission|grant)(?:[^a-z0-9]|$)",
     re.I,
 )
+
+# Arg keys that name OTHER PARTIES on a write (doc 01 §3.1). A write to a self-owned
+# store that carries one of these with a resolvable external recipient reaches a new
+# party (e.g. a calendar event with `participants`, a doc created with `cc`), so it is
+# outward-sharing even though the destination connector is the operator's own. Detecting
+# it lets ``resolve_destination_trust``'s §3.1 guard resolve the call to external, not
+# self — closing the "create_calendar_event with external participants" leak while a
+# participant-free self write stays intra-boundary (the FP win is preserved).
+_RECIPIENT_ARG_KEYS = (
+    "participants",
+    "attendees",
+    "invitees",
+    "guests",
+    "to",
+    "cc",
+    "bcc",
+    "recipients",
+    "emails",
+    "members",
+)
+_EMAIL_LIKE_RE = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
+
+
+def _carries_external_recipient(args: Any) -> bool:
+    """True iff a write's args name an other-party recipient (an email-like value under a
+    recipient-shaped key). Conservative: only a value that looks like an external address
+    counts, so an empty/templated field never spuriously flips a self write to external."""
+    if not isinstance(args, dict):
+        return False
+    for key in _RECIPIENT_ARG_KEYS:
+        value = args.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str):
+            candidates = [value]
+        elif isinstance(value, (list, tuple, set)):
+            candidates = [str(v) for v in value]
+        else:
+            candidates = [str(value)]
+        for candidate in candidates:
+            if _EMAIL_LIKE_RE.search(candidate):
+                return True
+    return False
 
 
 def _dest_kind_for_family(action_family: str) -> str:
@@ -277,6 +335,16 @@ def classify(tool_name: str = "", args: Any = None, session: Any = None) -> Capa
         dest_kind = _dest_kind_for_family(action_family)
         dest_id = _dest_id_for_action(action_family, action)
         subtype = _action_subtype_for(action_family, tool_name)
+        # A write to a self store that names an external recipient (e.g. a calendar event
+        # with `participants`, a file shared via `cc`) reaches a new party. Upgrade it to
+        # an outward-sharing subtype so the resolver's §3.1 guard resolves it to external,
+        # not self — UNLESS the tool name already implied outward sharing (keep that verb).
+        if (
+            action_family not in _MESSAGING_FAMILIES
+            and not _OUTWARD_SHARING_VERB_RE.search(str(tool_name or "").lower())
+            and _carries_external_recipient(args)
+        ):
+            subtype = "share"
 
     # Recipient identity matters only for messaging families (doc 01 §3.2). For those,
     # reuse the raw recipient the existing helper resolved; otherwise it is irrelevant.

@@ -48,6 +48,16 @@ _DECISIONS = frozenset({ALLOW, APPROVE, BLOCK})
 _VERIFIER_MODES = frozenset({"llm"})
 
 
+# Policy classes that gate an OUTWARD (non-intra-boundary) flow: every non-public class.
+# ``PRIVATE_POLICY_CLASSES`` ({personal_private}) is the declassification-rule / audit
+# vocabulary (doc 02 §5); this is the floor set for "what may not silently leave to a
+# non-owner" and additionally covers ``local_system`` and ``browser_private`` so a session
+# tainted by local-system reads or private browser input still gates on outward egress.
+_EGRESS_GATING_POLICY_CLASSES = frozenset(
+    {"personal_private", "local_system", "browser_private"}
+)
+
+
 def _mode_allows_verifier_upgrade(mode: Any) -> bool:
     """True iff ``mode`` permits the caller's verifier to upgrade a step-6 APPROVE to
     ALLOW (doc 02 §6). ``strict``/``read-only``/``off`` never upgrade.
@@ -67,20 +77,32 @@ def _taint_policy_classes(taint: Any) -> frozenset[str]:
     Fine classes are collapsed to policy classes via ``_policy_classes_for`` (doc 02 §5),
     so a caller may pass either fine taint classes or already-collapsed policy classes —
     both normalize correctly. Total: anything unusable yields the empty set.
+
+    FAIL CLOSED on an UNRECOGNIZED taint token (charter invariant #2/#4): a class that is
+    neither a known POLICY class nor a known fine class is treated as ``personal_private``,
+    never dropped. Dropping it would be an "absence means safe" inference — exactly what
+    invariant #4 forbids — and would let a tainted session egress freely just because the
+    taint label is one the policy/tag map does not enumerate (e.g. an upstream "email"
+    taint). Only the explicitly non-private known classes (``local_system``,
+    ``browser_private``) map to their own non-private policy class by design (doc 02 §5).
     """
     classes = getattr(taint, "classes", taint)
     try:
         raw = set(classes)
     except TypeError:
         return frozenset()
-    # Map any fine classes through; pass through already-policy classes unchanged.
     out: set[str] = set()
     for cls in raw:
         text = str(cls)
         if text in POLICY_CLASSES:
             out.add(text)
+            continue
+        mapped = _policy_classes_for({text})
+        if mapped:
+            out |= mapped
         else:
-            out |= _policy_classes_for({text})
+            # Unrecognized taint token: fail closed to personal_private (conservative).
+            out.add("personal_private")
     return frozenset(out)
 
 
@@ -183,10 +205,20 @@ def decide(cap: Any, taint: Any = None, purpose: Any = "unknown", mode: Any = "s
     ):
         return ALLOW
 
-    # 4. What private data is potentially leaving? Ambient taint (doc 02 §4).
-    private_exported = _taint_policy_classes(taint) & PRIVATE_POLICY_CLASSES
+    # 4. What confidential data is potentially leaving? Ambient taint (doc 02 §4).
+    #    The egress-gating set is every non-public policy class: personal_private PLUS
+    #    local_system (data read off the operator's machine) and browser_private (private
+    #    input the operator typed into a browser). All three are confidential relative to
+    #    a NON-owner destination — sending local config or a typed password out to an
+    #    external site is a confidentiality event, so they must gate when crossing outward
+    #    (the floor; preserves the browser-private-input / local-system exfil protections).
+    #    Intra-boundary destinations already returned ALLOW at step 3, so this only ever
+    #    gates a genuinely outward flow. ``public`` never gates. ``PRIVATE_POLICY_CLASSES``
+    #    stays {personal_private} for the audit/declassification-rule vocabulary (doc 02
+    #    §5); the broader EGRESS set is the floor for "what may not leave silently".
+    private_exported = _taint_policy_classes(taint) & _EGRESS_GATING_POLICY_CLASSES
     if not private_exported:
-        return ALLOW  # session holds nothing private to leak
+        return ALLOW  # session holds nothing confidential to leak
 
     # 5. Crossing outward with private data: look for a declassification rule.
     rule = match_declassification_rule(purpose, private_exported, destination, trust)
@@ -225,3 +257,4 @@ _DECISION_ALLOW = ALLOW
 _DECISION_APPROVE = APPROVE
 _DECISION_BLOCK = BLOCK
 _decide_mode_allows_verifier_upgrade = _mode_allows_verifier_upgrade
+_EGRESS_GATING_POLICY_CLASSES_ALIAS = _EGRESS_GATING_POLICY_CLASSES

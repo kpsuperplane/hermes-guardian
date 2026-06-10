@@ -61,7 +61,12 @@ def test_tainted_session_blocks_message_send():
     assert "Data classes: communications" in result["message"]
 
 
-def test_tainted_session_blocks_mcp_write_tool_by_default():
+def test_tainted_session_allows_self_store_mcp_write():
+    """Phase 3 (decide authoritative): a tainted write to the operator's OWN seeded store
+    (``store:notion`` is a default self destination) reaches no new party, so it no longer
+    gates. This is the canonical false positive the charter (§1) calls out — "save my
+    inbox summary to my own Notion" — now removed. Floor-neutral.
+    """
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"contacts"})
@@ -72,9 +77,25 @@ def test_tainted_session_blocks_mcp_write_tool_by_default():
         session_id="s1",
     )
 
+    assert result is None
+
+
+def test_tainted_session_blocks_mcp_write_to_non_self_store():
+    """The floor side of the same coin: a write to an MCP store that is NOT in the self
+    allowlist resolves unknown -> external and still gates under taint."""
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts"})
+
+    result = plugin._on_pre_tool_call(
+        tool_name="mcp_acmecrm_create_record",
+        args={"title": "Contact notes"},
+        session_id="s1",
+    )
+
     assert result is not None
     assert "Action: mcp_write" in result["message"]
-    assert "Destination: mcp:notion" in result["message"]
+    assert "Destination: mcp:acmecrm" in result["message"]
 
 
 def test_privacy_allow_rule_allows_notion_writes(monkeypatch):
@@ -528,27 +549,51 @@ def test_web_search_query_under_taint_requires_approval():
     assert rows[0]["action_detail"] == "search <redacted 11 chars>"
 
 
-def test_tainted_session_blocks_delegation_model_api_cron_and_local_writes():
+def test_tainted_session_gates_outward_delegation_and_unknown_sinks():
+    """Phase 3 (decide authoritative): outward / unknown-trust sinks still gate under
+    taint, while intra-boundary writes (local_system / model_provider) no longer do.
+
+    delegate_task -> subagent (unknown trust) and feishu_drive_add_comment -> generic
+    tool_write (opaque -> unknown -> external) reach a party that is not provably the
+    owner, so they remain gated — the floor is preserved for the cases that cross outward.
+    """
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"memory"})
 
-    cases = [
-        ("delegate_task", {"goal": "summarize this"}, "delegate_task"),
-        ("mixture_of_agents", {"user_prompt": "solve this"}, "model_api"),
-        ("text_to_speech", {"text": "read this aloud"}, "model_api"),
-        ("cronjob", {"action": "create", "prompt": "send a report", "schedule": "1h"}, "cron_write"),
-        ("write_file", {"path": "/tmp/report.txt", "content": "summary"}, "local_write"),
-        ("patch", {"path": "/tmp/report.txt", "old_string": "a", "new_string": "b"}, "local_write"),
-        ("skill_manage", {"action": "create", "name": "private-skill", "content": "steps"}, "local_write"),
-        ("memory", {"action": "add", "target": "user", "content": "preference"}, "local_write"),
-        ("mnemosyne_remember", {"content": "preference"}, "local_write"),
-        ("computer_use", {"action": "type", "text": "hello"}, "computer_use"),
-        ("ha_call_service", {"domain": "light", "service": "turn_on"}, "homeassistant_write"),
-        ("feishu_drive_add_comment", {"comment": "please review"}, "tool_write"),
-    ]
-
-    for tool_name, args, action in cases:
+    for tool_name, args in [
+        ("delegate_task", {"goal": "summarize this"}),
+        ("feishu_drive_add_comment", {"comment": "please review"}),
+    ]:
         result = plugin._on_pre_tool_call(tool_name, args, session_id="s1")
         assert result is not None, tool_name
-        assert f"Action: {action}" in result["message"], tool_name
+
+
+def test_tainted_session_allows_intra_boundary_writes_after_flip():
+    """Phase 3 FP reduction (doc 04 §5): a tainted session writing to the operator's own
+    local system or to the model provider reaches no new party, so these intra-boundary
+    writes that gated pre-flip now ALLOW. This is the dominant false positive the
+    destination-trust refactor removes (charter §1) and is floor-neutral — the data is
+    exposed to no one other than its owner. The floor benchmarks (adversarial 1.0,
+    agentdojo 0.9615) hold with these allowed.
+    """
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"memory"})
+
+    intra_boundary = [
+        ("mixture_of_agents", {"user_prompt": "solve this"}),       # model_provider
+        ("text_to_speech", {"text": "read this aloud"}),            # model_provider
+        ("cronjob", {"action": "create", "prompt": "send a report", "schedule": "1h"}),
+        ("write_file", {"path": "/tmp/report.txt", "content": "summary"}),
+        ("patch", {"path": "/tmp/report.txt", "old_string": "a", "new_string": "b"}),
+        ("skill_manage", {"action": "create", "name": "private-skill", "content": "steps"}),
+        ("memory", {"action": "add", "target": "user", "content": "preference"}),
+        ("mnemosyne_remember", {"content": "preference"}),
+        ("computer_use", {"action": "type", "text": "hello"}),
+        ("ha_call_service", {"domain": "light", "service": "turn_on"}),
+    ]
+
+    for tool_name, args in intra_boundary:
+        result = plugin._on_pre_tool_call(tool_name, args, session_id="s1")
+        assert result is None, tool_name

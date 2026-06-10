@@ -41,16 +41,17 @@ def test_1_decide_is_total_and_pure():
     modes = ["strict", "llm", "read-only", "off"]
     valid = {plugin._DECISION_ALLOW, plugin._DECISION_APPROVE, plugin._DECISION_BLOCK}
 
-    before = plugin._shadow_decision_counts()
     for direction in directions:
         for trust in trusts:
             for classes in class_sets:
                 for mode in modes:
                     cap = _mk_cap(plugin, direction=direction, trust=trust)
+                    # Pure: re-calling with identical inputs yields the identical result
+                    # and raises nothing (no I/O / side-effect state to witness now that
+                    # the shadow-comparison scaffolding is retired — decide is authoritative).
                     result = plugin._decide(cap, classes, "unknown", mode)
                     assert result in valid
-    # Pure: decide touched no shadow side-effect state.
-    assert plugin._shadow_decision_counts() == before
+                    assert plugin._decide(cap, set(classes), "unknown", mode) == result
 
 
 # --- Test 2: self/local/model never gate -------------------------------------

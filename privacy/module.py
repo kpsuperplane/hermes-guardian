@@ -123,6 +123,66 @@ def _allow_untainted_tool_call(
     _record_allowed_tool_side_effects(session_id, tool_name, args)
 
 
+def _allow_intra_boundary_tool_call(
+    tool_name: str,
+    args: Any,
+    session_id: str | None,
+    *,
+    action_family: str,
+    destination: str,
+    data_classes: set[str],
+    trust: Any,
+    purpose: str = "unknown",
+    recipient_identity: str = "none",
+) -> None:
+    """Allow a tainted write whose ``decide`` outcome is ALLOW (doc 02 §3).
+
+    This fires for the two non-untainted ALLOW paths: an intra-boundary destination
+    (self / local_system / model_provider / draft) reaching no new party (step 3 — the G1
+    false-positive win), or an outward destination covered by an explicit allow
+    declassification rule (step 5). The reason distinguishes the two so "why was this
+    allowed" stays answerable. The data classes are preserved on the activity record for
+    audit fidelity (charter invariant #6); ``_record_allowed_tool_side_effects`` runs
+    exactly as for any other allowed egress (e.g. a self draft still records its effects).
+    """
+    if _is_intra_boundary_trust(trust):
+        reason = f"intra-boundary destination ({_trust_label(trust)})"
+    else:
+        reason = "matched allow rule"
+    _emit_egress_activity(
+        "allowed",
+        session_id=session_id,
+        tool_name=tool_name,
+        action_family=action_family,
+        destination=destination,
+        data_classes=data_classes,
+        reason=reason,
+        action_detail=_activity_action_detail(tool_name, args, action_family, destination),
+        purpose=purpose,
+        recipient_identity=recipient_identity,
+    )
+    _record_allowed_tool_side_effects(
+        session_id,
+        tool_name,
+        args,
+        action_family=action_family,
+        mark_browser_private_input=True,
+    )
+
+
+def _trust_label(trust: Any) -> str:
+    """String label for a ``DestinationTrust`` (or anything coerced to it) for activity
+    reasons. Total: garbage resolves to ``unknown``."""
+    value = getattr(trust, "value", None)
+    return str(value if value is not None else (trust or "unknown"))
+
+
+def _is_intra_boundary_trust(trust: Any) -> bool:
+    """True iff ``trust`` is an intra-boundary destination trust (self / local_system /
+    model_provider) — the trusts ``decide`` step 3 allows without gating."""
+    return _trust_label(trust) in {"self", "local_system", "model_provider"}
+
+
 def _allow_approved_tool_call(shape: dict[str, Any], source: dict[str, Any], tool_name: str, args: Any) -> None:
     _emit_egress_activity(
         "allowed",
@@ -347,43 +407,40 @@ def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_r
     return {"action": "block", "message": _guardian_block_message(approval)}
 
 
-# --- Phase 2 shadow mode (doc 04 §4) -----------------------------------------
-# The new classify+decide engine runs ALONGSIDE the authoritative old path, never
-# changing what the hook returns. Divergences are counted + logged so the corpus replay
-# and live bake can prove "only intra-boundary gate->allow flips" before Phase 3 flips
-# the switch. A shadow exception must NEVER affect the real decision.
-_SHADOW_DECISION_COUNTS: dict[str, int] = {
-    "evaluations": 0,
-    "shadow_mismatch": 0,
-    "shadow_error": 0,
-}
-
-
-def _shadow_decision_counts() -> dict[str, int]:
-    """Reader for the shadow counters (tests + diagnostics). Returns a copy."""
-    return dict(_SHADOW_DECISION_COUNTS)
-
-
-def _reset_shadow_decision_counts() -> None:
-    for key in _SHADOW_DECISION_COUNTS:
-        _SHADOW_DECISION_COUNTS[key] = 0
+# --- decide() is authoritative (Phase 3, doc 04 §5) --------------------------
+# The classify+decide engine now drives the privacy egress decision. The old scattered
+# family/destination gating and the taint->gate branching it owned are DELETED; their
+# behavior lives in ``decide`` (doc 02 §3). What remains here is the SURROUNDING
+# mechanics that decide does not own: the security-first short-circuit (runs before
+# decide, unchanged), the read-side classifier helpers, the approval-shape construction,
+# the runtime/persistent approval-source matching + consumption (``_approval_source`` —
+# which covers once/session user approvals decide cannot see, doc 04 §5 "Persistent
+# privacy.rules semantics"), the verifier upgrade in llm mode, the read-only low-risk
+# auto-approve preset, activity emission, cron failure notification, and HMAC approval
+# binding.
+#
+# Mapping (doc 02 §3 -> this function):
+#   decide ALLOW   -> allow the call (intra-boundary self/draft write, or no private
+#                     taint leaving, or an allow declassification rule).
+#   decide BLOCK   -> the privacy-rule deny path (_block_for_privacy_rule).
+#   decide APPROVE -> gate: llm mode routes through the verifier upgrade
+#                     (_llm_policy_tool_call_result, incl. cron high-risk downgrade and
+#                     _validated_llm_security_verdict — UNCHANGED); strict/read-only have
+#                     no verifier, so read-only's metadata-verified low-risk preset may
+#                     auto-approve, else _block_for_pending_approval.
 
 
 def _shadow_decision_for(tool_name: str, args: Any, session_id: str | None):
-    """Pure shadow computation: build ``(Capability, Decision)`` for a tool call.
+    """Build ``(Capability, Decision)`` for a tool call via the authoritative engine.
 
     Returns ``(capability, decision)`` where ``decision`` is one of the policy outcomes
-    (ALLOW/APPROVE/BLOCK from ``privacy/policy``). Used by the corpus-replay test to call
-    the new engine directly without going through the hook. ``decide`` reasons over the
-    AMBIENT session taint (provenance retired, doc 02 §4) and the current purpose/mode.
+    (ALLOW/APPROVE/BLOCK from ``privacy/policy``). Used by the corpus-replay parity test
+    (``tests/test_policy_engine.py`` test 10) to call the engine directly without going
+    through the hook. ``decide`` reasons over the AMBIENT session taint (provenance
+    retired, doc 02 §4) and the current purpose/mode — exactly the set the live path below
+    feeds it, so the test exercises the real decision.
     """
     cap = classify(tool_name, args, session_id)
-    # Ambient "what is potentially leaving" = session taint UNION the classes detected in
-    # this call's content (doc 02 §4 conservative ambient default; charter invariant #4).
-    # This is exactly the set the old authoritative path reasoned over
-    # (``_data_classes_for_egress``), so the floor is preserved: a previously-correct
-    # content-detected block (e.g. an external send carrying a contact) is NOT narrowed
-    # away. ``decide`` never infers "absence means safe".
     taint = _data_classes_for_egress(session_id, args)
     purpose = _purpose_from_args(args)
     mode = _privacy_policy()
@@ -391,59 +448,16 @@ def _shadow_decision_for(tool_name: str, args: Any, session_id: str | None):
     return cap, decision
 
 
-def _shadow_compare(tool_name: str, args: Any, session_id: str | None, old_outcome: str) -> None:
-    """Run the shadow engine and record divergence vs the OLD authoritative outcome.
-
-    Exception-safe: any failure increments ``shadow_error`` and is swallowed — the real
-    decision is already returned by the caller and is never affected (doc 04 §4).
-
-    ``old_outcome`` is the authoritative outcome bucketed into the same vocabulary as
-    ``decide`` for comparison: "allow" (the call proceeded), "approve" (gated to manual
-    approval), or "block" (a deny rule / hard block).
-    """
-    try:
-        _SHADOW_DECISION_COUNTS["evaluations"] += 1
-        _cap, new_decision = _shadow_decision_for(tool_name, args, session_id)
-        if new_decision != old_outcome:
-            _SHADOW_DECISION_COUNTS["shadow_mismatch"] += 1
-            logger.info(
-                "%s: shadow decision divergence tool=%s old=%s new=%s trust=%s",
-                _PLUGIN_NAME,
-                re.sub(r"[^A-Za-z0-9_.:-]+", "_", str(tool_name or ""))[:64],
-                old_outcome,
-                new_decision,
-                getattr(getattr(_cap, "destination", None), "trust", "unknown"),
-            )
-    except Exception as exc:  # noqa: BLE001 — shadow must never affect the real decision
-        _SHADOW_DECISION_COUNTS["shadow_error"] += 1
-        logger.debug("%s: shadow decision error: %s", _PLUGIN_NAME, exc)
-
-
 def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: str = "") -> dict[str, str] | None:
-    """Authoritative privacy pre-tool-call decision (UNCHANGED behavior) + Phase 2 shadow.
+    """Authoritative privacy pre-tool-call decision, driven by ``decide`` (doc 02 §3).
 
-    The old path stays authoritative and decides what is returned. A holder collects the
-    old outcome bucketed into decide's vocabulary (allow/approve/block), and after the
-    authoritative decision we run the new classify+decide engine in shadow and record any
-    divergence. The shadow computation can never change the return value.
+    Order (charter §5 invariant #1, security before privacy):
+      1. Security/intrinsic hard-block short-circuit — UNCHANGED, runs before decide.
+      2. ``privacy.mode == off`` disables ONLY private-egress checks (security still ran).
+      3. Non-sink calls are reads (taint, never egress; charter invariant #3).
+      4. A sink: build the Capability, resolve the runtime/persistent approval source, then
+         call ``decide`` and map ALLOW/BLOCK/APPROVE onto the existing mechanics.
     """
-    outcome_sink: list[str] = []
-    result = _privacy_pre_tool_call_authoritative(tool_name, args, session_id, outcome_sink)
-    old_outcome = outcome_sink[0] if outcome_sink else "allow"
-    _shadow_compare(tool_name, args, session_id, old_outcome)
-    return result
-
-
-def _privacy_pre_tool_call_authoritative(
-    tool_name: str = "",
-    args: Any = None,
-    session_id: str = "",
-    outcome_sink: list[str] | None = None,
-) -> dict[str, str] | None:
-    def _record_outcome(value: str) -> None:
-        if outcome_sink is not None:
-            outcome_sink.append(value)
-
     intrinsic_risk = _intrinsic_risk_for_tool(tool_name, args)
     if intrinsic_risk:
         reason = str(intrinsic_risk.get("reason") or "intrinsic source-and-sink risk")
@@ -475,21 +489,20 @@ def _privacy_pre_tool_call_authoritative(
             data_classes=data_classes,
             reason=reason,
         )
-        _record_outcome("block")
         return {"action": "block", "message": f"Blocked by {_PLUGIN_NAME}: {reason}."}
 
     privacy_policy = _privacy_policy()
     action = _egress_action_context_for_tool(tool_name, args, session_id)
 
     if privacy_policy == "off":
+        # off disables ONLY private-egress checks; security already ran (charter §5).
         _allow_privacy_off_tool_call(tool_name, args, session_id, action)
-        _record_outcome("allow")
         return None
 
     if not action:
+        # Non-sink: a read. Reads taint; they are never a blockable egress.
         _emit_read_activity_if_applicable(tool_name, args, session_id)
         _record_allowed_tool_side_effects(session_id, tool_name, args)
-        _record_outcome("allow")
         return None
 
     action_family, destination = action.as_tuple()
@@ -505,49 +518,81 @@ def _privacy_pre_tool_call_authoritative(
         data_classes=data_classes,
         args=args,
     )
+
+    # Runtime + persistent approval matching (once/session/persistent privacy.rules) with
+    # consumption + HMAC-bound rule mutation. decide step 5 (match_declassification_rule)
+    # only reads persistent rules and cannot see/consume once/session user approvals, so
+    # this stays the authoritative source for an explicit user-granted allow/deny (doc 04
+    # §5 "Persistent privacy.rules semantics"). When a source matches it wins, exactly as
+    # before.
     source = _approval_source(shape)
     if source:
         if source.get("effect") == "deny":
-            _record_outcome("block")
             return _block_for_privacy_rule(shape, tool_name, source)
         _allow_approved_tool_call(shape, source, tool_name, args)
-        _record_outcome("allow")
         return None
 
-    if not data_classes:
-        _allow_untainted_tool_call(
+    # No explicit approval source: the engine decides (doc 02 §3).
+    cap = classify(tool_name, args, session_id)
+    decision = decide(cap, data_classes, action.purpose, privacy_policy)
+
+    if decision == _DECISION_ALLOW:
+        if not data_classes:
+            # No private content leaving — the old "no private data in scope" allow.
+            _allow_untainted_tool_call(
+                tool_name,
+                args,
+                session_id,
+                action_family=action_family,
+                destination=destination,
+                purpose=action.purpose,
+                recipient_identity=action.recipient_identity,
+            )
+        else:
+            # Tainted session, but decide allowed it: an intra-boundary destination
+            # (self/draft/local_system/model_provider) reaching no new party. This is the
+            # G1 false-positive win — a self-write/draft that used to gate now allows.
+            _allow_intra_boundary_tool_call(
+                tool_name,
+                args,
+                session_id,
+                action_family=action_family,
+                destination=destination,
+                data_classes=data_classes,
+                trust=cap.destination.trust,
+                purpose=action.purpose,
+                recipient_identity=action.recipient_identity,
+            )
+        return None
+
+    if decision == _DECISION_BLOCK:
+        # A deny declassification rule that match_declassification_rule caught but the
+        # richer _approval_source matcher did not (e.g. a rule keyed purely on
+        # purpose/classes/destination without a fingerprint). Preserve the deny block path.
+        return _block_for_privacy_rule(
+            shape,
             tool_name,
-            args,
-            session_id,
-            action_family=action_family,
-            destination=destination,
-            purpose=action.purpose,
-            recipient_identity=action.recipient_identity,
+            {"source": "persistent", "effect": "deny", "rule_id": ""},
         )
-        _record_outcome("allow")
-        return None
 
+    # decision == APPROVE: gate for human approval (doc 02 §3 step 6).
     if privacy_policy == "read-only" and _read_only_auto_approves(shape, args):
+        # read-only's metadata-verified low-risk auto-approve preset (doc 02 §6): a
+        # read-only auto-approval that happens today must still happen.
         _allow_read_only_tool_call(shape, tool_name, args)
-        _record_outcome("allow")
         return None
 
     blocked_reason = "requires approval"
     if privacy_policy == "llm":
+        # llm mode: the verifier may UPGRADE the APPROVE to allow/hold/deny, including the
+        # cron high-risk downgrade and _validated_llm_security_verdict — UNCHANGED.
         llm_result, llm_blocked_reason = _llm_policy_tool_call_result(shape, tool_name, args)
         if llm_result is not None:
-            # llm verifier resolved this call: a block dict is a gate (approve), a None-
-            # carrying allow is an allow. _llm_policy_tool_call_result returns the hook
-            # result; a returned dict here is the verifier holding the call for approval.
-            _record_outcome("approve")
             return llm_result
         if llm_blocked_reason is None:
-            _record_outcome("allow")
             return None
         blocked_reason = llm_blocked_reason
 
-    # Pending manual approval is a GATE, not a block (doc 02 §3 step 6 APPROVE).
-    _record_outcome("approve")
     return _block_for_pending_approval(shape, tool_name, blocked_reason)
 
 

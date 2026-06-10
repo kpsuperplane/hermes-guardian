@@ -114,9 +114,12 @@ def test_llm_verifier_input_carries_real_argument_content():
     plugin._taint_session("s1", {"documents"})
     raw_note = "project codename blue lantern launch window is friday"
 
+    # An OUTWARD send (external recipient) is what reaches the llm-mode verifier in step 6;
+    # a self-store write no longer gates (Phase 3), so use an external message to exercise
+    # the verifier-payload contract this test is about.
     plugin._on_pre_tool_call(
-        "mcp_notion_update_page",
-        {"page_id": "roadmap", "notes": raw_note},
+        "send_message",
+        {"to": "stranger@example.org", "notes": raw_note},
         session_id="s1",
     )
 
@@ -240,8 +243,13 @@ def test_llm_privacy_allows_safe_remote_read_from_paste_endpoint_to_verifier(mon
     )
     result = plugin._on_pre_tool_call("terminal", {"command": command}, session_id="s1")
 
+    # Outcome preserved (the call is allowed, no pending approval). Phase 3: a session
+    # tainted only with ``local_system`` carries no ``personal_private`` policy class, so
+    # decide allows the outward terminal action deterministically without consulting the
+    # verifier (the verifier-call is no longer needed to reach the same allow). Actual
+    # private-content exfiltration via a paste endpoint is still caught — by the security
+    # hard-block layer, exercised in test_llm_privacy_still_hard_blocks_outbound_paste_endpoint.
     assert result is None
-    assert len(fake_llm.calls) == 1
     assert not plugin._PENDING_APPROVALS
 
 
