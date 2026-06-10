@@ -517,7 +517,12 @@ _LLM_VERDICT_SCHEMA = {
         "outcome": {"type": "string", "enum": ["allow", "deny"]},
         "risk_level": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
         "authorization_level": {"type": "string", "enum": ["explicit", "substantive", "weak", "unknown"]},
-        "rationale": {"type": "string", "maxLength": 240},
+        # Generous ceiling only: a verbose rationale must not make the provider's
+        # structured-output layer reject an otherwise-valid verdict (that would turn a
+        # real model decision into a fail-closed block). The rationale is non-load-bearing
+        # — the decision rides on outcome/risk_level/authorization_level — and is clamped
+        # to 240 chars at rest by _sanitize_rationale regardless of this bound.
+        "rationale": {"type": "string", "maxLength": 2000},
     },
     "required": ["outcome", "risk_level", "authorization_level", "rationale"],
 }
@@ -600,10 +605,10 @@ Outcome rules:
 - Allow high risk only with at least substantive authorization and no absolute
   deny rule. Always deny critical risk.
 
-Keep the rationale class-level and free of personal or private content: refer to
-data by class or role (for example "calendar event", "an email address"), and do
-not quote raw argument values, names, addresses, or message text. The rationale is
-stored.
+Keep the rationale to one or two sentences (about 240 characters), class-level and
+free of personal or private content: refer to data by class or role (for example
+"calendar event", "an email address"), and do not quote raw argument values, names,
+addresses, or message text. The rationale is stored.
 
 Return only the requested JSON verdict."""
 
