@@ -185,9 +185,34 @@ def test_destination_trust_summary_includes_seen_with_suggestion():
     )
     summary = plugin._destination_trust_summary()
     assert "seen" in summary and isinstance(summary["seen"], list)
-    # Every seen entry is metadata-only and carries trust + count.
+    # Every seen entry is metadata-only and carries trust + count + recipient.
     for entry in summary["seen"]:
-        assert set(entry) >= {"destination", "trust", "count", "suggest"}
+        assert set(entry) >= {"destination", "trust", "count", "suggest", "recipient_identity"}
+
+
+def test_seen_groups_messaging_by_pseudonymized_recipient():
+    """Messaging egress to distinct recipients yields distinct seen entries keyed by the
+    pseudonymized recipient_identity (never a raw address), so the dashboard can show a
+    recipients bucket. Metadata-only: the recipient is the recipient_<hash> token."""
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    for who in ("alice@example.com", "bob@example.com"):
+        plugin._on_pre_tool_call(
+            tool_name="send_message",
+            args={"to": who, "text": "hi"},
+            session_id="s1",
+        )
+    seen = plugin._destination_trust_summary()["seen"]
+    recipients = {
+        str(e.get("recipient_identity"))
+        for e in seen
+        if str(e.get("recipient_identity") or "none") != "none"
+    }
+    # Two distinct recipients -> two distinct pseudonymized tokens, never the raw address.
+    assert len(recipients) >= 2
+    assert all(r.startswith("recipient_") for r in recipients)
+    assert not any("@" in r for r in recipients)
 
 
 def test_add_to_self_suggestion_flips_resolution_external_to_self():

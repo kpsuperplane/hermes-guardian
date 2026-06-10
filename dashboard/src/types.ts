@@ -13,6 +13,7 @@ export interface SeenDestination {
   destination?: string;
   trust?: string;
   count?: number;
+  recipient_identity?: string;
   suggest?: SelfGrantSuggestion | null;
 }
 

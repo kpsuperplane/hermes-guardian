@@ -827,16 +827,19 @@ def _destination_trust_seen(*, limit: int = 300, max_entries: int = 40) -> list[
     """Distinct recent egress destinations with their trust + a suggested self-grant.
 
     Powers the dashboard "Seen recently" list and the one-click "this is mine -> add to
-    self" (doc 03 §3.1). Metadata-only: reads the destination + destination_trust columns,
-    never payload. Ordered most-recent-first, deduped by (destination, trust).
+    self" (doc 03 §3.1). Metadata-only: reads the destination + destination_trust +
+    recipient_identity columns, never payload. The recipient identity is the same
+    pseudonymized ``recipient_<hash>`` token stored on the row (never a raw address), and
+    is surfaced so messaging egress can be grouped by recipient on the dashboard. Ordered
+    most-recent-first, deduped by (destination, trust, recipient_identity).
     """
     _ensure_activity_db()
-    counts: dict[tuple[str, str], int] = {}
-    order: list[tuple[str, str]] = []
+    counts: dict[tuple[str, str, str], int] = {}
+    order: list[tuple[str, str, str]] = []
     try:
         with _activity_connect() as conn:
             rows = conn.execute(
-                "SELECT destination, destination_trust AS trust FROM activity "
+                "SELECT destination, destination_trust AS trust, recipient_identity FROM activity "
                 "WHERE decision NOT IN ('read', 'tainted') "
                 "ORDER BY ts DESC, id DESC LIMIT ?",
                 (int(limit),),
@@ -846,18 +849,20 @@ def _destination_trust_seen(*, limit: int = 300, max_entries: int = 40) -> list[
     for row in rows:
         trust = _normalize_destination_trust_label(row["trust"])
         dest = str(row["destination"] or "")
-        key = (dest, trust)
+        recipient = str(row["recipient_identity"] or "none")
+        key = (dest, trust, recipient)
         if key not in counts:
             counts[key] = 0
             order.append(key)
         counts[key] += 1
     seen: list[dict[str, Any]] = []
-    for dest, trust in order[:max_entries]:
+    for dest, trust, recipient in order[:max_entries]:
         seen.append(
             {
                 "destination": dest,
                 "trust": trust,
-                "count": counts[(dest, trust)],
+                "recipient_identity": recipient,
+                "count": counts[(dest, trust, recipient)],
                 "suggest": _suggest_self_grant(dest) if trust in ("external", "unknown", "public") else None,
             }
         )

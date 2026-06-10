@@ -28,31 +28,48 @@ function trustRank(trust: string): number {
   return idx === -1 ? TRUST_ORDER.length : idx;
 }
 
-// The three self buckets, in the same order as "What's yours" below, so both
-// sections read as the same three columns.
-type SelfKind = "stores" | "identities" | "hosts";
+// "Seen recently" categories. The first three mirror the declarable self kinds;
+// "other" catches services/system surfaces (cron, model, subagent, browser,
+// web search, …) that are NOT a store, recipient, or host — so Stores stops being
+// a junk drawer. Rendered one row per non-empty category.
+type SeenCategory = "stores" | "identities" | "hosts" | "other";
 
-const SELF_COLUMNS: Array<{ key: SelfKind; title: string; seenEmpty: string }> = [
-  { key: "stores", title: "Stores", seenEmpty: "No stores seen." },
-  { key: "identities", title: "Identities", seenEmpty: "No identities seen." },
-  { key: "hosts", title: "Hosts", seenEmpty: "No hosts seen." },
+const SEEN_CATEGORIES: Array<{ key: SeenCategory; title: string }> = [
+  { key: "stores", title: "Stores" },
+  { key: "identities", title: "Identities (recipients)" },
+  { key: "hosts", title: "Hosts" },
+  { key: "other", title: "Other (services & system)" },
 ];
 
-// Bucket an observed destination into one of the three self kinds. Prefer the
-// backend's self-grant suggestion kind when present; otherwise fall back to the
-// destination's shape (scheme / "@" / hostname). Unrecognized sinks read as stores.
-function seenKind(entry: SeenDestination): SelfKind {
+const SEEN_STORE_LABELS = ["local", "memory", "todo", "file", "kanban"];
+
+// Bucket an observed destination by what it actually is. Categorization tracks
+// claimability: the backend's self-grant suggestion is authoritative when present
+// (host / store), messaging rows carry a pseudonymized recipient and read as an
+// identity, real hostnames/IPs are hosts, and everything else — services, system
+// surfaces, opaque tool sinks — falls to "other" rather than masquerading as a store.
+function seenKind(entry: SeenDestination): SeenCategory {
   const suggest = entry.suggest;
   if (suggest && suggest.kind === "host") return "hosts";
-  if (suggest && suggest.kind === "identity") return "identities";
   if (suggest && suggest.kind === "destination") return "stores";
+  if (suggest && suggest.kind === "identity") return "identities";
+  const recipient = text(entry.recipient_identity).toLowerCase();
   const d = text(entry.destination).toLowerCase();
-  if (/^(store:|draft:|mcp:|kanban:|app:)/.test(d)) return "stores";
-  if (d.indexOf("@") >= 0 || /^(email:|message:|dm:|chat:|sms:|tel:|user:|recipient:)/.test(d)) {
-    return "identities";
+  if ((recipient && recipient !== "none") || d === "messaging") return "identities";
+  if (/^(store:|draft:|mcp:)/.test(d) || SEEN_STORE_LABELS.indexOf(d) >= 0) return "stores";
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(d) || /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d)) return "hosts";
+  return "other";
+}
+
+// What to show on a seen tile: for a recipient-bearing messaging row, the
+// (pseudonymized) recipient token; otherwise the destination string.
+function seenDisplay(entry: SeenDestination): string {
+  const recipient = text(entry.recipient_identity);
+  const destination = text(entry.destination, "(none)");
+  if (recipient && recipient.toLowerCase() !== "none" && (destination === "messaging" || !destination)) {
+    return recipient;
   }
-  if (/^(host:|https?:\/\/)/.test(d) || /^[a-z0-9-]+(\.[a-z0-9-]+)+/.test(d)) return "hosts";
-  return "stores";
+  return destination;
 }
 
 // A single add-input + button row used by every editable list.
@@ -112,31 +129,33 @@ function EditableList(props: {
   );
 }
 
-function SeenItem(props: {
+function SeenTile(props: {
   entry: SeenDestination;
   busy?: boolean;
   onAddToSelf: (suggest: { kind: string; value: string }, destination: string) => void;
 }) {
   const { entry } = props;
-  const destination = text(entry.destination, "(none)");
+  const display = seenDisplay(entry);
   return (
-    <li className="hermes-guardian-dest-item">
-      <span className="hermes-guardian-dest-seen-label">
+    <div className="hermes-guardian-seen-tile">
+      <div className="hermes-guardian-seen-tile-head">
         <TrustPill trust={entry.trust} />
-        <Mono>{destination}</Mono>
         {entry.count ? <span className="hermes-guardian-muted">{"x" + entry.count}</span> : null}
-      </span>
+      </div>
+      <div className="hermes-guardian-seen-tile-dest">
+        <Mono>{display}</Mono>
+      </div>
       {entry.suggest ? (
         <Button
           variant="secondary"
           disabled={props.busy}
           title={"Add " + entry.suggest.kind + " " + entry.suggest.value + " to your self-allowlist"}
-          onClick={() => props.onAddToSelf(entry.suggest as { kind: string; value: string }, destination)}
+          onClick={() => props.onAddToSelf(entry.suggest as { kind: string; value: string }, display)}
         >
           This is mine → add to self
         </Button>
       ) : null}
-    </li>
+    </div>
   );
 }
 
@@ -170,32 +189,33 @@ function SeenSection(props: {
         </div>
       </div>
       {sorted.length ? (
-        <div className="hermes-guardian-dest-columns">
-          {SELF_COLUMNS.map((col) => {
-            const entries = sorted.filter((entry) => seenKind(entry) === col.key);
-            return (
-              <div key={col.key} className="hermes-guardian-dest-group">
-                <div className="hermes-guardian-dest-group-title">{col.title}</div>
-                {entries.length ? (
-                  <ul className="hermes-guardian-dest-list">
-                    {entries.map((entry, index) => (
-                      <SeenItem
-                        key={text(entry.destination) + ":" + text(entry.trust) + ":" + index}
-                        entry={entry}
-                        busy={props.busy}
-                        onAddToSelf={props.onAddToSelf}
-                      />
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="hermes-guardian-muted hermes-guardian-dest-empty">
-                    {col.seenEmpty}
-                  </div>
-                )}
+        SEEN_CATEGORIES.map((cat) => {
+          const entries = sorted.filter((entry) => seenKind(entry) === cat.key);
+          if (!entries.length) return null;
+          return (
+            <div key={cat.key} className="hermes-guardian-seen-cat">
+              <div className="hermes-guardian-seen-cat-title">{cat.title}</div>
+              <div className="hermes-guardian-seen-track">
+                {entries.map((entry, index) => (
+                  <SeenTile
+                    key={
+                      text(entry.destination) +
+                      ":" +
+                      text(entry.recipient_identity) +
+                      ":" +
+                      text(entry.trust) +
+                      ":" +
+                      index
+                    }
+                    entry={entry}
+                    busy={props.busy}
+                    onAddToSelf={props.onAddToSelf}
+                  />
+                ))}
               </div>
-            );
-          })}
-        </div>
+            </div>
+          );
+        })
       ) : (
         <div className="hermes-guardian-muted hermes-guardian-dest-empty">
           No outbound destinations observed yet.
