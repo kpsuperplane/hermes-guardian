@@ -234,6 +234,56 @@ def decide(cap: Any, taint: Any = None, purpose: Any = "unknown", mode: Any = "s
     return APPROVE
 
 
+def decide_with_step(
+    cap: Any, taint: Any = None, purpose: Any = "unknown", mode: Any = "strict"
+) -> tuple[str, str]:
+    """Like :func:`decide`, but also returns the firing step label (doc 03 §2, §3.2).
+
+    The label is the SAME step vocabulary ``/guardian why`` prints and that lands in the
+    activity row's ``decision_step``. This recomputes the branch deterministically — it is
+    pure and total like ``decide`` — so the label always matches the outcome ``decide``
+    returns (a test asserts the pair is consistent). Kept beside ``decide`` so the two can
+    never drift.
+    """
+    direction = str(getattr(cap, "direction", "") or "")
+    if direction == "read":
+        return ALLOW, "step1_read"
+
+    destination = getattr(cap, "destination", None)
+    trust = _normalize_trust(getattr(destination, "trust", None))
+    if trust == DestinationTrust.UNKNOWN:
+        trust = DestinationTrust.EXTERNAL
+        unknown_origin = True
+    else:
+        unknown_origin = False
+
+    if trust in (
+        DestinationTrust.SELF,
+        DestinationTrust.LOCAL_SYSTEM,
+        DestinationTrust.MODEL_PROVIDER,
+    ):
+        return ALLOW, f"step3_intra_boundary_{_trust_value(trust)}"
+
+    private_exported = _taint_policy_classes(taint) & _EGRESS_GATING_POLICY_CLASSES
+    if not private_exported:
+        return ALLOW, "step4_no_private_taint"
+
+    rule = match_declassification_rule(purpose, private_exported, destination, trust)
+    if rule is not None:
+        if rule.get("effect") == "allow":
+            return ALLOW, f"step5_allow_rule:{rule.get('rule_id', '')}".rstrip(":")
+        if rule.get("effect") == "deny":
+            return BLOCK, f"step5_deny_rule:{rule.get('rule_id', '')}".rstrip(":")
+
+    suffix = "external" if not unknown_origin else "unknown_as_external"
+    return APPROVE, f"step6_approve_{suffix}"
+
+
+def _trust_value(trust: Any) -> str:
+    value = getattr(trust, "value", None)
+    return str(value if value is not None else (trust or "unknown"))
+
+
 def _normalize_trust(raw_trust: Any) -> Any:
     """Coerce ``raw_trust`` to a ``DestinationTrust`` member; fail-closed to UNKNOWN.
 
@@ -252,6 +302,7 @@ def _normalize_trust(raw_trust: Any) -> Any:
 # Expose underscore-prefixed aliases for the public names so the facade bridges them to
 # tests (same pattern as privacy/capability and privacy/destinations).
 _decide = decide
+_decide_with_step = decide_with_step
 _match_declassification_rule = match_declassification_rule
 _DECISION_ALLOW = ALLOW
 _DECISION_APPROVE = APPROVE

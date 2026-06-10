@@ -148,6 +148,11 @@ def _require_dashboard_confirmation(action: str, body: dict[str, Any]) -> None:
     if action == "llm_cron_context" and _body_bool(body, "enabled"):
         if _confirmation_value(body) != "cron-context-on":
             raise HTTPException(status_code=400, detail="enabling cron context requires confirmation")
+    # Destination-trust edits are security-relevant (they move what resolves to self /
+    # trusted), so require an explicit confirmation token like the cron-context toggle
+    # (doc 03 §3.1). Applies to self/trusted/sharing adds and removes.
+    if action == "destination_trust" and _confirmation_value(body) != "destination-trust":
+        raise HTTPException(status_code=400, detail="destination-trust edit requires confirmation")
 
 
 def _json_mutation_result(request: Request, action: str, result: tuple[dict[str, Any], int]) -> JSONResponse:
@@ -173,6 +178,12 @@ async def policy() -> dict[str, Any]:
 @router.get("/performance")
 async def performance() -> dict[str, Any]:
     return _guardian()._performance_summary()
+
+
+@router.get("/destinations")
+async def destinations() -> dict[str, Any]:
+    """Read endpoint for the Destinations & Trust panel (doc 03 §3.1)."""
+    return _guardian()._destination_trust_summary()
 
 
 @router.get("/activity")
@@ -317,3 +328,48 @@ async def delete_tool_override(request: Request, override_id: str) -> JSONRespon
         "delete_tool_override",
         _guardian()._dashboard_tool_override_delete_action(override_id),
     )
+
+
+# --- Destinations & Trust panel (doc 03 §3.1) --------------------------------
+# All destination-trust mutations are admin-token + confirmation guarded
+# (_require_dashboard_confirmation("destination_trust", ...)).
+@router.post("/destinations/self")
+async def add_self_destination(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    _require_dashboard_confirmation("destination_trust", body)
+    return _json_mutation_result(request, "self_add", _guardian()._dashboard_self_add_action(body))
+
+
+@router.post("/destinations/self/remove")
+async def remove_self_destination(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    _require_dashboard_confirmation("destination_trust", body)
+    return _json_mutation_result(request, "self_remove", _guardian()._dashboard_self_remove_action(body))
+
+
+@router.post("/destinations/trusted")
+async def add_trusted_recipient(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    _require_dashboard_confirmation("destination_trust", body)
+    return _json_mutation_result(request, "trusted_add", _guardian()._dashboard_trusted_add_action(body))
+
+
+@router.post("/destinations/trusted/remove")
+async def remove_trusted_recipient(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    _require_dashboard_confirmation("destination_trust", body)
+    return _json_mutation_result(request, "trusted_remove", _guardian()._dashboard_trusted_remove_action(body))
+
+
+@router.post("/destinations/sharing")
+async def add_sharing_subtype(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    _require_dashboard_confirmation("destination_trust", body)
+    return _json_mutation_result(request, "sharing_add", _guardian()._dashboard_sharing_add_action(body))
+
+
+@router.post("/destinations/sharing/remove")
+async def remove_sharing_subtype(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    _require_dashboard_confirmation("destination_trust", body)
+    return _json_mutation_result(request, "sharing_remove", _guardian()._dashboard_sharing_remove_action(body))

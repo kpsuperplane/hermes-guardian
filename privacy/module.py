@@ -54,6 +54,8 @@ def _emit_egress_activity(
     action_detail: str = "",
     purpose: str = "",
     recipient_identity: str = "",
+    destination_trust: str = "unknown",
+    decision_step: str = "",
 ) -> None:
     _emit_activity(
         decision,
@@ -72,6 +74,8 @@ def _emit_egress_activity(
         action_detail=action_detail,
         purpose=purpose,
         recipient_identity=recipient_identity,
+        destination_trust=destination_trust,
+        decision_step=decision_step,
         module="privacy",
     )
 
@@ -107,6 +111,8 @@ def _allow_untainted_tool_call(
     destination: str,
     purpose: str = "unknown",
     recipient_identity: str = "none",
+    destination_trust: str = "unknown",
+    decision_step: str = "",
 ) -> None:
     _emit_egress_activity(
         "allowed",
@@ -119,6 +125,8 @@ def _allow_untainted_tool_call(
         action_detail=_activity_action_detail(tool_name, args, action_family, destination),
         purpose=purpose,
         recipient_identity=recipient_identity,
+        destination_trust=destination_trust,
+        decision_step=decision_step,
     )
     _record_allowed_tool_side_effects(session_id, tool_name, args)
 
@@ -134,6 +142,7 @@ def _allow_intra_boundary_tool_call(
     trust: Any,
     purpose: str = "unknown",
     recipient_identity: str = "none",
+    decision_step: str = "",
 ) -> None:
     """Allow a tainted write whose ``decide`` outcome is ALLOW (doc 02 §3).
 
@@ -160,6 +169,8 @@ def _allow_intra_boundary_tool_call(
         action_detail=_activity_action_detail(tool_name, args, action_family, destination),
         purpose=purpose,
         recipient_identity=recipient_identity,
+        destination_trust=_trust_label(trust),
+        decision_step=decision_step,
     )
     _record_allowed_tool_side_effects(
         session_id,
@@ -199,6 +210,8 @@ def _allow_approved_tool_call(shape: dict[str, Any], source: dict[str, Any], too
         action_detail=shape.get("action_detail", ""),
         purpose=shape.get("purpose", "unknown"),
         recipient_identity=shape.get("recipient_identity", "none"),
+        destination_trust=shape.get("destination_trust", "unknown"),
+        decision_step=shape.get("decision_step", ""),
     )
     _record_allowed_tool_side_effects(
         shape.get("session_id", ""),
@@ -226,6 +239,8 @@ def _block_for_privacy_rule(shape: dict[str, Any], tool_name: str, source: dict[
         action_detail=shape.get("action_detail", ""),
         purpose=shape.get("purpose", "unknown"),
         recipient_identity=shape.get("recipient_identity", "none"),
+        destination_trust=shape.get("destination_trust", "unknown"),
+        decision_step=shape.get("decision_step", ""),
     )
     _notify_cron_failure_if_needed(
         session_id=shape.get("session_id", ""),
@@ -235,6 +250,8 @@ def _block_for_privacy_rule(shape: dict[str, Any], tool_name: str, source: dict[
         destination=shape.get("destination", ""),
         data_classes=set(shape.get("data_classes") or []),
         reason=reason,
+        destination_trust=shape.get("destination_trust", "unknown"),
+        decision_step=shape.get("decision_step", ""),
     )
     return {
         "action": "block",
@@ -269,6 +286,8 @@ def _allow_read_only_tool_call(shape: dict[str, Any], tool_name: str, args: Any)
         action_detail=shape.get("action_detail", ""),
         purpose=shape.get("purpose", "unknown"),
         recipient_identity=shape.get("recipient_identity", "none"),
+        destination_trust=shape.get("destination_trust", "unknown"),
+        decision_step=shape.get("decision_step", ""),
     )
     _record_allowed_tool_side_effects(shape.get("session_id", ""), tool_name, args)
 
@@ -296,6 +315,8 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
             action_detail=shape.get("action_detail", ""),
             purpose=shape.get("purpose", "unknown"),
             recipient_identity=shape.get("recipient_identity", "none"),
+            destination_trust=shape.get("destination_trust", "unknown"),
+            decision_step=shape.get("decision_step", ""),
         )
         _notify_cron_failure_if_needed(
             session_id=shape.get("session_id", ""),
@@ -305,6 +326,8 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
             destination=shape.get("destination", ""),
             data_classes=set(shape.get("data_classes") or []),
             reason=hard_reason,
+            destination_trust=shape.get("destination_trust", "unknown"),
+            decision_step=shape.get("decision_step", ""),
         )
         return {"action": "block", "message": _block_message(hard_reason)}, None
 
@@ -352,6 +375,8 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
             action_detail=shape.get("action_detail", ""),
             purpose=shape.get("purpose", "unknown"),
             recipient_identity=shape.get("recipient_identity", "none"),
+            destination_trust=shape.get("destination_trust", "unknown"),
+            decision_step=shape.get("decision_step", ""),
         )
         _record_allowed_tool_side_effects(
             shape.get("session_id", ""),
@@ -393,6 +418,8 @@ def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_r
         action_detail=shape.get("action_detail", ""),
         purpose=shape.get("purpose", "unknown"),
         recipient_identity=shape.get("recipient_identity", "none"),
+        destination_trust=shape.get("destination_trust", "unknown"),
+        decision_step=shape.get("decision_step", ""),
     )
     _notify_cron_failure_if_needed(
         session_id=shape.get("session_id", ""),
@@ -403,6 +430,8 @@ def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_r
         data_classes=set(shape.get("data_classes") or []),
         reason=blocked_reason,
         approval_id=approval.get("id", ""),
+        destination_trust=shape.get("destination_trust", "unknown"),
+        decision_step=shape.get("decision_step", ""),
     )
     return {"action": "block", "message": _guardian_block_message(approval)}
 
@@ -507,6 +536,13 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
 
     action_family, destination = action.as_tuple()
     data_classes = _data_classes_for_egress(session_id, args)
+    # Resolve the Capability + decide() step ONCE up front so every emit path (approval
+    # source match, block, approve, verifier) stamps the activity row with the SAME
+    # destination trust + decide step (doc 03 §3.2). decide_with_step is pure; the outcome
+    # it returns equals what the authoritative decide() below returns (asserted by test).
+    cap = classify(tool_name, args, session_id)
+    decision, decision_step = decide_with_step(cap, data_classes, action.purpose, privacy_policy)
+    destination_trust = _trust_label(getattr(cap.destination, "trust", None))
     shape = _approval_shape(
         session_id=session_id,
         tool_name=tool_name,
@@ -517,6 +553,8 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
         legacy_destination=action.legacy_destination,
         data_classes=data_classes,
         args=args,
+        destination_trust=destination_trust,
+        decision_step=decision_step,
     )
 
     # Runtime + persistent approval matching (once/session/persistent privacy.rules) with
@@ -532,10 +570,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
         _allow_approved_tool_call(shape, source, tool_name, args)
         return None
 
-    # No explicit approval source: the engine decides (doc 02 §3).
-    cap = classify(tool_name, args, session_id)
-    decision = decide(cap, data_classes, action.purpose, privacy_policy)
-
+    # No explicit approval source: the engine decision computed up front (doc 02 §3).
     if decision == _DECISION_ALLOW:
         if not data_classes:
             # No private content leaving — the old "no private data in scope" allow.
@@ -547,6 +582,8 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
                 destination=destination,
                 purpose=action.purpose,
                 recipient_identity=action.recipient_identity,
+                destination_trust=destination_trust,
+                decision_step=decision_step,
             )
         else:
             # Tainted session, but decide allowed it: an intra-boundary destination
@@ -562,6 +599,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
                 trust=cap.destination.trust,
                 purpose=action.purpose,
                 recipient_identity=action.recipient_identity,
+                decision_step=decision_step,
             )
         return None
 

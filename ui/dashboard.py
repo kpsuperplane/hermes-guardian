@@ -178,6 +178,7 @@ def _dashboard_tool_override_create_action(payload: dict[str, Any]) -> tuple[dic
         match,
         taints=payload.get("taints"),
         egress=payload.get("egress"),
+        direction=payload.get("direction"),
         destination=payload.get("destination"),
         note=payload.get("note"),
         enabled=payload.get("enabled"),
@@ -201,6 +202,7 @@ def _dashboard_tool_override_update_action(override_id: str, payload: dict[str, 
             existing.get("match"),
             taints=payload.get("taints"),
             egress=payload.get("egress"),
+            direction=payload.get("direction"),
             destination=payload.get("destination"),
             note=payload.get("note"),
             enabled=payload.get("enabled"),
@@ -211,6 +213,51 @@ def _dashboard_tool_override_update_action(override_id: str, payload: dict[str, 
 def _dashboard_tool_override_delete_action(match_or_id: str) -> tuple[dict[str, Any], int]:
     ok, message = _delete_tool_override(match_or_id)
     status = 200 if ok else (404 if message.startswith("No matching tool override") else 400)
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
+
+
+# --- Destinations & Trust panel actions (doc 03 §3.1) ------------------------
+# Mirror the slash commands; mutations go through the same admin-token + confirmation
+# guards in dashboard/plugin_api.py (destination-trust edits require confirmation like
+# the cron-context toggle).
+def _dashboard_self_add_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    kind = str(payload.get("kind") or "").strip().lower()
+    value = str(payload.get("value") or "").strip()
+    ok, message = _add_self_destination(kind, value)
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+
+
+def _dashboard_self_remove_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    kind = str(payload.get("kind") or "").strip().lower()
+    value = str(payload.get("value") or "").strip()
+    ok, message = _remove_self_destination(kind, value)
+    status = 200 if ok else (404 if message.startswith("No ") else 400)
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
+
+
+def _dashboard_trusted_add_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    ok, message = _add_trusted_recipient(
+        str(payload.get("identity") or ""),
+        classes=payload.get("classes"),
+        note=str(payload.get("note") or ""),
+    )
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+
+
+def _dashboard_trusted_remove_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    ok, message = _remove_trusted_recipient(str(payload.get("identity") or ""))
+    status = 200 if ok else (404 if message.startswith("No ") else 400)
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
+
+
+def _dashboard_sharing_add_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    ok, message = _add_outward_sharing_subtype(str(payload.get("subtype") or ""))
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+
+
+def _dashboard_sharing_remove_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    ok, message = _remove_outward_sharing_subtype(str(payload.get("subtype") or ""))
+    status = 200 if ok else (404 if message.startswith("No ") else 400)
     return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
 
 

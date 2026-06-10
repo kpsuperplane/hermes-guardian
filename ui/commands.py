@@ -23,9 +23,17 @@ _GUARDIAN_HELP_LINES = [
     "/guardian privacy cron-context on|off",
     "/guardian privacy verifier-model <model_id|none>",
     "/guardian tools",
-    "/guardian tool set <match> [taints=a+b] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]",
+    "/guardian tool set <match> [taints=a+b] [egress=ignore|gate|<family>] [direction=read|write] [destination=<dest>] [note=<text>]",
     "/guardian tool delete <match_or_id>",
     "/guardian tool enable|disable <id_or_match>",
+    "/guardian self",
+    "/guardian self add destination|identity|host <value>",
+    "/guardian self remove destination|identity|host <value>",
+    "/guardian trusted add <identity> [classes=<class+class>] [note=<text>]",
+    "/guardian trusted remove <identity>",
+    "/guardian sharing",
+    "/guardian sharing add <subtype>",
+    "/guardian why <id>",
     "/guardian security",
     "/guardian security enable|disable <rule_id>",
     "/guardian language-packs",
@@ -33,7 +41,7 @@ _GUARDIAN_HELP_LINES = [
     "/guardian history [limit]",
     "/guardian failures [limit]",
     "/guardian failed [limit] (alias)",
-    "/guardian debug action=<family> destination=<dest> classes=<class+class> [tool=<tool_name>]",
+    "/guardian debug action=<family> destination=<dest> classes=<class+class> [tool=<tool_name>] [recipient=<id>]",
 ]
 
 _RULE_ADD_KEYS = {
@@ -66,6 +74,7 @@ _TOOL_SET_KEYS = {
     "taints",
     "taint",
     "egress",
+    "direction",
     "destination",
     "dest",
     "note",
@@ -226,6 +235,24 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
         for cls in re.split(r"[,+]", raw_classes)
         if cls.strip() in _ALL_PRIVACY_CLASSES
     })
+    # Preview how a recipient/destination resolves to a trust level (doc 03 §2.2). For a
+    # messaging destination the recipient drives trust; otherwise the destination token.
+    raw_recipient = (params.get("recipient") or params.get("recipient_identity") or "").strip()
+    # A templated/placeholder recipient (e.g. "{{recipient}}", "<to>", "${addr}") is
+    # unresolvable — never guess it is self (doc 01 §3.2). Treat it as empty so the
+    # resolver returns unknown.
+    if re.search(r"\{\{.*\}\}|\$\{.*\}|<[^>]+>", raw_recipient):
+        raw_recipient = ""
+    is_messaging = action_family in {"message_send", "message_list", "final_response"} or any(
+        verb in action_family for verb in ("message", "send")
+    )
+    if is_messaging:
+        trust = resolve_destination_trust("messaging", "messaging", "send", raw_recipient)
+    else:
+        dest_token = destination.split(":", 1)[1] if destination.startswith("mcp:") else destination
+        dest_kind = destination.split(":", 1)[0] if ":" in destination else (destination or "store")
+        trust = resolve_destination_trust(dest_kind, dest_token, "write", raw_recipient)
+    destination_trust = _trust_label_for_debug(trust)
     shape = {
         "session_id": _GLOBAL_SESSION_ID,
         "owner_hash": _CLI_OWNER_HASH,
@@ -245,6 +272,7 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
             "source": {"source": "privacy_off", "rule_id": ""},
             "action_family": action_family,
             "destination": destination,
+            "destination_trust": destination_trust,
             "purpose": purpose,
             "recipient_identity": recipient_identity,
             "data_classes": classes,
@@ -260,6 +288,7 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
             "source": source,
             "action_family": action_family,
             "destination": destination,
+            "destination_trust": destination_trust,
             "purpose": purpose,
             "recipient_identity": recipient_identity,
             "data_classes": classes,
@@ -272,12 +301,18 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
         "source": None,
         "action_family": action_family,
         "destination": destination,
+        "destination_trust": destination_trust,
         "purpose": purpose,
         "recipient_identity": recipient_identity,
         "data_classes": classes,
         "tool_name": tool_name,
         "reason": "no matching allow rule; would require approval if session is tainted",
     }
+
+
+def _trust_label_for_debug(trust: Any) -> str:
+    value = getattr(trust, "value", None)
+    return str(value if value is not None else (trust or "unknown"))
 
 
 def _guardian_debug_command(tokens: list[str]) -> str:
@@ -287,7 +322,7 @@ def _guardian_debug_command(tokens: list[str]) -> str:
     if not params:
         return (
             "Usage: /guardian debug action=<family> destination=<dest> "
-            "classes=<class+class> [tool=<tool_name>]\n"
+            "classes=<class+class> [tool=<tool_name>] [recipient=<id>]\n"
             "Example: /guardian debug action=mcp_write destination=mcp:notion classes=communications"
         )
     result = _debug_decision(params)
@@ -302,6 +337,7 @@ def _guardian_debug_command(tokens: list[str]) -> str:
         f"Privacy policy: {result['privacy_policy']}\n"
         f"Action: {result['action_family'] or '(missing)'}\n"
         f"Destination: {result['destination'] or '(missing)'}\n"
+        f"Destination trust: {result.get('destination_trust') or 'unknown'}\n"
         f"Purpose: {result.get('purpose') or 'unknown'}\n"
         f"Recipient identity: {result.get('recipient_identity') or 'none'}\n"
         f"Data classes: {classes}\n"
@@ -341,6 +377,14 @@ def _handle_guardian_command(raw_args: str = "") -> str:
         return _guardian_tools_command()
     if command == "tool":
         return _guardian_tool_command(owner_hash, tokens)
+    if command == "self":
+        return _guardian_self_command(owner_hash, tokens)
+    if command in {"trusted", "trusted-recipients", "trusted_recipients"}:
+        return _guardian_trusted_command(owner_hash, tokens)
+    if command == "sharing":
+        return _guardian_sharing_command(owner_hash, tokens)
+    if command == "why":
+        return _guardian_why_command(tokens)
     if command in {"language-packs", "language-pack", "languages"}:
         return _guardian_language_packs_command(owner_hash, tokens)
     if command == "rule":
@@ -431,6 +475,8 @@ def _guardian_tools_command() -> str:
         bits = [f"match={override.get('match', '')}", state]
         if override.get("egress"):
             bits.append(f"egress={override['egress']}")
+        if override.get("direction"):
+            bits.append(f"direction={override['direction']}")
         if override.get("destination"):
             bits.append(f"destination={override['destination']}")
         if override.get("taints"):
@@ -449,7 +495,8 @@ def _guardian_tool_command(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     usage = (
         "Usage: /guardian tool set <match> [taints=a+b] [egress=ignore|gate|<family>] "
-        "[destination=<dest>] [note=<text>] | /guardian tool delete <match_or_id> | "
+        "[direction=read|write] [destination=<dest>] [note=<text>] | "
+        "/guardian tool delete <match_or_id> | "
         "/guardian tool enable|disable <id_or_match>"
     )
     if sub == "set" and len(tokens) >= 3:
@@ -465,13 +512,15 @@ def _guardian_tool_command(owner_hash: str, tokens: list[str]) -> str:
             kwargs["taints"] = [cls.strip() for cls in re.split(r"[,+]", raw_taints) if cls.strip()]
         if "egress" in params:
             kwargs["egress"] = params["egress"]
+        if "direction" in params:
+            kwargs["direction"] = params["direction"]
         raw_destination = params.get("destination") or params.get("dest")
         if raw_destination is not None:
             kwargs["destination"] = raw_destination
         if "note" in params:
             kwargs["note"] = params["note"]
         if not kwargs:
-            return "Provide at least one of: taints=, egress=, destination=, note=.\n" + usage
+            return "Provide at least one of: taints=, egress=, direction=, destination=, note=.\n" + usage
         ok, message = _set_tool_override(match, **kwargs)
         return message
     if sub in {"delete", "remove"} and len(tokens) == 3:
@@ -485,6 +534,173 @@ def _guardian_tool_command(owner_hash: str, tokens: list[str]) -> str:
         ok, message = _set_tool_override_enabled(tokens[2], sub == "enable")
         return message
     return usage
+
+
+def _guardian_self_command(owner_hash: str, tokens: list[str]) -> str:
+    sub = tokens[1].lower() if len(tokens) > 1 else ""
+    usage = (
+        "Usage: /guardian self | "
+        "/guardian self add destination|identity|host <value> | "
+        "/guardian self remove destination|identity|host <value>"
+    )
+    if not sub:
+        snapshot = _self_config_snapshot()
+        trusted = _trusted_recipients_snapshot()
+        lines = ["Hermes Guardian self-destinations (intra-boundary, never gated)"]
+        lines.append(f"Destinations ({len(snapshot['destinations'])}): " + (", ".join(snapshot["destinations"]) or "none"))
+        lines.append(f"Identities ({len(snapshot['identities'])}): " + (", ".join(snapshot["identities"]) or "none (send-to-self not proven)"))
+        lines.append(f"Hosts ({len(snapshot['hosts'])}): " + (", ".join(snapshot["hosts"]) or "none (own-infra not proven)"))
+        if trusted:
+            lines.append("Trusted recipients: " + ", ".join(
+                f"{entry['identity']} ({','.join(entry['classes'])})" for entry in trusted
+            ))
+        else:
+            lines.append("Trusted recipients: none")
+        lines.append(usage)
+        return "\n".join(lines)
+    if sub == "add" and len(tokens) >= 4:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        _ok, message = _add_self_destination(tokens[2], " ".join(tokens[3:]))
+        return message
+    if sub in {"remove", "delete"} and len(tokens) >= 4:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        _ok, message = _remove_self_destination(tokens[2], " ".join(tokens[3:]))
+        return message
+    return usage
+
+
+def _guardian_trusted_command(owner_hash: str, tokens: list[str]) -> str:
+    sub = tokens[1].lower() if len(tokens) > 1 else ""
+    usage = (
+        "Usage: /guardian trusted add <identity> [classes=<class+class>] [note=<text>] | "
+        "/guardian trusted remove <identity>"
+    )
+    if not sub:
+        trusted = _trusted_recipients_snapshot()
+        if not trusted:
+            return "No trusted recipients configured.\n" + usage
+        lines = ["Hermes Guardian trusted recipients"]
+        for entry in trusted:
+            note = f" - {entry['note']}" if entry.get("note") else ""
+            lines.append(f"- {entry['identity']}: classes={','.join(entry['classes'])}{note}")
+        lines.append(usage)
+        return "\n".join(lines)
+    if sub == "add" and len(tokens) >= 3:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        identity = tokens[2]
+        params, errors = _parse_key_value_args(tokens[3:], allowed_keys={"classes", "class", "data_classes", "note"})
+        if errors:
+            return "Invalid trusted recipient arguments: " + "; ".join(errors) + f"\n{usage}"
+        classes = params.get("classes") or params.get("class") or params.get("data_classes")
+        class_list = [cls.strip() for cls in re.split(r"[,+]", classes)] if classes else None
+        _ok, message = _add_trusted_recipient(identity, classes=class_list, note=params.get("note", ""))
+        return message
+    if sub in {"remove", "delete"} and len(tokens) == 3:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        _ok, message = _remove_trusted_recipient(tokens[2])
+        return message
+    return usage
+
+
+def _guardian_sharing_command(owner_hash: str, tokens: list[str]) -> str:
+    sub = tokens[1].lower() if len(tokens) > 1 else ""
+    usage = "Usage: /guardian sharing | /guardian sharing add <subtype> | /guardian sharing remove <subtype>"
+    if not sub:
+        snapshot = _outward_sharing_snapshot()
+        lines = ["Hermes Guardian outward-sharing subtypes (always external, even on a self store)"]
+        for subtype in snapshot["builtin"]:
+            lines.append(f"- {subtype} (builtin, non-removable)")
+        for subtype in snapshot["extra"]:
+            lines.append(f"- {subtype} (extra)")
+        lines.append(usage)
+        return "\n".join(lines)
+    if sub == "add" and len(tokens) == 3:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        _ok, message = _add_outward_sharing_subtype(tokens[2])
+        return message
+    if sub in {"remove", "delete"} and len(tokens) == 3:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        _ok, message = _remove_outward_sharing_subtype(tokens[2])
+        return message
+    return usage
+
+
+def _guardian_why_command(tokens: list[str]) -> str:
+    if len(tokens) != 2:
+        return "Usage: /guardian why <activity_id|approval_id>"
+    return _guardian_why(tokens[1])
+
+
+def _activity_row_for_why(identifier: str) -> dict[str, Any] | None:
+    """Find the activity row a `why` query refers to (doc 03 §2).
+
+    Accepts a bare activity row id (e.g. ``42`` or ``activity-42``) or a 4-digit
+    approval id; returns the most recent matching row or None.
+    """
+    raw = str(identifier or "").strip()
+    activity_match = re.fullmatch(r"(?:activity-)?(\d+)", raw)
+    _ensure_activity_db()
+    try:
+        with _activity_connect() as conn:
+            if re.fullmatch(r"[0-9]{4}", raw):
+                # 4 digits could be an approval id OR a small row id; prefer approval id.
+                row = conn.execute(
+                    "SELECT * FROM activity WHERE approval_id = ? ORDER BY ts DESC, id DESC LIMIT 1",
+                    (raw,),
+                ).fetchone()
+                if row is not None:
+                    return _activity_row_from_sql(row)
+            if activity_match:
+                row = conn.execute(
+                    "SELECT * FROM activity WHERE id = ? LIMIT 1",
+                    (int(activity_match.group(1)),),
+                ).fetchone()
+                if row is not None:
+                    return _activity_row_from_sql(row)
+    except Exception:
+        return None
+    return None
+
+
+def _guardian_why(identifier: str) -> str:
+    """Explain a recorded decision: resolved Capability + the firing decide() step.
+
+    Reads the persisted activity row (the trust + step were stamped at decision time by
+    the authoritative path, doc 03 §3.2), so the printed Capability and step match the
+    actual outcome — this is the reason-about-ability payoff (doc 03 §2.1).
+    """
+    row = _activity_row_for_why(identifier)
+    if row is None:
+        return f"No Guardian activity found for {identifier}."
+    decision = str(row.get("decision") or "")
+    action_family = str(row.get("action_family") or "")
+    destination = str(row.get("destination") or "")
+    trust = str(row.get("destination_trust") or "unknown")
+    step = str(row.get("decision_step") or "")
+    classes = _activity_data_classes_list(row.get("data_classes"))
+    direction = "read" if decision in {"read", "tainted"} else "write"
+    lines = [
+        f"Guardian decision for {identifier}",
+        f"Outcome: {decision or 'unknown'}",
+        "Resolved Capability:",
+        f"  direction: {direction}",
+        f"  destination: {destination or '(none)'} (trust={trust})",
+        f"  policy classes / fine tags: {', '.join(classes) if classes else 'none'}",
+        f"  action family: {action_family or '(none)'}",
+        f"  purpose: {row.get('purpose') or 'unknown'}",
+        f"  recipient identity: {row.get('recipient_identity') or 'none'}",
+        f"Decide step: {step or '(pre-migration row; step not recorded)'}",
+    ]
+    reason = str(row.get("reason") or "").strip()
+    if reason:
+        lines.append(f"Reason: {reason}")
+    return "\n".join(lines)
 
 
 def _guardian_security_command(owner_hash: str, tokens: list[str]) -> str:
@@ -682,9 +898,17 @@ def _guardian_status(owner_hash: str) -> str:
             if bool(pack.get("enabled"))
         ]
     risk_banners = _runtime_risk_banners()
+    trust_summary = _destination_trust_summary()
+    self_block = trust_summary.get("self") or {}
+    tally = trust_summary.get("tally") or {}
+    tally_text = (
+        ", ".join(f"{label}={count}" for label, count in sorted(tally.items()))
+        if tally
+        else "none observed yet"
+    )
     lines = [
         "Hermes Guardian status",
-        f"Privacy mode: {_privacy_policy()}",
+        f"Privacy mode (preset): {_privacy_policy()}",
         f"Unknown tools: {_unknown_tools_mode()} ({len(_tool_overrides())} override(s))",
         f"LLM context: user-prompt {'on' if _llm_user_context_enabled() else 'off'}, "
         f"cron {'on' if _llm_cron_context_enabled() else 'off'}",
@@ -693,7 +917,20 @@ def _guardian_status(owner_hash: str) -> str:
         f"Taint classes: {', '.join(taint) if taint else 'none'}",
         f"Pending approvals: {len(pending)}",
         f"Privacy rules: {len(rules)}",
+        "Destination trust:",
+        f"  self destinations: {len(self_block.get('destinations') or [])}, "
+        f"identities: {len(self_block.get('identities') or [])}, "
+        f"hosts: {len(self_block.get('hosts') or [])}",
+        f"  trusted recipients: {len(trust_summary.get('trusted_recipients') or [])}",
+        f"  outward-sharing subtypes: {len((trust_summary.get('outward_sharing') or {}).get('builtin') or [])} builtin + "
+        f"{len((trust_summary.get('outward_sharing') or {}).get('extra') or [])} extra",
+        f"  destinations seen by trust: {tally_text}",
     ]
+    env_overrides = trust_summary.get("env_overrides") or []
+    if env_overrides:
+        lines.append("Env overrides shadowing the policy document:")
+        for override in env_overrides:
+            lines.append(f"  {override}")
     for banner in risk_banners:
         lines.append(f"Risk: {banner.get('message', '')}")
     for approval in pending[:10]:

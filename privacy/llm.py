@@ -66,6 +66,8 @@ def _approval_shape(
     legacy_destination: str = "",
     data_classes: set[str],
     args: Any,
+    destination_trust: str = "unknown",
+    decision_step: str = "",
 ) -> dict[str, Any]:
     state = _ensure_session(session_id)
     safe_purpose = _normalize_rule_purpose(purpose, allow_star=False)
@@ -80,6 +82,11 @@ def _approval_shape(
         "recipient_identity": safe_recipient_identity,
         "legacy_destination": str(legacy_destination or ""),
         "data_classes": sorted(data_classes),
+        # Destination-trust metadata (doc 03 §3.2). Carried on the shape so every emit
+        # path (block / approve / verifier upgrade) can stamp the activity row with the
+        # same trust + decide() step that produced the outcome. Enum/label only.
+        "destination_trust": str(destination_trust or "unknown"),
+        "decision_step": str(decision_step or ""),
         "action_detail": _activity_action_detail(tool_name, args, action_family, destination),
         "fingerprint": _approval_fingerprint(
             tool_name=tool_name,

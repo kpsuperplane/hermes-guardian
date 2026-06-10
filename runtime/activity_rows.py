@@ -28,7 +28,7 @@ def _dashboard_suggestion_value(value: Any, *, limit: int = 160) -> str:
 
 
 def _activity_distinct_values(column: str, *, limit: int = 40) -> list[str]:
-    if column not in {"destination", "tool_name", "purpose", "recipient_identity"}:
+    if column not in {"destination", "tool_name", "purpose", "recipient_identity", "destination_trust"}:
         return []
     _ensure_activity_db()
     sql = (
@@ -298,6 +298,8 @@ _DATATABLES_SORT_COLUMNS = {
     "reason_short": "reason",
     "purpose": "purpose",
     "recipient_identity": "recipient_identity",
+    "destination_trust": "destination_trust",
+    "decision_step": "decision_step",
 }
 _DATATABLES_SEARCH_COLUMNS = (
     "decision",
@@ -307,6 +309,8 @@ _DATATABLES_SEARCH_COLUMNS = (
     "destination",
     "purpose",
     "recipient_identity",
+    "destination_trust",
+    "decision_step",
     "data_classes",
     "reason",
     "approval_id",
@@ -322,7 +326,7 @@ _DATATABLES_SEARCH_COLUMNS = (
 def _activity_filter_clauses(filters: dict[str, str]) -> tuple[list[str], list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
-    for key in ("decision", "action_family", "destination", "tool_name", "mode", "session_hash", "purpose", "recipient_identity"):
+    for key in ("decision", "action_family", "destination", "tool_name", "mode", "session_hash", "purpose", "recipient_identity", "destination_trust"):
         value = str(filters.get(key) or "").strip()
         if not value:
             continue
@@ -388,7 +392,22 @@ def _activity_row_from_sql(row: sqlite3.Row) -> dict[str, Any]:
         "module": row["module"],
         "rule_effect": row["rule_effect"],
         "rule_scope": row["rule_scope"],
+        # Additive metadata columns (doc 03 §3.2). Guard with key presence so a row read
+        # from a pre-migration snapshot renders display-safe (unknown / empty step).
+        "destination_trust": _row_value(row, "destination_trust", "unknown"),
+        "decision_step": _row_value(row, "decision_step", ""),
     }
+
+
+def _row_value(row: sqlite3.Row, column: str, default: Any) -> Any:
+    try:
+        keys = row.keys()
+    except Exception:
+        return default
+    if column in keys:
+        value = row[column]
+        return value if value is not None else default
+    return default
 
 
 def _activity_plain_reason_line(row: dict[str, Any], *, limit: int = 120) -> str:
@@ -414,6 +433,8 @@ def _activity_datatables_row(row: dict[str, Any]) -> dict[str, Any]:
         "tool_name": str(row.get("tool_name") or ""),
         "action_family": str(row.get("action_family") or ""),
         "destination": str(row.get("destination") or ""),
+        "destination_trust": str(row.get("destination_trust") or "unknown"),
+        "decision_step": str(row.get("decision_step") or ""),
         "purpose": str(row.get("purpose") or ""),
         "recipient_identity": str(row.get("recipient_identity") or ""),
         "data_classes": str(row.get("data_classes") or ""),
@@ -459,6 +480,7 @@ def _activity_datatables_payload(params: dict[str, str]) -> dict[str, Any]:
         "tool_name": params.get("tool_name", ""),
         "action_family": params.get("action_family", ""),
         "destination": params.get("destination", ""),
+        "destination_trust": params.get("destination_trust", ""),
         "purpose": params.get("purpose", ""),
         "recipient_identity": params.get("recipient_identity", ""),
         "search": params.get("search[value]", ""),
@@ -644,6 +666,26 @@ def _runtime_risk_banners() -> list[dict[str, str]]:
                 "message": "LLM cron context is on; cron jobs supply their own authorization evidence to the verifier (high-risk cron egress still requires manual approval).",
             }
         )
+    if _self_grants_present():
+        # Doc 03 §3.3: a non-empty self.identities / self.hosts is a real send-to-self /
+        # own-infra trust grant. Informational, so the grant is never invisible.
+        snapshot = _self_config_snapshot()
+        granted = []
+        if snapshot.get("identities"):
+            granted.append(f"{len(snapshot['identities'])} send-to-self identity(ies)")
+        if snapshot.get("hosts"):
+            granted.append(f"{len(snapshot['hosts'])} own-infra host(s)")
+        banners.append(
+            {
+                "id": "self_trust_grants",
+                "severity": "info",
+                "message": (
+                    "Self-destination trust granted: "
+                    + ", ".join(granted)
+                    + ". Sends/flows to these resolve to self and skip gating."
+                ),
+            }
+        )
     return banners
 
 
@@ -727,6 +769,43 @@ def _performance_summary(*, sample_limit: int = 50) -> dict[str, Any]:
     }
 
 
+def _destination_trust_tally(*, limit: int = 500) -> dict[str, int]:
+    """Count recent activity rows bucketed by ``destination_trust`` (doc 03 §3.1).
+
+    Powers the dashboard "live tally of destinations-by-trust this session" and the
+    `/guardian status` destination-trust summary, so an operator can spot an
+    external/unknown they expected to be self. Metadata-only (reads the enum column).
+    """
+    _ensure_activity_db()
+    tally: dict[str, int] = {}
+    try:
+        with _activity_connect() as conn:
+            rows = conn.execute(
+                "SELECT destination_trust AS trust, COUNT(*) AS n FROM activity "
+                "WHERE decision NOT IN ('read', 'tainted') "
+                "GROUP BY destination_trust"
+            ).fetchall()
+    except Exception:
+        return {}
+    for row in rows:
+        label = _normalize_destination_trust_label(row["trust"])
+        tally[label] = tally.get(label, 0) + int(row["n"] or 0)
+    return tally
+
+
+def _destination_trust_summary() -> dict[str, Any]:
+    """The destination-trust summary block for status + dashboard (doc 03 §2, §3.1)."""
+    self_snapshot = _self_config_snapshot()
+    return {
+        "tally": _destination_trust_tally(),
+        "self": self_snapshot,
+        "trusted_recipients": _trusted_recipients_snapshot(),
+        "outward_sharing": _outward_sharing_snapshot(),
+        "self_grants_present": _self_grants_present(),
+        "env_overrides": _active_env_overrides(),
+    }
+
+
 def _policy_snapshot() -> dict[str, Any]:
     with _LOCK:
         _prune_expired()
@@ -789,7 +868,9 @@ def _policy_snapshot() -> dict[str, Any]:
         "llm_verifier_model_options": _verifier_model_options(),
         "tool_overrides": _tool_overrides_snapshot(),
         "tool_override_egress_options": sorted(_TOOL_OVERRIDE_EGRESS_VALUES),
+        "tool_override_direction_options": sorted(_TOOL_OVERRIDE_DIRECTIONS),
         "all_privacy_classes": sorted(_ALL_PRIVACY_CLASSES),
+        "destination_trust": _destination_trust_summary(),
         "risk_banners": risk_banners,
         "security_rules": _security_rules_snapshot(),
         "language_packs": _language_packs_snapshot(),

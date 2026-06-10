@@ -20,21 +20,19 @@ def _activity_connect() -> sqlite3.Connection:
 
 
 def _activity_max_rows() -> int:
-    raw = _env(_ACTIVITY_MAX_ROWS_ENV, str(_DEFAULT_ACTIVITY_MAX_ROWS)).strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        return _DEFAULT_ACTIVITY_MAX_ROWS
-    return max(0, value)
+    # Document `retention.max_rows` is the source of truth; the env var still overrides
+    # for ops (doc 03 §1.2). _retention_setting handles the precedence + surfacing.
+    value, _overridden = _retention_setting(
+        "max_rows", _ACTIVITY_MAX_ROWS_ENV, _DEFAULT_ACTIVITY_MAX_ROWS
+    )
+    return value
 
 
 def _activity_retention_days() -> int:
-    raw = _env(_ACTIVITY_RETENTION_DAYS_ENV, str(_DEFAULT_ACTIVITY_RETENTION_DAYS)).strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        return _DEFAULT_ACTIVITY_RETENTION_DAYS
-    return max(0, value)
+    value, _overridden = _retention_setting(
+        "max_age_days", _ACTIVITY_RETENTION_DAYS_ENV, _DEFAULT_ACTIVITY_RETENTION_DAYS
+    )
+    return value
 
 
 def _activity_group_seconds() -> int:
@@ -78,7 +76,9 @@ def _ensure_activity_db() -> None:
                         rule_effect TEXT NOT NULL DEFAULT '',
                         rule_scope TEXT NOT NULL DEFAULT '',
                         purpose TEXT NOT NULL DEFAULT '',
-                        recipient_identity TEXT NOT NULL DEFAULT ''
+                        recipient_identity TEXT NOT NULL DEFAULT '',
+                        destination_trust TEXT NOT NULL DEFAULT 'unknown',
+                        decision_step TEXT NOT NULL DEFAULT ''
                     )
                     """
                 )
@@ -98,6 +98,13 @@ def _ensure_activity_db() -> None:
                     conn.execute("ALTER TABLE activity ADD COLUMN purpose TEXT NOT NULL DEFAULT ''")
                 if "recipient_identity" not in columns:
                     conn.execute("ALTER TABLE activity ADD COLUMN recipient_identity TEXT NOT NULL DEFAULT ''")
+                # Doc 03 §3.2: additive, nullable-with-default metadata columns. Existing
+                # rows backfill to destination_trust='unknown' / decision_step='' (display
+                # -safe; no historical migration, retention unchanged).
+                if "destination_trust" not in columns:
+                    conn.execute("ALTER TABLE activity ADD COLUMN destination_trust TEXT NOT NULL DEFAULT 'unknown'")
+                if "decision_step" not in columns:
+                    conn.execute("ALTER TABLE activity ADD COLUMN decision_step TEXT NOT NULL DEFAULT ''")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_ts_idx ON activity(ts)")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_decision_idx ON activity(decision)")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_action_idx ON activity(action_family)")
@@ -165,6 +172,33 @@ def _ensure_activity_db() -> None:
             logger.debug("%s: failed to initialize activity db: %s", _PLUGIN_NAME, exc)
 
 
+# Allowed destination-trust labels persisted on a row (doc 03 §3.2). A garbage / empty
+# label fails closed to "unknown" so the column is always a clean enum, never payload.
+_DESTINATION_TRUST_LABELS = {
+    "self",
+    "trusted_recipient",
+    "trusted",
+    "local_system",
+    "model_provider",
+    "external",
+    "public",
+    "unknown",
+}
+
+
+def _normalize_destination_trust_label(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text == "trusted_recipient":
+        text = "trusted"
+    return text if text in _DESTINATION_TRUST_LABELS else "unknown"
+
+
+def _normalize_decision_step_label(value: Any) -> str:
+    # A short, charset-bounded step label (e.g. "step3_intra_boundary"); never payload.
+    text = re.sub(r"[^a-z0-9_:.\- ]+", "", str(value or "").strip().lower())
+    return text[:60]
+
+
 def _emit_activity(
     decision: str,
     *,
@@ -184,8 +218,15 @@ def _emit_activity(
     rule_scope: str = "",
     purpose: str = "",
     recipient_identity: str = "",
+    destination_trust: str = "",
+    decision_step: str = "",
 ) -> None:
-    """Persist sanitized activity metadata for dashboard/debugging."""
+    """Persist sanitized activity metadata for dashboard/debugging.
+
+    ``destination_trust`` (an enum label: self/trusted/external/public/unknown) and
+    ``decision_step`` (a decide() step label) are METADATA ONLY — no payload content
+    (doc 03 §5 / invariant #5). They default to display-safe values for callers/old rows.
+    """
     if decision not in _ACTIVITY_DECISIONS:
         decision = "allowed"
     if not module:
@@ -204,9 +245,10 @@ def _emit_activity(
                     ts, decision, mode, session_label, session_hash, owner_hash,
                     tool_name, action_family, destination, data_classes, reason,
                     approval_id, rule_id, rule_source, action_detail,
-                    module, rule_effect, rule_scope, purpose, recipient_identity
+                    module, rule_effect, rule_scope, purpose, recipient_identity,
+                    destination_trust, decision_step
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     int(_now()),
@@ -229,6 +271,8 @@ def _emit_activity(
                     str(rule_scope or "")[:160],
                     _normalize_rule_purpose(purpose or "unknown", allow_star=False),
                     _normalize_rule_recipient_identity(recipient_identity or "none", allow_star=False),
+                    _normalize_destination_trust_label(destination_trust),
+                    _normalize_decision_step_label(decision_step),
                 ),
             )
         _prune_activity_db()

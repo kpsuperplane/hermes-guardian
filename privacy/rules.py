@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-_PRIVACY_RULE_FILE_VERSION = 1
+_PRIVACY_RULE_FILE_VERSION = 3
 _DEFAULT_PRIVACY_MODE = "llm"
 _PRIVACY_MODES = {"strict", "read-only", "llm", "off"}
 _DEFAULT_UNKNOWN_TOOLS = "gate"
@@ -35,6 +35,24 @@ _TOOL_OVERRIDE_EGRESS_FAMILIES = {
     "homeassistant_write",
 }
 _TOOL_OVERRIDE_EGRESS_VALUES = {"ignore", "gate"} | _TOOL_OVERRIDE_EGRESS_FAMILIES
+# Tool-override direction (doc 03 §1.2): read|write. Empty means "infer from name /
+# MCP annotation" (the existing behavior); a stored value overrides the inference.
+_TOOL_OVERRIDE_DIRECTIONS = {"read", "write"}
+# Env vars that override the named `retention` / `dashboard` config blocks (doc 03
+# §1.2). The document is the source of truth; these env vars remain readable as ops
+# overrides and are surfaced in `/guardian status` so they are never invisible.
+_RETENTION_ENV_OVERRIDES = (
+    ("max_rows", "HERMES_GUARDIAN_ACTIVITY_MAX_ROWS"),
+    ("max_age_days", "HERMES_GUARDIAN_ACTIVITY_RETENTION_DAYS"),
+)
+_DASHBOARD_ENV_OVERRIDES = (
+    ("mutations", "HERMES_GUARDIAN_DASHBOARD_MUTATIONS"),
+    ("admin_token_env", "HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN"),
+)
+_DEFAULT_RETENTION_MAX_ROWS = 100
+_DEFAULT_RETENTION_MAX_AGE_DAYS = 7
+_DEFAULT_DASHBOARD_MUTATIONS = "auto"
+_DEFAULT_DASHBOARD_ADMIN_TOKEN_ENV = "HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN"
 # --- Destination-trust config defaults (doc 01 §4; Phase 1 plumbing) ---------
 # These seed the `self` / `trusted_recipients` / `outward_sharing` blocks of the
 # privacy config. The destination-trust resolver (privacy/destinations.py) reads
@@ -133,7 +151,55 @@ def _default_privacy_config() -> dict[str, Any]:
             "rules": _default_security_rules(),
         },
         "language_packs": _default_language_pack_config(),
+        "retention": _default_retention_config(),
+        "dashboard": _default_dashboard_config(),
     }
+
+
+def _default_retention_config() -> dict[str, Any]:
+    return {
+        "max_rows": _DEFAULT_RETENTION_MAX_ROWS,
+        "max_age_days": _DEFAULT_RETENTION_MAX_AGE_DAYS,
+    }
+
+
+def _default_dashboard_config() -> dict[str, Any]:
+    return {
+        "mutations": _DEFAULT_DASHBOARD_MUTATIONS,
+        "admin_token_env": _DEFAULT_DASHBOARD_ADMIN_TOKEN_ENV,
+    }
+
+
+def _normalize_retention_config(raw: Any) -> dict[str, Any]:
+    """Normalize the ``retention`` block (doc 03 §1.2), fail closed to defaults.
+
+    Values are non-negative integers; 0 disables the corresponding limit (matching
+    the existing env semantics). A malformed value drops to the default for that key.
+    """
+    block = raw if isinstance(raw, dict) else {}
+
+    def as_int(value: Any, default: int) -> int:
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "max_rows": as_int(block.get("max_rows"), _DEFAULT_RETENTION_MAX_ROWS),
+        "max_age_days": as_int(block.get("max_age_days"), _DEFAULT_RETENTION_MAX_AGE_DAYS),
+    }
+
+
+def _normalize_dashboard_config(raw: Any) -> dict[str, Any]:
+    """Normalize the ``dashboard`` block (doc 03 §1.2), fail closed to defaults."""
+    block = raw if isinstance(raw, dict) else {}
+    mutations = str(block.get("mutations") or _DEFAULT_DASHBOARD_MUTATIONS).strip().lower()
+    if mutations not in {"auto", "on", "off"}:
+        mutations = _DEFAULT_DASHBOARD_MUTATIONS
+    token_env = str(block.get("admin_token_env") or _DEFAULT_DASHBOARD_ADMIN_TOKEN_ENV).strip()
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,80}", token_env):
+        token_env = _DEFAULT_DASHBOARD_ADMIN_TOKEN_ENV
+    return {"mutations": mutations, "admin_token_env": token_env}
 
 
 def _default_self_config() -> dict[str, Any]:
@@ -230,6 +296,8 @@ def _normalize_tool_override(entry: Any) -> dict[str, Any] | None:
     taints = _normalize_rule_classes(entry.get("taints", entry.get("taint", [])), allow_star=False)
     egress_raw = str(entry.get("egress") or "").strip().lower()
     egress = egress_raw if egress_raw in _TOOL_OVERRIDE_EGRESS_VALUES else ""
+    direction_raw = str(entry.get("direction") or "").strip().lower()
+    direction = direction_raw if direction_raw in _TOOL_OVERRIDE_DIRECTIONS else ""
     destination = (
         _safe_policy_token(entry.get("destination"), default="", limit=80)
         if entry.get("destination")
@@ -244,6 +312,7 @@ def _normalize_tool_override(entry: Any) -> dict[str, Any] | None:
         "match": match,
         "taints": taints,
         "egress": egress,
+        "direction": direction,
         "destination": destination,
         "enabled": _config_bool(entry.get("enabled"), default=True),
         "note": note,
@@ -570,6 +639,12 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
             "rules": _normalize_security_rules(security.get("rules")),
         },
         "language_packs": _normalize_language_pack_config(language_packs),
+        # Named retention/dashboard blocks fold the env knobs into the document (doc 03
+        # §1.2). A version<3 / absent block normalizes to the defaults here, so an old
+        # config gains them for free. Env vars still override at read time (see
+        # _retention_setting / _dashboard_setting) and are surfaced in `/guardian status`.
+        "retention": _normalize_retention_config(parsed.get("retention")),
+        "dashboard": _normalize_dashboard_config(parsed.get("dashboard")),
     }
 
 
@@ -659,6 +734,35 @@ def _save_privacy_config(data: dict[str, Any]) -> bool:
             return False
 
 
+def _config_for_save(data: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    """Rebuild the full config dict for a save, preserving EVERY block.
+
+    Phase 1 carryover bug fix (doc 03 carryover note): the rule-mutation helpers used
+    to rebuild the saved config from only version/privacy/security/language_packs, so an
+    operator-customized ``self`` / ``trusted_recipients`` / ``outward_sharing`` (and the
+    new ``retention`` / ``dashboard``) block would be DROPPED — re-defaulted on the next
+    mode/rule save. This helper round-trips all blocks through every mutation: it starts
+    from the loaded config and applies only the block(s) the caller is changing. Each
+    mutation helper passes the one or two blocks it touches as ``overrides``; the rest
+    survive verbatim (re-normalized on save, which is idempotent for an already-valid
+    block).
+    """
+    base = data if isinstance(data, dict) else {}
+    out: dict[str, Any] = {
+        "version": _PRIVACY_RULE_FILE_VERSION,
+        "privacy": dict(base.get("privacy") or {}),
+        "self": _normalize_self_config(base.get("self")),
+        "trusted_recipients": _normalize_trusted_recipients(base.get("trusted_recipients")),
+        "outward_sharing": _normalize_outward_sharing(base.get("outward_sharing")),
+        "security": dict(base.get("security") or {}),
+        "language_packs": dict(base.get("language_packs") or {}),
+        "retention": _normalize_retention_config(base.get("retention")),
+        "dashboard": _normalize_dashboard_config(base.get("dashboard")),
+    }
+    out.update(overrides)
+    return out
+
+
 def _privacy_mode() -> str:
     return _normalize_privacy_mode(_load_privacy_config().get("privacy", {}).get("mode"))
 
@@ -670,13 +774,7 @@ def _set_privacy_mode(mode: str) -> tuple[bool, str]:
     data = _load_privacy_config()
     privacy = dict(data.get("privacy") or {})
     privacy["mode"] = normalized
-    data = {
-        "version": _PRIVACY_RULE_FILE_VERSION,
-        "privacy": privacy,
-        "security": dict(data.get("security") or {}),
-        "language_packs": dict(data.get("language_packs") or {}),
-    }
-    if not _save_privacy_config(data):
+    if not _save_privacy_config(_config_for_save(data, privacy=privacy)):
         return False, "Failed to save privacy mode; Guardian remains unchanged."
     return True, f"Privacy mode set to {normalized}."
 
@@ -690,12 +788,7 @@ def _save_persistent_privacy_rules(rules: list[dict[str, Any]]) -> bool:
     privacy = dict(data.get("privacy") or {})
     privacy["mode"] = _privacy_mode()
     privacy["rules"] = rules
-    return _save_privacy_config({
-        "version": _PRIVACY_RULE_FILE_VERSION,
-        "privacy": privacy,
-        "security": dict(data.get("security") or {}),
-        "language_packs": dict(data.get("language_packs") or {}),
-    })
+    return _save_privacy_config(_config_for_save(data, privacy=privacy))
 
 
 def _security_rules() -> list[dict[str, Any]]:
@@ -742,14 +835,7 @@ def _set_security_rule(rule_id: str, enabled: bool) -> tuple[bool, str]:
         if rule["id"] == normalized_id:
             rule["enabled"] = desired
             break
-    next_data = {
-        "version": _PRIVACY_RULE_FILE_VERSION,
-        "privacy": dict(data.get("privacy") or {}),
-        "security": {
-            "rules": security_rules,
-        },
-        "language_packs": dict(data.get("language_packs") or {}),
-    }
+    next_data = _config_for_save(data, security={"rules": security_rules})
     if not _save_privacy_config(next_data):
         return False, "Failed to save security rule; Guardian remains unchanged."
     label = _SECURITY_RULE_DEFINITIONS[normalized_id]["label"]
@@ -770,13 +856,7 @@ def _set_unknown_tools_mode(mode: str) -> tuple[bool, str]:
     data = _load_privacy_config()
     privacy = dict(data.get("privacy") or {})
     privacy["unknown_tools"] = normalized
-    next_data = {
-        "version": _PRIVACY_RULE_FILE_VERSION,
-        "privacy": privacy,
-        "security": dict(data.get("security") or {}),
-        "language_packs": dict(data.get("language_packs") or {}),
-    }
-    if not _save_privacy_config(next_data):
+    if not _save_privacy_config(_config_for_save(data, privacy=privacy)):
         return False, "Failed to save unknown-tools mode; Guardian remains unchanged."
     return True, f"Unknown-tools mode set to {normalized}."
 
@@ -799,13 +879,7 @@ def _set_llm_context_flag(key: str, enabled: bool, label: str) -> tuple[bool, st
     data = _load_privacy_config()
     privacy = dict(data.get("privacy") or {})
     privacy[key] = bool(enabled)
-    next_data = {
-        "version": _PRIVACY_RULE_FILE_VERSION,
-        "privacy": privacy,
-        "security": dict(data.get("security") or {}),
-        "language_packs": dict(data.get("language_packs") or {}),
-    }
-    if not _save_privacy_config(next_data):
+    if not _save_privacy_config(_config_for_save(data, privacy=privacy)):
         return False, f"Failed to save {label} setting; Guardian remains unchanged."
     return True, f"LLM {label} turned {'on' if enabled else 'off'}."
 
@@ -829,13 +903,7 @@ def _set_llm_verifier_model(model: str) -> tuple[bool, str]:
     data = _load_privacy_config()
     privacy = dict(data.get("privacy") or {})
     privacy["llm_verifier_model"] = normalized
-    next_data = {
-        "version": _PRIVACY_RULE_FILE_VERSION,
-        "privacy": privacy,
-        "security": dict(data.get("security") or {}),
-        "language_packs": dict(data.get("language_packs") or {}),
-    }
-    if not _save_privacy_config(next_data):
+    if not _save_privacy_config(_config_for_save(data, privacy=privacy)):
         return False, "Failed to save verifier model; Guardian remains unchanged."
     if normalized:
         return True, (
@@ -934,6 +1002,7 @@ def _tool_overrides_snapshot() -> list[dict[str, Any]]:
             "match": str(override.get("match") or ""),
             "taints": sorted(override.get("taints") or []),
             "egress": str(override.get("egress") or ""),
+            "direction": str(override.get("direction") or ""),
             "destination": str(override.get("destination") or ""),
             "enabled": bool(override.get("enabled", True)),
             "note": str(override.get("note") or ""),
@@ -945,12 +1014,7 @@ def _save_tool_overrides(overrides: list[dict[str, Any]]) -> bool:
     data = _load_privacy_config()
     privacy = dict(data.get("privacy") or {})
     privacy["tools"] = overrides
-    return _save_privacy_config({
-        "version": _PRIVACY_RULE_FILE_VERSION,
-        "privacy": privacy,
-        "security": dict(data.get("security") or {}),
-        "language_packs": dict(data.get("language_packs") or {}),
-    })
+    return _save_privacy_config(_config_for_save(data, privacy=privacy))
 
 
 def _set_tool_override(
@@ -958,6 +1022,7 @@ def _set_tool_override(
     *,
     taints: Any = None,
     egress: Any = None,
+    direction: Any = None,
     destination: Any = None,
     note: Any = None,
     enabled: Any = None,
@@ -972,6 +1037,10 @@ def _set_tool_override(
                 "egress must be one of: ignore, gate, or a known action family "
                 f"({', '.join(sorted(_TOOL_OVERRIDE_EGRESS_FAMILIES))})."
             )
+    if direction is not None:
+        direction_text = str(direction).strip().lower()
+        if direction_text and direction_text not in _TOOL_OVERRIDE_DIRECTIONS:
+            return False, "direction must be one of: read, write."
     if taints is not None:
         requested = taints if isinstance(taints, list) else [taints]
         invalid = [
@@ -989,6 +1058,8 @@ def _set_tool_override(
         payload["taints"] = taints
     if egress is not None:
         payload["egress"] = egress
+    if direction is not None:
+        payload["direction"] = direction
     if destination is not None:
         payload["destination"] = destination
     if note is not None:
@@ -1064,6 +1135,219 @@ def _tool_override_for(tool_name: str) -> dict[str, Any] | None:
     return best
 
 
+# --- Destination-trust config read/mutation (doc 03 §1.2, §2) ----------------
+# These expose the `self` / `trusted_recipients` / `outward_sharing` blocks for the
+# slash commands and dashboard. Every mutation round-trips the full config via
+# _config_for_save, so an edit to one block never drops another (the carryover fix).
+_SELF_DESTINATION_KINDS = {"destination", "identity", "host"}
+
+
+def _self_config_snapshot() -> dict[str, Any]:
+    block = _load_privacy_config().get("self") or {}
+    return {
+        "destinations": list(block.get("destinations") or []),
+        "identities": list(block.get("identities") or []),
+        "hosts": list(block.get("hosts") or []),
+    }
+
+
+def _trusted_recipients_snapshot() -> list[dict[str, Any]]:
+    block = _load_privacy_config().get("trusted_recipients") or {}
+    entries = block.get("entries") if isinstance(block.get("entries"), list) else []
+    return [
+        {
+            "identity": str(entry.get("identity") or ""),
+            "classes": sorted(entry.get("classes") or ["*"]),
+            "note": str(entry.get("note") or ""),
+        }
+        for entry in entries
+        if isinstance(entry, dict)
+    ]
+
+
+def _outward_sharing_snapshot() -> dict[str, Any]:
+    block = _load_privacy_config().get("outward_sharing") or {}
+    return {
+        "builtin": list(block.get("builtin") or _OUTWARD_SHARING_BUILTIN_SUBTYPES),
+        "extra": list(block.get("extra") or []),
+    }
+
+
+def _self_grants_present() -> bool:
+    """True iff the operator has granted any send-to-self identity or own-infra host.
+
+    Drives the doc 03 §3.3 informational banner: a non-empty ``identities`` or
+    ``hosts`` is a real `self` trust grant and must never be invisible.
+    """
+    snapshot = _self_config_snapshot()
+    return bool(snapshot.get("identities") or snapshot.get("hosts"))
+
+
+def _save_self_config(self_block: dict[str, Any]) -> bool:
+    data = _load_privacy_config()
+    return _save_privacy_config(_config_for_save(data, self=_normalize_self_config(self_block)))
+
+
+def _add_self_destination(kind: str, value: str) -> tuple[bool, str]:
+    normalized_kind = str(kind or "").strip().lower()
+    if normalized_kind not in _SELF_DESTINATION_KINDS:
+        return False, "Self kind must be one of: destination, identity, host."
+    if normalized_kind == "destination":
+        token = _normalize_destination_token(value)
+        field = "destinations"
+        if not token:
+            return False, "Destination must be a kind:id token like store:crm or draft:*."
+    else:
+        token = _normalize_identity_token(value)
+        field = "identities" if normalized_kind == "identity" else "hosts"
+        if not token:
+            return False, f"{normalized_kind.capitalize()} value must be a non-empty address/handle/host."
+    snapshot = _self_config_snapshot()
+    if token in snapshot[field]:
+        return False, f"{normalized_kind} {token} is already in the self allowlist."
+    snapshot[field].append(token)
+    if not _save_self_config(snapshot):
+        return False, "Failed to save self allowlist; Guardian remains unchanged."
+    return True, f"Added {normalized_kind} {token} to the self allowlist."
+
+
+def _remove_self_destination(kind: str, value: str) -> tuple[bool, str]:
+    normalized_kind = str(kind or "").strip().lower()
+    if normalized_kind not in _SELF_DESTINATION_KINDS:
+        return False, "Self kind must be one of: destination, identity, host."
+    if normalized_kind == "destination":
+        token = _normalize_destination_token(value)
+        field = "destinations"
+    else:
+        token = _normalize_identity_token(value)
+        field = "identities" if normalized_kind == "identity" else "hosts"
+    snapshot = _self_config_snapshot()
+    if token not in snapshot[field]:
+        return False, f"No {normalized_kind} {value} found in the self allowlist."
+    snapshot[field] = [item for item in snapshot[field] if item != token]
+    if not _save_self_config(snapshot):
+        return False, "Failed to save self allowlist; Guardian remains unchanged."
+    return True, f"Removed {normalized_kind} {token} from the self allowlist."
+
+
+def _add_trusted_recipient(identity: str, *, classes: Any = None, note: str = "") -> tuple[bool, str]:
+    token = _normalize_identity_token(identity)
+    if not token:
+        return False, "Trusted recipient identity must be a non-empty address/handle."
+    if classes is None or (isinstance(classes, str) and not classes.strip()):
+        normalized_classes = ["*"]
+    else:
+        normalized_classes = _normalize_rule_classes(classes) or ["*"]
+    note_text = re.sub(r"\s+", " ", str(note or "")).strip()[:200]
+    data = _load_privacy_config()
+    block = _trusted_recipients_snapshot()
+    block = [entry for entry in block if entry["identity"] != token]
+    block.append({"identity": token, "classes": normalized_classes, "note": note_text})
+    next_data = _config_for_save(
+        data, trusted_recipients=_normalize_trusted_recipients({"entries": block})
+    )
+    if not _save_privacy_config(next_data):
+        return False, "Failed to save trusted recipient; Guardian remains unchanged."
+    return True, f"Added trusted recipient {token} ({','.join(normalized_classes)})."
+
+
+def _remove_trusted_recipient(identity: str) -> tuple[bool, str]:
+    token = _normalize_identity_token(identity)
+    block = _trusted_recipients_snapshot()
+    remaining = [entry for entry in block if entry["identity"] != token]
+    if len(remaining) == len(block):
+        return False, f"No trusted recipient found for {identity}."
+    data = _load_privacy_config()
+    next_data = _config_for_save(
+        data, trusted_recipients=_normalize_trusted_recipients({"entries": remaining})
+    )
+    if not _save_privacy_config(next_data):
+        return False, "Failed to save trusted recipient; Guardian remains unchanged."
+    return True, f"Removed trusted recipient {token}."
+
+
+def _add_outward_sharing_subtype(subtype: str) -> tuple[bool, str]:
+    token = re.sub(r"[^a-z0-9_]+", "", str(subtype or "").strip().lower())
+    if not token:
+        return False, "Sharing subtype must be a non-empty token like share or invite."
+    if token in set(_OUTWARD_SHARING_BUILTIN_SUBTYPES):
+        return False, f"{token} is a builtin outward-sharing subtype (already enforced)."
+    snapshot = _outward_sharing_snapshot()
+    if token in snapshot["extra"]:
+        return False, f"Outward-sharing subtype {token} is already configured."
+    snapshot["extra"].append(token)
+    data = _load_privacy_config()
+    next_data = _config_for_save(data, outward_sharing=_normalize_outward_sharing(snapshot))
+    if not _save_privacy_config(next_data):
+        return False, "Failed to save outward-sharing subtype; Guardian remains unchanged."
+    return True, f"Added outward-sharing subtype {token}."
+
+
+def _remove_outward_sharing_subtype(subtype: str) -> tuple[bool, str]:
+    token = re.sub(r"[^a-z0-9_]+", "", str(subtype or "").strip().lower())
+    if token in set(_OUTWARD_SHARING_BUILTIN_SUBTYPES):
+        return False, f"{token} is a builtin outward-sharing subtype and cannot be removed."
+    snapshot = _outward_sharing_snapshot()
+    if token not in snapshot["extra"]:
+        return False, f"No extra outward-sharing subtype {subtype} found."
+    snapshot["extra"] = [item for item in snapshot["extra"] if item != token]
+    data = _load_privacy_config()
+    next_data = _config_for_save(data, outward_sharing=_normalize_outward_sharing(snapshot))
+    if not _save_privacy_config(next_data):
+        return False, "Failed to save outward-sharing subtype; Guardian remains unchanged."
+    return True, f"Removed outward-sharing subtype {token}."
+
+
+# --- Retention / dashboard settings with env overrides (doc 03 §1.2) ----------
+def _retention_setting(key: str, env_var: str, default: int) -> tuple[int, bool]:
+    """Effective retention value + whether an env var is shadowing the document.
+
+    The document is the source of truth, but the env var still overrides for ops; the
+    boolean lets `/guardian status` surface the override so it is never invisible.
+    """
+    block = _load_privacy_config().get("retention") or {}
+    try:
+        doc_value = max(0, int(block.get(key, default)))
+    except (TypeError, ValueError):
+        doc_value = default
+    raw = os.environ.get(env_var)
+    if raw is not None and str(raw).strip() != "":
+        try:
+            return max(0, int(str(raw).strip())), True
+        except ValueError:
+            return doc_value, False
+    return doc_value, False
+
+
+def _dashboard_setting(key: str, env_var: str, default: str) -> tuple[str, bool]:
+    block = _load_privacy_config().get("dashboard") or {}
+    doc_value = str(block.get(key) or default)
+    raw = os.environ.get(env_var)
+    if raw is not None and str(raw).strip() != "":
+        return str(raw).strip(), True
+    return doc_value, False
+
+
+def _active_env_overrides() -> list[str]:
+    """Labels for env vars currently shadowing the named config (doc 03 §1.2, §2).
+
+    Surfaced in `/guardian status` so an operator can see which posture knobs are being
+    driven by the environment rather than the policy document.
+    """
+    overrides: list[str] = []
+    for key, env_var in _RETENTION_ENV_OVERRIDES:
+        if str(os.environ.get(env_var) or "").strip():
+            overrides.append(f"retention.{key} <- {env_var}={os.environ.get(env_var).strip()}")
+    for env_var in (
+        "HERMES_GUARDIAN_DASHBOARD_MUTATIONS",
+        "HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS",
+        "HERMES_GUARDIAN_CRON_NOTIFY_TO",
+    ):
+        if str(os.environ.get(env_var) or "").strip():
+            overrides.append(f"{env_var}={os.environ.get(env_var).strip()}")
+    return overrides
+
+
 def _language_pack_ids() -> list[str]:
     return list(_load_privacy_config().get("language_packs", {}).get("enabled", ["en"]))
 
@@ -1098,14 +1382,7 @@ def _set_language_pack(pack_id: str, enabled: bool) -> tuple[bool, str]:
     if not desired:
         ids = [existing for existing in ids if existing != normalized_id]
     ids = _normalize_language_pack_ids(ids)
-    next_data = {
-        "version": _PRIVACY_RULE_FILE_VERSION,
-        "privacy": dict(data.get("privacy") or {}),
-        "security": dict(data.get("security") or {}),
-        "language_packs": {
-            "enabled": ids,
-        },
-    }
+    next_data = _config_for_save(data, language_packs={"enabled": ids})
     if not _save_privacy_config(next_data):
         return False, "Failed to save language pack; Guardian remains unchanged."
     name = str(available[normalized_id].get("name") or normalized_id)

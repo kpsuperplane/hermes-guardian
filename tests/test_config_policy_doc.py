@@ -1,0 +1,157 @@
+"""One-policy-document config tests (doc 03 §1, §7 tests 1-3 + carryover fix).
+
+Covers: back-compat load of a version<3 config (self defaults seeded), fail-closed
+parse of malformed blocks, the non-narrowable outward-sharing builtin, the env-override
+surfacing, and the Phase-1 carryover bug fix (an operator-customized self block must
+survive an unrelated mode/rule save).
+
+Per project memory, NO real agent/cron/Telegram identifiers appear here — only
+synthetic placeholders.
+"""
+
+from __future__ import annotations
+
+import json
+
+from support import *  # noqa: F403
+
+
+def _write_config(plugin, data: dict) -> None:
+    plugin._PERSISTENT_RULES_PATH.write_text(json.dumps(data))
+    plugin._PERSISTENT_RULES_CACHE = None
+    plugin._PERSISTENT_RULES_MTIME = None
+
+
+# --- 1. Back-compat load: a version=2 (or absent) config gains seeded self defaults. --
+def test_version_2_config_loads_with_seeded_self_defaults():
+    plugin = load_plugin()
+    _write_config(
+        plugin,
+        {
+            "version": 2,
+            "privacy": {
+                "mode": "strict",
+                "rules": [privacy_rule(rule_id="legacy_allow", effect="allow")],
+            },
+        },
+    )
+    config = plugin._load_privacy_config()
+    # No crash; existing rules honored unchanged.
+    assert [r["id"] for r in config["privacy"]["rules"]] == ["legacy_allow"]
+    # self defaults seeded; identities/hosts default EMPTY (back-compat injection).
+    assert config["self"]["destinations"]  # non-empty default store list
+    assert config["self"]["identities"] == []
+    assert config["self"]["hosts"] == []
+    assert "trusted_recipients" in config and config["trusted_recipients"]["entries"] == []
+    assert set(config["outward_sharing"]["builtin"]) == set(plugin._OUTWARD_SHARING_BUILTIN_SUBTYPES)
+    # version is bumped to the current document version on normalize.
+    assert config["version"] == plugin._PRIVACY_RULE_FILE_VERSION == 3
+    # retention / dashboard blocks injected with defaults.
+    assert config["retention"]["max_rows"] == plugin._DEFAULT_RETENTION_MAX_ROWS
+    assert config["dashboard"]["mutations"] == plugin._DEFAULT_DASHBOARD_MUTATIONS
+
+
+# --- 2. Fail-closed parse: malformed self/outward_sharing -> safe subset. -------------
+def test_malformed_self_block_drops_to_safe_subset():
+    plugin = load_plugin()
+    _write_config(
+        plugin,
+        {
+            "version": 3,
+            "privacy": {"mode": "strict", "rules": []},
+            "self": "not-a-dict",  # wholly malformed self block
+            "outward_sharing": 12345,  # malformed
+        },
+    )
+    config = plugin._load_privacy_config()
+    # Safe default subset: default destinations, EMPTY identities/hosts.
+    assert config["self"]["destinations"] == list(plugin._DEFAULT_SELF_DESTINATIONS)
+    assert config["self"]["identities"] == []
+    assert config["self"]["hosts"] == []
+    # outward_sharing falls back to the full builtin set.
+    assert set(config["outward_sharing"]["builtin"]) == set(plugin._OUTWARD_SHARING_BUILTIN_SUBTYPES)
+
+
+def test_wholly_corrupt_document_falls_back_to_strict():
+    plugin = load_plugin()
+    plugin._PERSISTENT_RULES_PATH.write_text("{ this is not valid json")
+    plugin._PERSISTENT_RULES_CACHE = None
+    plugin._PERSISTENT_RULES_MTIME = None
+    config = plugin._load_privacy_config()
+    assert config["privacy"]["mode"] == "strict"
+    assert plugin._PERSISTENT_RULES_ERROR is True
+
+
+# --- 3. Non-narrowable sharing: removing a builtin subtype has no effect. -------------
+def test_outward_sharing_builtin_is_not_narrowable():
+    plugin = load_plugin()
+    _write_config(
+        plugin,
+        {
+            "version": 3,
+            "privacy": {"mode": "strict", "rules": []},
+            # operator tries to drop "share" and keep only "invite"; add an extra.
+            "outward_sharing": {"builtin": ["invite"], "extra": ["crosspost"]},
+        },
+    )
+    config = plugin._load_privacy_config()
+    # All builtin subtypes survive regardless of the narrowed list.
+    assert set(config["outward_sharing"]["builtin"]) == set(plugin._OUTWARD_SHARING_BUILTIN_SUBTYPES)
+    # extra additions are kept.
+    assert "crosspost" in config["outward_sharing"]["extra"]
+    # The remove helper also refuses a builtin.
+    ok, _msg = plugin._remove_outward_sharing_subtype("share")
+    assert ok is False
+    assert "share" in plugin._outward_sharing_snapshot()["builtin"]
+
+
+# --- Carryover fix: a customized self block survives an unrelated mode/rule save. -----
+def test_self_customization_survives_unrelated_mode_change():
+    plugin = load_plugin()
+    # Operator adds an owned store.
+    ok, _msg = plugin._add_self_destination("destination", "store:crm")
+    assert ok
+    assert "store:crm" in plugin._self_config_snapshot()["destinations"]
+    # An UNRELATED mode change must not re-default the self block (Phase 1 carryover bug).
+    plugin._set_privacy_mode("strict")
+    assert "store:crm" in plugin._self_config_snapshot()["destinations"]
+    # Same for an unrelated security-rule toggle and a rule save.
+    plugin._set_security_rule("intrinsic_exfiltration", False)
+    plugin._save_persistent_privacy_rules([privacy_rule(rule_id="r1")])
+    assert "store:crm" in plugin._self_config_snapshot()["destinations"]
+
+
+def test_self_add_destination_flips_resolution_external_to_self():
+    plugin = load_plugin()
+    # A custom store is external before the grant.
+    before = plugin._resolve_destination_trust("store", "crm", "write", "")
+    assert plugin._trust_label_for_debug(before) != "self"
+    plugin._add_self_destination("destination", "store:crm")
+    after = plugin._resolve_destination_trust("store", "crm", "write", "")
+    assert plugin._trust_label_for_debug(after) == "self"
+
+
+def test_tool_override_direction_and_destination_round_trip():
+    plugin = load_plugin()
+    ok, _msg = plugin._set_tool_override("crm_*", direction="read", destination="store:crm")
+    assert ok
+    override = plugin._tool_override_for("crm_lookup")
+    assert override is not None
+    assert override["direction"] == "read"
+    assert override["destination"] == "store:crm"
+    # An invalid direction is rejected.
+    ok, msg = plugin._set_tool_override("crm_*", direction="sideways")
+    assert ok is False
+    assert "direction" in msg
+
+
+def test_env_overrides_surface_in_status(monkeypatch):
+    plugin = load_plugin()
+    monkeypatch.setenv("HERMES_GUARDIAN_ACTIVITY_MAX_ROWS", "5")
+    overrides = plugin._active_env_overrides()
+    assert any("HERMES_GUARDIAN_ACTIVITY_MAX_ROWS" in line for line in overrides)
+    status = plugin._handle_guardian_command("status")
+    assert "Env overrides shadowing the policy document" in status
+    assert "HERMES_GUARDIAN_ACTIVITY_MAX_ROWS" in status
+    # The env value actually drives the effective retention setting.
+    assert plugin._activity_max_rows() == 5

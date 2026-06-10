@@ -88,6 +88,8 @@ def _cron_notification_message(
     data_classes: set[str] | list[str] | tuple[str, ...] | None = None,
     reason: str = "",
     approval_id: str = "",
+    destination_trust: str = "",
+    decision_step: str = "",
 ) -> str:
     job_id = _cron_job_id_from_session(session_id)
     job_name = _cron_job_name(job_id)
@@ -108,6 +110,12 @@ def _cron_notification_message(
             "Destination: "
             + _presentation.clip_text(destination, 120, ellipsis="...", fallback="")
         )
+    trust_label = str(destination_trust or "").strip()
+    if trust_label:
+        lines.append(f"Destination trust: {trust_label}")
+    step_label = str(decision_step or "").strip()
+    if step_label:
+        lines.append(f"Decision step: {step_label}")
     if classes:
         lines.append(f"Data classes: {', '.join(classes)}")
     if reason:
@@ -273,9 +281,17 @@ def _notify_cron_failure_if_needed(
     data_classes: set[str] | list[str] | tuple[str, ...] | None = None,
     reason: str = "",
     approval_id: str = "",
+    destination_trust: str = "",
+    decision_step: str = "",
 ) -> None:
     job_id = _cron_job_id_from_session(session_id)
     if not job_id:
+        return
+    # Doc 03 §4: a cron egress resolving to a `self` destination is intra-boundary —
+    # it never gated, so there is nothing to notify/gate. (In practice a self flow is
+    # ALLOWed and this path is not reached at all, but guard here too so any caller that
+    # passes a self trust never produces routine cron FP noise.)
+    if str(destination_trust or "").strip().lower() == "self":
         return
     targets = _cron_notify_targets(job_id)
     if not targets:
@@ -296,6 +312,8 @@ def _notify_cron_failure_if_needed(
         data_classes=data_classes,
         reason=reason,
         approval_id=approval_id,
+        destination_trust=destination_trust,
+        decision_step=decision_step,
     )
 
     def _worker() -> None:
