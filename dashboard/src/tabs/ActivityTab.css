@@ -305,6 +305,7 @@
   font-size: 0.8rem;
   line-height: 1;
   color: var(--color-muted-foreground);
+  opacity: 0.45;
   transition: transform 0.12s ease;
 }
 

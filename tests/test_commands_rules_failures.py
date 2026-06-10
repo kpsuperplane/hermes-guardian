@@ -296,7 +296,7 @@ def test_guardian_history_command_clarifies_legacy_private_source_reason():
 
     response = plugin._handle_guardian_command("activity")
 
-    assert "↳ 📥 `mcp_gmail_search`" in response
+    assert "↳ 🏷️ `mcp_gmail_search`" in response
     assert "`mcp_gmail_search` -> `n/a`" not in response
     assert "🏷️ `communications`" in response
     assert "Read/result allowed" not in response
@@ -318,8 +318,8 @@ def test_guardian_history_labels_terminal_taint_as_result():
 
     response = plugin._handle_guardian_command("activity")
 
-    assert "↳ 📥 `terminal result`" in response
-    assert "↳ 📥 `terminal` ·" not in response  # labeled "terminal result", not bare "terminal"
+    assert "↳ 🏷️ `terminal result`" in response
+    assert "↳ 🏷️ `terminal` ·" not in response  # labeled "terminal result", not bare "terminal"
 
 
 def test_guardian_history_command_uses_configured_timezone(monkeypatch):

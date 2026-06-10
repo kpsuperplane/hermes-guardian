@@ -91,7 +91,7 @@ def activity_status_icon(decision: str) -> str:
         "read": "🌐",
         "security_blocked": "❌",
         "security_suppressed": "❌",
-        "tainted": "📥",
+        "tainted": "🏷️",
     }
     return status_icons.get(str(decision or "").strip(), "•")
 
