@@ -405,7 +405,7 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
         onClick={() => setOpen(!open)}
         style={{ cursor: "pointer" }}
       >
-        <span className="hermes-guardian-chevron" aria-hidden="true">▸</span>
+        <span className="hermes-guardian-chevron" aria-hidden="true">▶</span>
         <span className="hermes-guardian-check-target">
           <span className="hermes-guardian-check-tool">{tool}</span>
           <span className="hermes-guardian-check-route hermes-guardian-muted">
@@ -472,7 +472,7 @@ function TurnCard(props: { turn: ActivityTurn; onNavigate: (tab: TabId) => void 
         onClick={() => setOpen(!open)}
         style={{ cursor: "pointer" }}
       >
-        <span className="hermes-guardian-chevron" aria-hidden="true">▸</span>
+        <span className="hermes-guardian-chevron" aria-hidden="true">▶</span>
         <div className="hermes-guardian-turn-card-title">
           <span
             className="hermes-guardian-turn-label"

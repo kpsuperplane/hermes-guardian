@@ -302,7 +302,7 @@
    chevrons of the checks nested inside it. */
 .hermes-guardian-chevron {
   flex: 0 0 auto;
-  font-size: 0.95rem;
+  font-size: 0.8rem;
   line-height: 1;
   color: var(--color-muted-foreground);
   transition: transform 0.12s ease;
