@@ -615,6 +615,8 @@ _CORE_LOGIC_MODULES = (
     "privacy/taint",
     "privacy/destinations",
     "privacy/tool_policy",
+    "privacy/capability",
+    "privacy/policy",
     "privacy/provenance",
     "privacy/action_details",
     "privacy/llm",

@@ -347,7 +347,103 @@ def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_r
     return {"action": "block", "message": _guardian_block_message(approval)}
 
 
+# --- Phase 2 shadow mode (doc 04 §4) -----------------------------------------
+# The new classify+decide engine runs ALONGSIDE the authoritative old path, never
+# changing what the hook returns. Divergences are counted + logged so the corpus replay
+# and live bake can prove "only intra-boundary gate->allow flips" before Phase 3 flips
+# the switch. A shadow exception must NEVER affect the real decision.
+_SHADOW_DECISION_COUNTS: dict[str, int] = {
+    "evaluations": 0,
+    "shadow_mismatch": 0,
+    "shadow_error": 0,
+}
+
+
+def _shadow_decision_counts() -> dict[str, int]:
+    """Reader for the shadow counters (tests + diagnostics). Returns a copy."""
+    return dict(_SHADOW_DECISION_COUNTS)
+
+
+def _reset_shadow_decision_counts() -> None:
+    for key in _SHADOW_DECISION_COUNTS:
+        _SHADOW_DECISION_COUNTS[key] = 0
+
+
+def _shadow_decision_for(tool_name: str, args: Any, session_id: str | None):
+    """Pure shadow computation: build ``(Capability, Decision)`` for a tool call.
+
+    Returns ``(capability, decision)`` where ``decision`` is one of the policy outcomes
+    (ALLOW/APPROVE/BLOCK from ``privacy/policy``). Used by the corpus-replay test to call
+    the new engine directly without going through the hook. ``decide`` reasons over the
+    AMBIENT session taint (provenance retired, doc 02 §4) and the current purpose/mode.
+    """
+    cap = classify(tool_name, args, session_id)
+    # Ambient "what is potentially leaving" = session taint UNION the classes detected in
+    # this call's content (doc 02 §4 conservative ambient default; charter invariant #4).
+    # This is exactly the set the old authoritative path reasoned over
+    # (``_data_classes_for_egress``), so the floor is preserved: a previously-correct
+    # content-detected block (e.g. an external send carrying a contact) is NOT narrowed
+    # away. ``decide`` never infers "absence means safe".
+    taint = _data_classes_for_egress(session_id, args)
+    purpose = _purpose_from_args(args)
+    mode = _privacy_policy()
+    decision = decide(cap, taint, purpose, mode)
+    return cap, decision
+
+
+def _shadow_compare(tool_name: str, args: Any, session_id: str | None, old_outcome: str) -> None:
+    """Run the shadow engine and record divergence vs the OLD authoritative outcome.
+
+    Exception-safe: any failure increments ``shadow_error`` and is swallowed — the real
+    decision is already returned by the caller and is never affected (doc 04 §4).
+
+    ``old_outcome`` is the authoritative outcome bucketed into the same vocabulary as
+    ``decide`` for comparison: "allow" (the call proceeded), "approve" (gated to manual
+    approval), or "block" (a deny rule / hard block).
+    """
+    try:
+        _SHADOW_DECISION_COUNTS["evaluations"] += 1
+        _cap, new_decision = _shadow_decision_for(tool_name, args, session_id)
+        if new_decision != old_outcome:
+            _SHADOW_DECISION_COUNTS["shadow_mismatch"] += 1
+            logger.info(
+                "%s: shadow decision divergence tool=%s old=%s new=%s trust=%s",
+                _PLUGIN_NAME,
+                re.sub(r"[^A-Za-z0-9_.:-]+", "_", str(tool_name or ""))[:64],
+                old_outcome,
+                new_decision,
+                getattr(getattr(_cap, "destination", None), "trust", "unknown"),
+            )
+    except Exception as exc:  # noqa: BLE001 — shadow must never affect the real decision
+        _SHADOW_DECISION_COUNTS["shadow_error"] += 1
+        logger.debug("%s: shadow decision error: %s", _PLUGIN_NAME, exc)
+
+
 def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: str = "") -> dict[str, str] | None:
+    """Authoritative privacy pre-tool-call decision (UNCHANGED behavior) + Phase 2 shadow.
+
+    The old path stays authoritative and decides what is returned. A holder collects the
+    old outcome bucketed into decide's vocabulary (allow/approve/block), and after the
+    authoritative decision we run the new classify+decide engine in shadow and record any
+    divergence. The shadow computation can never change the return value.
+    """
+    outcome_sink: list[str] = []
+    result = _privacy_pre_tool_call_authoritative(tool_name, args, session_id, outcome_sink)
+    old_outcome = outcome_sink[0] if outcome_sink else "allow"
+    _shadow_compare(tool_name, args, session_id, old_outcome)
+    return result
+
+
+def _privacy_pre_tool_call_authoritative(
+    tool_name: str = "",
+    args: Any = None,
+    session_id: str = "",
+    outcome_sink: list[str] | None = None,
+) -> dict[str, str] | None:
+    def _record_outcome(value: str) -> None:
+        if outcome_sink is not None:
+            outcome_sink.append(value)
+
     intrinsic_risk = _intrinsic_risk_for_tool(tool_name, args)
     if intrinsic_risk:
         reason = str(intrinsic_risk.get("reason") or "intrinsic source-and-sink risk")
@@ -379,6 +475,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
             data_classes=data_classes,
             reason=reason,
         )
+        _record_outcome("block")
         return {"action": "block", "message": f"Blocked by {_PLUGIN_NAME}: {reason}."}
 
     privacy_policy = _privacy_policy()
@@ -386,11 +483,13 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
 
     if privacy_policy == "off":
         _allow_privacy_off_tool_call(tool_name, args, session_id, action)
+        _record_outcome("allow")
         return None
 
     if not action:
         _emit_read_activity_if_applicable(tool_name, args, session_id)
         _record_allowed_tool_side_effects(session_id, tool_name, args)
+        _record_outcome("allow")
         return None
 
     action_family, destination = action.as_tuple()
@@ -409,8 +508,10 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
     source = _approval_source(shape)
     if source:
         if source.get("effect") == "deny":
+            _record_outcome("block")
             return _block_for_privacy_rule(shape, tool_name, source)
         _allow_approved_tool_call(shape, source, tool_name, args)
+        _record_outcome("allow")
         return None
 
     if not data_classes:
@@ -423,21 +524,30 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
             purpose=action.purpose,
             recipient_identity=action.recipient_identity,
         )
+        _record_outcome("allow")
         return None
 
     if privacy_policy == "read-only" and _read_only_auto_approves(shape, args):
         _allow_read_only_tool_call(shape, tool_name, args)
+        _record_outcome("allow")
         return None
 
     blocked_reason = "requires approval"
     if privacy_policy == "llm":
         llm_result, llm_blocked_reason = _llm_policy_tool_call_result(shape, tool_name, args)
         if llm_result is not None:
+            # llm verifier resolved this call: a block dict is a gate (approve), a None-
+            # carrying allow is an allow. _llm_policy_tool_call_result returns the hook
+            # result; a returned dict here is the verifier holding the call for approval.
+            _record_outcome("approve")
             return llm_result
         if llm_blocked_reason is None:
+            _record_outcome("allow")
             return None
         blocked_reason = llm_blocked_reason
 
+    # Pending manual approval is a GATE, not a block (doc 02 §3 step 6 APPROVE).
+    _record_outcome("approve")
     return _block_for_pending_approval(shape, tool_name, blocked_reason)
 
 
