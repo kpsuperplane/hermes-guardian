@@ -360,29 +360,43 @@ Slash command behavior lives in `ui/commands.py`.
 
 Important user-facing commands:
 
+Commands are grouped into the five IA concepts in `decide` order
+(`activity`/`mine`/`sharing`/`review`/`protection`), with `status`/`why` on
+top. The old top-level names (`self`, `rules`, the bare outward `sharing`,
+`security`, `tools`, `language-packs`, `privacy`, `history`, `failures`,
+`debug`) are removed, not aliased — each capability survives via the same
+underlying handler under its new group.
+
 ```text
 /guardian status
-/guardian approve <id> once|session|always
-/guardian dismiss <id>
+/guardian why <id>
+/guardian activity [limit]
+/guardian activity failures [limit]
+/guardian approvals
+/guardian approve <id> [once|session|always]
+/guardian deny <id>
 /guardian clear-taint
-/guardian rules
-/guardian rule add|delete|enable|disable|move ...
-/guardian privacy mode strict|read-only|llm|off
-/guardian privacy unknown-tools gate|allow
-/guardian privacy user-context on|off
-/guardian privacy cron-context on|off
-/guardian privacy verifier-model <model_id|none>
-/guardian tools
-/guardian tool set <match> [taints=a+b] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]
-/guardian tool delete <match_or_id>
-/guardian tool enable|disable <id_or_match>
-/guardian security enable|disable <rule_id>
-/guardian history [limit]
-/guardian failures [limit]
-/guardian debug action=<family> destination=<dest> classes=<class+class>
+/guardian mine
+/guardian mine add|remove destination|identity|host <value>
+/guardian check <destination|recipient>
+/guardian sharing
+/guardian sharing trusted add|remove <identity> [classes=a+b] [note=<text>]
+/guardian sharing rule add|delete|enable|disable|move ...
+/guardian sharing outward add|remove <subtype>
+/guardian sharing preview <action> <destination> <class>
+/guardian review mode strict|read-only|llm|off
+/guardian review owner-context on|off
+/guardian review cron-context on|off
+/guardian review verifier-model <model_id|default>
+/guardian review unknown-tools gate|allow
+/guardian protection security enable|disable <rule_id>
+/guardian protection tool set <match> [taints=a+b] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]
+/guardian protection tool delete <match_or_id>
+/guardian protection tool enable|disable <id_or_match>
+/guardian protection language-packs enable|disable <pack_id>
 ```
 
-`/guardian deny` is an alias for dismiss. `hermes guardian dashboard
+`/guardian deny` is an alias for `dismiss`. `hermes guardian dashboard
 status|url|prune` is the CLI surface.
 
 Owner checks matter. Non-CLI slash users can mutate global config only when

@@ -84,9 +84,9 @@ def test_english_language_pack_cannot_be_disabled():
 def test_language_pack_slash_command_lists_and_toggles_packs():
     plugin = load_plugin()
 
-    listing = plugin._handle_guardian_command("language-packs")
-    disabled = plugin._handle_guardian_command("language-packs disable es")
-    enabled = plugin._handle_guardian_command("languages enable es")
+    listing = plugin._handle_guardian_command("protection language-packs")
+    disabled = plugin._handle_guardian_command("protection language-packs disable es")
+    enabled = plugin._handle_guardian_command("protection languages enable es")
 
     assert "Hermes Guardian language packs" in listing
     assert "en: enabled required" in listing
@@ -97,9 +97,9 @@ def test_language_pack_slash_command_lists_and_toggles_packs():
 
 def test_non_owner_cannot_toggle_language_pack():
     plugin = load_plugin()
-    plugin._on_pre_gateway_dispatch(gateway_event("/guardian language-packs disable es", user_id="not-owner"))
+    plugin._on_pre_gateway_dispatch(gateway_event("/guardian protection language-packs disable es", user_id="not-owner"))
 
-    response = plugin._handle_guardian_command("language-packs disable es")
+    response = plugin._handle_guardian_command("protection language-packs disable es")
 
     assert "Permission denied" in response
 

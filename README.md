@@ -183,7 +183,7 @@ The default mode is `llm`.
 Set the mode from a Hermes gateway:
 
 ```text
-/guardian privacy mode llm
+/guardian review mode llm
 ```
 
 Or edit `guardian-rules.json`:
@@ -272,8 +272,8 @@ the dashboard Settings tab (Verifier model) — no need to type model ids. You c
 also set it by slash command:
 
 ```text
-/guardian privacy verifier-model gpt-5.4-mini
-/guardian privacy verifier-model none            # back to the Hermes default
+/guardian review verifier-model gpt-5.4-mini
+/guardian review verifier-model default          # back to the Hermes default
 ```
 
 Guardian is fail-safe: if the override is rejected (grant missing) or the model is
@@ -288,8 +288,8 @@ Both context channels are toggleable, in the dashboard Settings tab, by slash
 command, or directly in `guardian-rules.json` under `privacy`:
 
 ```text
-/guardian privacy user-context on|off   # default on
-/guardian privacy cron-context on|off   # default off
+/guardian review owner-context on|off   # default on
+/guardian review cron-context on|off    # default off
 ```
 
 ```json
@@ -406,9 +406,9 @@ High-level Security Module protections are enabled by default:
 Toggle rules with:
 
 ```text
-/guardian security
-/guardian security disable sensitive_links
-/guardian security enable sensitive_links
+/guardian protection security
+/guardian protection security disable sensitive_links
+/guardian protection security enable sensitive_links
 ```
 
 The intrinsic exfiltration rule is structural and metadata-only: blocked rows
@@ -546,7 +546,7 @@ taint, exactly like unknown MCP tools. This is the `unknown_tools` mode:
   and the dashboard.
 
 ```text
-/guardian privacy unknown-tools gate|allow
+/guardian review unknown-tools gate|allow
 ```
 
 When the default is too strict for a tool you trust, declare it with a **tool
@@ -555,20 +555,20 @@ what a tool actually does, and Guardian trusts your declaration:
 
 ```text
 # An MCP server you trust: its reads carry communications, and it is not a sink.
-/guardian tool set mcp_acme_* taints=communications egress=ignore note="trusted acme server"
+/guardian protection tool set mcp_acme_* taints=communications egress=ignore note="trusted acme server"
 
 # A custom tool that really sends messages: classify it so it gates correctly.
-/guardian tool set send_widget egress=message_send
+/guardian protection tool set send_widget egress=message_send
 
 # A custom tool that is just a safe read:
-/guardian tool set lookup_widget egress=ignore
+/guardian protection tool set lookup_widget egress=ignore
 
 # Force an unrecognized tool to require approval under taint:
-/guardian tool set risky_tool egress=gate
+/guardian protection tool set risky_tool egress=gate
 
-/guardian tools                       # list overrides + current unknown-tools mode
-/guardian tool enable|disable <id>
-/guardian tool delete <match_or_id>
+/guardian protection tools            # list overrides + current unknown-tools mode
+/guardian protection tool enable|disable <id>
+/guardian protection tool delete <match_or_id>
 ```
 
 Override fields:
@@ -615,48 +615,66 @@ substitution, script runtimes, or content-bearing reads such as `cat`, `grep`,
 
 Use these from a Hermes gateway interface:
 
+Commands are grouped into the same five concepts as the dashboard tabs, in
+`decide` order, so the help output mirrors the mental model: `activity`,
+`mine` (what's yours), `sharing`, `review`, `protection`. `status` and `why`
+sit on top as the everyday commands.
+
 ```text
-/guardian status
-/guardian approve <id> once|session|always
-/guardian dismiss <id>
-/guardian deny <id>
+/guardian status                         what's happening right now
+/guardian why <id>                       explain a specific decision
+
+# ACTIVITY — what happened, and what needs you
+/guardian activity [limit]
+/guardian activity failures [limit]
+/guardian approvals
+/guardian approve <id> [once|session|always]
+/guardian deny <id>                      (alias: dismiss)
 /guardian clear-taint
-/guardian rules
-/guardian rule add allow|deny action=<family|*> destination=<dest|*> classes=<class+class|*> [tool=<tool_name|*>] [purpose=<token|*>] [recipient=<id|raw|*>]
-/guardian rule delete <rule_id>
-/guardian rule enable|disable <rule_id>
-/guardian rule move <rule_id> before|after <other_rule_id>
-/guardian privacy mode strict|read-only|llm|off
-/guardian privacy unknown-tools gate|allow
-/guardian privacy user-context on|off
-/guardian privacy cron-context on|off
-/guardian privacy verifier-model <model_id|none>
-/guardian tools
-/guardian tool set <match> [taints=class+class] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]
-/guardian tool delete <match_or_id>
-/guardian tool enable|disable <id_or_match>
-/guardian security
-/guardian security enable|disable <rule_id>
-/guardian language-packs
-/guardian language-packs enable|disable <pack_id>
-/guardian history [limit]
-/guardian failures [limit]
-/guardian failed [limit]
-/guardian debug action=<family> destination=<dest> classes=<class+class> [tool=<tool_name>] [purpose=<token>] [recipient=<id|raw>]
+
+# WHAT'S YOURS — where you end and the world begins
+/guardian mine
+/guardian mine add|remove destination|identity|host <value>
+/guardian check <destination|recipient>
+
+# SHARING — what you've authorized to leave you
+/guardian sharing
+/guardian sharing trusted add|remove <identity> [classes=<class+class>] [note=<text>]
+/guardian sharing rule add allow|deny action=<family|*> destination=<dest|*> classes=<class+class|*> [tool=<tool_name|*>] [purpose=<token|*>] [recipient=<id|raw|*>]
+/guardian sharing rule delete|enable|disable <rule_id>
+/guardian sharing rule move <rule_id> before|after <other_rule_id>
+/guardian sharing outward add|remove <subtype>
+/guardian sharing preview <action> <destination> <class>
+
+# REVIEW — who judges everything else
+/guardian review
+/guardian review mode strict|read-only|llm|off
+/guardian review owner-context on|off
+/guardian review cron-context on|off
+/guardian review verifier-model <model_id|default>
+/guardian review unknown-tools gate|allow
+
+# PROTECTION — the floor that always holds
+/guardian protection
+/guardian protection security enable|disable <rule_id>
+/guardian protection tool set <match> [taints=class+class] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]
+/guardian protection tool delete <match_or_id>
+/guardian protection tool enable|disable <id_or_match>
+/guardian protection language-packs enable|disable <pack_id>
 ```
 
 Helpful commands:
 
 ```text
 /guardian status
-/guardian history 20
-/guardian failures
-/guardian debug action=mcp_write destination=mcp:notion classes=communications
-/guardian debug action=message_send destination=messaging classes=communications purpose=support recipient=recipient_...
+/guardian activity 20
+/guardian activity failures
+/guardian check stranger@example.com
+/guardian sharing preview message_send messaging communications
 ```
 
-`/guardian deny` is an alias for dismiss. `/guardian failed` is an alias for
-`/guardian failures`.
+`/guardian deny` is an alias for `dismiss`. `/guardian activity failed` is an
+alias for `/guardian activity failures`.
 
 ## Dashboard
 
@@ -757,9 +775,9 @@ en, zh, hi, es, fr, ar, bn, pt, ru, ur, id, de, ja, pcm, mr, te, tr, ta, vi, tl,
 Configure packs in `guardian-rules.json`, from the dashboard, or with:
 
 ```text
-/guardian language-packs
-/guardian language-packs disable es
-/guardian language-packs enable es
+/guardian protection language-packs
+/guardian protection language-packs disable es
+/guardian protection language-packs enable es
 ```
 
 You can also set:

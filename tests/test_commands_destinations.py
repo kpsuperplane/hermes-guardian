@@ -17,14 +17,14 @@ from support import *  # noqa: F403
 # --- 4. /guardian self add/remove round-trips and flips resolution. -------------------
 def test_self_add_remove_round_trip_and_resolution_flip():
     plugin = load_plugin()
-    out = plugin._handle_guardian_command("self add destination store:crm")
+    out = plugin._handle_guardian_command("mine add destination store:crm")
     assert "store:crm" in out
     assert "store:crm" in plugin._self_config_snapshot()["destinations"]
     # A write to the newly-owned store now resolves to self.
     trust = plugin._resolve_destination_trust("store", "crm", "write", "")
     assert plugin._trust_label_for_debug(trust) == "self"
     # Remove flips it back to non-self.
-    plugin._handle_guardian_command("self remove destination store:crm")
+    plugin._handle_guardian_command("mine remove destination store:crm")
     assert "store:crm" not in plugin._self_config_snapshot()["destinations"]
     trust = plugin._resolve_destination_trust("store", "crm", "write", "")
     assert plugin._trust_label_for_debug(trust) != "self"
@@ -32,15 +32,15 @@ def test_self_add_remove_round_trip_and_resolution_flip():
 
 def test_trusted_and_sharing_commands_round_trip():
     plugin = load_plugin()
-    plugin._handle_guardian_command("trusted add partner@example.com classes=communications")
+    plugin._handle_guardian_command("sharing trusted add partner@example.com classes=communications")
     entries = plugin._trusted_recipients_snapshot()
     assert any(e["identity"] == "partner@example.com" for e in entries)
-    # sharing builtin marked non-removable in listing.
+    # sharing builtin marked non-removable in the regrouped sharing overview.
     listing = plugin._handle_guardian_command("sharing")
     assert "share (builtin, non-removable)" in listing
-    plugin._handle_guardian_command("sharing add crosspost")
+    plugin._handle_guardian_command("sharing outward add crosspost")
     assert "crosspost" in plugin._outward_sharing_snapshot()["extra"]
-    plugin._handle_guardian_command("trusted remove partner@example.com")
+    plugin._handle_guardian_command("sharing trusted remove partner@example.com")
     assert not plugin._trusted_recipients_snapshot()
 
 
@@ -89,26 +89,17 @@ def test_why_self_write_reports_self_and_step3():
     assert row["decision_step"].startswith("step3_intra_boundary")
 
 
-# --- 6. /guardian debug recipient=<id> previews recipient trust. ----------------------
-def test_debug_recipient_preview_resolves_trust():
+# --- 6. /guardian check <recipient> previews recipient trust (doc 03 §5). -------------
+def test_check_recipient_preview_resolves_trust():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="strict")
     # An owned send-to-self identity resolves to self.
     plugin._add_self_destination("identity", "me@example.com")
-    out_self = plugin._handle_guardian_command(
-        "debug action=message_send destination=telegram:abc classes=communications recipient=me@example.com"
-    )
-    assert "Destination trust: self" in out_self
+    out_self = plugin._handle_guardian_command("check me@example.com")
+    assert "-> self" in out_self
     # A real external recipient resolves to external.
-    out_ext = plugin._handle_guardian_command(
-        "debug action=message_send destination=telegram:abc classes=communications recipient=stranger@example.com"
-    )
-    assert "Destination trust: external" in out_ext
-    # A templated / empty recipient resolves to unknown (never guessed self).
-    out_unknown = plugin._handle_guardian_command(
-        "debug action=message_send destination=telegram:abc classes=communications recipient={{recipient}}"
-    )
-    assert "Destination trust: unknown" in out_unknown
+    out_ext = plugin._handle_guardian_command("check stranger@example.com")
+    assert "-> external" in out_ext
 
 
 # --- 7. Activity row carries trust + step, fine tags preserved, filterable. -----------

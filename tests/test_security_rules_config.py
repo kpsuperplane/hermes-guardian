@@ -152,9 +152,9 @@ def test_disabling_private_network_reads_marks_metadata_fetch_as_safe_remote_rea
 def test_security_slash_command_lists_and_toggles_rules():
     plugin = load_plugin()
 
-    listing = plugin._handle_guardian_command("security")
-    disabled = plugin._handle_guardian_command("security disable sensitive_links")
-    enabled = plugin._handle_guardian_command("security enable sensitive_links")
+    listing = plugin._handle_guardian_command("protection security")
+    disabled = plugin._handle_guardian_command("protection security disable sensitive_links")
+    enabled = plugin._handle_guardian_command("protection security enable sensitive_links")
 
     assert "Hermes Guardian security rules" in listing
     assert "sensitive_links: enabled" in listing
@@ -183,9 +183,9 @@ def test_policy_snapshot_warns_when_intrinsic_rule_disabled():
 
 def test_non_owner_cannot_toggle_security_rule():
     plugin = load_plugin()
-    plugin._on_pre_gateway_dispatch(gateway_event("/guardian security disable sensitive_links", user_id="not-owner"))
+    plugin._on_pre_gateway_dispatch(gateway_event("/guardian protection security disable sensitive_links", user_id="not-owner"))
 
-    response = plugin._handle_guardian_command("security disable sensitive_links")
+    response = plugin._handle_guardian_command("protection security disable sensitive_links")
 
     assert "Permission denied" in response
 

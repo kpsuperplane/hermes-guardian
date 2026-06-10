@@ -365,7 +365,7 @@ def test_cron_always_approval_is_scoped_to_same_cron_job(monkeypatch, tmp_path):
     data = json.loads((tmp_path / "rules.json").read_text())
     assert data["privacy"]["rules"][0]["scope"]["cron_job_id"] == "aaaaaaaaaaaa"
     assert data["privacy"]["rules"][0]["scope"]["cron_job_name"] == "Example Availability Check"
-    rules_text = plugin._handle_guardian_command("rules")
+    rules_text = plugin._handle_guardian_command("sharing")
     assert "Scope: [Cron] Example Availability Check" in rules_text
     policy = plugin._policy_snapshot()
     assert policy["rules"][0]["cron_job_id"] == "aaaaaaaaaaaa"

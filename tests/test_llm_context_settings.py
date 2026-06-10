@@ -92,9 +92,9 @@ def test_policy_snapshot_exposes_both_flags():
 def test_slash_toggles_contexts_as_owner():
     plugin = load_plugin()
 
-    assert "off" in plugin._handle_guardian_command("privacy user-context off")
+    assert "off" in plugin._handle_guardian_command("review owner-context off")
     assert plugin._llm_user_context_enabled() is False
-    assert "on" in plugin._handle_guardian_command("privacy cron-context on")
+    assert "on" in plugin._handle_guardian_command("review cron-context on")
     assert plugin._llm_cron_context_enabled() is True
 
 
@@ -108,16 +108,16 @@ def test_slash_status_surfaces_context_flags():
 
 def test_slash_invalid_value_returns_usage():
     plugin = load_plugin()
-    response = plugin._handle_guardian_command("privacy cron-context maybe")
-    assert "Usage: /guardian privacy cron-context on|off" in response
+    response = plugin._handle_guardian_command("review cron-context maybe")
+    assert "Usage: /guardian review cron-context on|off" in response
     assert plugin._llm_cron_context_enabled() is False
 
 
 def test_non_owner_cannot_toggle_contexts():
     plugin = load_plugin()
 
-    plugin._on_pre_gateway_dispatch(gateway_event("/guardian privacy cron-context on", user_id="attacker"))
-    response = plugin._handle_guardian_command("privacy cron-context on")
+    plugin._on_pre_gateway_dispatch(gateway_event("/guardian review cron-context on", user_id="attacker"))
+    response = plugin._handle_guardian_command("review cron-context on")
 
     assert "Permission denied" in response
     assert plugin._llm_cron_context_enabled() is False

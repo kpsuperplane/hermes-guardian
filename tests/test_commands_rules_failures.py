@@ -36,7 +36,7 @@ def test_guardian_rule_delete_slash_alias_removes_persistent_rule(tmp_path):
         ),
     ])
 
-    response = plugin._handle_guardian_command("rule delete rule_delete_me")
+    response = plugin._handle_guardian_command("sharing rule delete rule_delete_me")
 
     assert response == "Deleted privacy rule rule_delete_me."
     data = json.loads((tmp_path / "rules.json").read_text())
@@ -46,8 +46,8 @@ def test_guardian_rule_delete_slash_alias_removes_persistent_rule(tmp_path):
 def test_non_owner_slash_cannot_change_global_privacy_mode():
     plugin = load_plugin()
 
-    plugin._on_pre_gateway_dispatch(gateway_event("/guardian privacy mode off", user_id="attacker"))
-    response = plugin._handle_guardian_command("privacy mode off")
+    plugin._on_pre_gateway_dispatch(gateway_event("/guardian review mode off", user_id="attacker"))
+    response = plugin._handle_guardian_command("review mode off")
 
     assert "Permission denied" in response
     assert plugin._privacy_policy() == "llm"
@@ -66,7 +66,7 @@ def test_guardian_rule_add_defaults_platform_slash_to_caller_scope(tmp_path):
     plugin = load_plugin()
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin._PERSISTENT_RULES_CACHE = None
-    command = "rule add allow action=message_send destination=friend classes=communications"
+    command = "sharing rule add allow action=message_send destination=friend classes=communications"
 
     plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian {command}", user_id="owner"))
     response = plugin._handle_guardian_command(command)
@@ -85,10 +85,10 @@ def test_guardian_rule_add_accepts_contextual_fields_and_rules_display_them():
     recipient_identity = plugin._recipient_identity_from_value("friend")
 
     response = plugin._handle_guardian_command(
-        "rule add allow action=message_send destination=messaging classes=communications "
+        "sharing rule add allow action=message_send destination=messaging classes=communications "
         f"purpose=support recipient={recipient_identity}"
     )
-    rules_text = plugin._handle_guardian_command("rules")
+    rules_text = plugin._handle_guardian_command("sharing")
 
     assert "Added privacy allow rule" in response
     rule = plugin._persistent_privacy_rules()[0]
@@ -104,10 +104,10 @@ def test_guardian_rule_add_rejects_invalid_classes_and_malformed_args(tmp_path):
     plugin._PERSISTENT_RULES_CACHE = None
 
     response = plugin._handle_guardian_command(
-        "rule add allow action=message_send destination=friend classes=emial"
+        "sharing rule add allow action=message_send destination=friend classes=emial"
     )
     malformed = plugin._handle_guardian_command(
-        "rule add allow action=message_send destination=friend classes=communications stray"
+        "sharing rule add allow action=message_send destination=friend classes=communications stray"
     )
 
     assert "Unknown data class(es): emial" in response
@@ -119,8 +119,8 @@ def test_non_owner_slash_cannot_create_global_or_cron_rule(tmp_path):
     plugin = load_plugin()
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin._PERSISTENT_RULES_CACHE = None
-    global_command = "rule add allow action=message_send destination=friend classes=communications owner=*"
-    cron_command = "rule add allow action=message_send destination=friend classes=communications cron=aaaaaaaaaaaa"
+    global_command = "sharing rule add allow action=message_send destination=friend classes=communications owner=*"
+    cron_command = "sharing rule add allow action=message_send destination=friend classes=communications cron=aaaaaaaaaaaa"
 
     plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian {global_command}", user_id="attacker"))
     global_response = plugin._handle_guardian_command(global_command)
@@ -143,7 +143,7 @@ def test_guardian_rule_move_requires_target_rule_permission(tmp_path):
         privacy_rule(rule_id="rule_other", destination="other", data_classes=["communications"], owner_hash=other_owner),
     ])
 
-    command = "rule move rule_kevin after rule_other"
+    command = "sharing rule move rule_kevin after rule_other"
     plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian {command}", user_id="owner"))
     response = plugin._handle_guardian_command(command)
 
@@ -176,7 +176,7 @@ def test_guardian_rules_command_uses_readable_card_format(tmp_path):
         ),
     ])
 
-    response = plugin._handle_guardian_command("rules")
+    response = plugin._handle_guardian_command("sharing")
 
     assert "🛡️ **Guardian privacy rules** · mode `strict` · 2 shown" in response
     assert "✅ **ALLOW** `mcp_write -> mcp:notion`" in response
@@ -236,7 +236,7 @@ def test_guardian_failures_command_lists_only_failed_command_activity():
         reason="auth code",
     )
 
-    response = plugin._handle_guardian_command("failures")
+    response = plugin._handle_guardian_command("activity failures")
 
     assert "🛡️ **Guardian failures** · newest first · 3 shown" in response
     assert "❌ **`terminal`**" in response
@@ -252,8 +252,8 @@ def test_guardian_failures_command_lists_only_failed_command_activity():
 def test_guardian_failures_command_alias_empty_and_limit_handling():
     plugin = load_plugin()
 
-    assert plugin._handle_guardian_command("failures") == "No guardian failure history yet."
-    assert plugin._handle_guardian_command("failed nope") == "Usage: /guardian failed [limit]"
+    assert plugin._handle_guardian_command("activity failures") == "No guardian failure history yet."
+    assert plugin._handle_guardian_command("activity failed nope") == "Usage: /guardian activity failures [limit]"
 
     plugin._emit_activity(
         "blocked",
@@ -274,7 +274,7 @@ def test_guardian_failures_command_alias_empty_and_limit_handling():
         reason="requires approval",
     )
 
-    response = plugin._handle_guardian_command("failed 1")
+    response = plugin._handle_guardian_command("activity failed 1")
 
     assert "🛡️ **Guardian failures** · newest first · 1 shown" in response
     assert response.count("\n❌ **`") == 1
@@ -291,7 +291,7 @@ def test_guardian_history_command_clarifies_legacy_private_source_reason():
         reason="private source result",
     )
 
-    response = plugin._handle_guardian_command("history")
+    response = plugin._handle_guardian_command("activity")
 
     assert "📥 **`mcp_gmail_search`**" in response
     assert "`mcp_gmail_search` -> `n/a`" not in response
@@ -313,7 +313,7 @@ def test_guardian_history_labels_terminal_taint_as_result():
         reason="tainted by local system tool result (local_system)",
     )
 
-    response = plugin._handle_guardian_command("history")
+    response = plugin._handle_guardian_command("activity")
 
     assert "📥 **`terminal result`**" in response
     assert "📥 **`terminal`**" not in response
@@ -332,7 +332,7 @@ def test_guardian_history_command_uses_configured_timezone(monkeypatch):
         reason="matched allow rule",
     )
 
-    response = plugin._handle_guardian_command("history")
+    response = plugin._handle_guardian_command("activity")
 
     assert "Jun 6, 2026 12:44 PM PDT" in response
     assert "🏷️ No taints" in response

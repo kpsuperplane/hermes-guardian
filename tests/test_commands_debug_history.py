@@ -36,8 +36,8 @@ def test_guardian_debug_command_reports_gateway_safe_decision(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, rules=[privacy_rule(rule_id="rule_debug", data_classes=["communications"])])
 
-    response = plugin._handle_guardian_command(
-        "debug action=mcp_write destination=mcp:notion classes=communications tool=mcp_notion_update_page"
+    response = plugin._guardian_debug_command(
+        ["debug", "action=mcp_write", "destination=mcp:notion", "classes=communications", "tool=mcp_notion_update_page"]
     )
 
     assert "Guardian debug decision" in response
@@ -62,9 +62,15 @@ def test_guardian_debug_command_accepts_contextual_fields():
         )
     ])
 
-    response = plugin._handle_guardian_command(
-        "debug action=message_send destination=messaging classes=communications "
-        f"purpose=support recipient={recipient_identity}"
+    response = plugin._guardian_debug_command(
+        [
+            "debug",
+            "action=message_send",
+            "destination=messaging",
+            "classes=communications",
+            "purpose=support",
+            f"recipient={recipient_identity}",
+        ]
     )
 
     assert "Decision: allowed" in response
@@ -82,11 +88,11 @@ def test_guardian_debug_command_does_not_consume_once_approval():
         "fingerprint": "debug",
     }]
 
-    first = plugin._handle_guardian_command(
-        "debug action=browser_type destination=example.com classes=communications"
+    first = plugin._guardian_debug_command(
+        ["debug", "action=browser_type", "destination=example.com", "classes=communications"]
     )
-    second = plugin._handle_guardian_command(
-        "debug action=browser_type destination=example.com classes=communications"
+    second = plugin._guardian_debug_command(
+        ["debug", "action=browser_type", "destination=example.com", "classes=communications"]
     )
 
     assert "Decision: allowed" in first
@@ -98,8 +104,8 @@ def test_guardian_debug_command_reports_privacy_off(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="off")
 
-    response = plugin._handle_guardian_command(
-        "debug action=message_send destination=friend classes=communications"
+    response = plugin._guardian_debug_command(
+        ["debug", "action=message_send", "destination=friend", "classes=communications"]
     )
 
     assert "Decision: allowed" in response
@@ -131,9 +137,9 @@ def test_guardian_history_command_lists_recent_sanitized_activity():
         rule_source="env",
     )
 
-    response = plugin._handle_guardian_command("history")
+    response = plugin._handle_guardian_command("activity")
 
-    assert "🛡️ **Guardian history** · newest first · 2 shown" in response
+    assert "🛡️ **Guardian activity** · newest first · 2 shown" in response
     assert "✅ **`mcp_notion_update_page`**" in response
     assert "🏷️ `documents`" in response
     assert "Allowed: matched allow rule (`env`)" in response
@@ -156,7 +162,7 @@ def test_guardian_history_shows_terminal_action_detail():
 
     plugin._on_pre_tool_call("terminal", {"command": "pwd | grep root"}, session_id="s1")
 
-    response = plugin._handle_guardian_command("history")
+    response = plugin._handle_guardian_command("activity")
 
     assert "✅ **`terminal`**" in response
     assert "Action: `pwd | grep root`" in response
@@ -182,9 +188,9 @@ def test_guardian_history_command_groups_quick_same_tool_calls(monkeypatch):
             approval_id=f"peg_{index}",
         )
 
-    response = plugin._handle_guardian_command("history")
+    response = plugin._handle_guardian_command("activity")
 
-    assert "🛡️ **Guardian history** · newest first · 1 shown" in response
+    assert "🛡️ **Guardian activity** · newest first · 1 shown" in response
     assert "❌ **`browser_type`** x3" in response
     assert "Jun 6, 2026 12:44 PM PDT" in response
     assert " - Jun 6, 2026 12:44 PM PDT" not in response
@@ -196,8 +202,8 @@ def test_guardian_history_command_groups_quick_same_tool_calls(monkeypatch):
 def test_guardian_history_command_empty_and_limit_handling():
     plugin = load_plugin()
 
-    assert plugin._handle_guardian_command("history") == "No guardian activity history yet."
-    assert plugin._handle_guardian_command("history nope") == "Usage: /guardian history [limit]"
+    assert plugin._handle_guardian_command("activity") == "No guardian activity history yet."
+    assert plugin._handle_guardian_command("activity nope") == "Usage: /guardian activity [limit]"
 
     for index in range(30):
         plugin._emit_activity(
@@ -209,9 +215,9 @@ def test_guardian_history_command_empty_and_limit_handling():
             reason="test",
         )
 
-    response = plugin._handle_guardian_command("history 100")
+    response = plugin._handle_guardian_command("activity 100")
 
-    assert "🛡️ **Guardian history** · newest first · 25 shown" in response
+    assert "🛡️ **Guardian activity** · newest first · 25 shown" in response
     assert response.count("\n❌ **`message_send`**") == 25
     assert response.count("\nBlocked: test") == 25
 
@@ -221,13 +227,18 @@ def test_guardian_dashboard_is_not_a_chat_command():
 
     help_text = plugin._handle_guardian_command("help")
     assert "dashboard" not in help_text
-    assert help_text.startswith("Usage: /guardian <command>\n")
-    assert "\n/guardian status\n" in help_text
-    assert "\n/guardian approve <id> once|session|always\n" in help_text
-    assert "\n/guardian dismiss <id> (alias: deny)\n" in help_text
-    assert "\n/guardian rule enable|disable <rule_id>\n" in help_text
-    assert "\n/guardian rule move <rule_id> before|after <other_rule_id>\n" in help_text
-    assert "\n/guardian failures [limit]\n" in help_text
+    assert help_text.startswith("/guardian — privacy firewall for your agent")
+    # The five concepts appear in `decide` order, with status/why on top.
+    assert help_text.index("status") < help_text.index("ACTIVITY")
+    for heading in ("ACTIVITY", "WHAT'S YOURS", "SHARING", "REVIEW", "PROTECTION"):
+        assert heading in help_text
+    assert (
+        help_text.index("ACTIVITY")
+        < help_text.index("WHAT'S YOURS")
+        < help_text.index("SHARING")
+        < help_text.index("REVIEW")
+        < help_text.index("PROTECTION")
+    )
     assert plugin._handle_guardian_command("dashboard status") == "Invalid /guardian command. Try /guardian help."
 
 

@@ -491,7 +491,7 @@ def test_activity_presentation_helpers_keep_datatables_and_history_consistent(mo
 
     row = plugin._grouped_activity_rows({}, limit=1)[0]
     datatables_row = plugin._activity_datatables_payload({"draw": "1", "start": "0", "length": "25"})["data"][0]
-    history = plugin._handle_guardian_command("history")
+    history = plugin._handle_guardian_command("activity")
 
     assert plugin._activity_status_icon(row["decision"]) == "❌"
     assert plugin._activity_time_text(row) == "Jun 6, 2026 12:44 PM PDT"
