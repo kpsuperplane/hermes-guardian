@@ -186,6 +186,39 @@
   background: color-mix(in srgb, var(--color-card) 88%, transparent);
 }
 
+/* Turn group header: one per user prompt, spanning the table. */
+.hermes-guardian-turn-header > td {
+  background: color-mix(in srgb, var(--color-muted) 45%, transparent);
+  border-top: 2px solid var(--color-border);
+  padding: 0.45rem 0.75rem;
+}
+
+.hermes-guardian-turn-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.hermes-guardian-turn-label {
+  font-weight: 700;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-muted-foreground);
+}
+
+.hermes-guardian-turn-prompt {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.hermes-guardian-turn-meta {
+  margin-left: auto;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
 /* Expanded detail: a full-width row beneath its activity row, rendered as a
    two-column key/value table. The open row and its detail share a subtle inset
    background and drop the divider between them so they read as one block. */

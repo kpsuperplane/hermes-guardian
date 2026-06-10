@@ -433,8 +433,10 @@ def _remember_user_request(event: Any) -> None:
     if not _owner_is_authenticated(owner_hash):
         return
     # A new owner message starts a fresh turn: reset the cross-channel egress lockdown
-    # so a denial in the previous turn does not persist into this one.
+    # so a denial in the previous turn does not persist into this one, and rotate the
+    # turn_id so subsequent activity groups under this prompt.
     _clear_turn_external_denials_for_owner(owner_hash)
+    _rotate_turn_id_for_owner(owner_hash)
     sanitized = _redact_command_for_llm(text.strip())
     if not sanitized:
         return

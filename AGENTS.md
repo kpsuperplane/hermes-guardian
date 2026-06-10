@@ -127,7 +127,13 @@ the tests/docs are updated accordingly:
   scrubbing, so taint is preserved even when sensitive records are suppressed.
 - Persistent state stores sanitized metadata only. Never store raw email bodies,
   message text, typed browser values, document contents, file contents, full
-  tokenized URLs, credentials, or raw tool arguments.
+  tokenized URLs, credentials, or raw tool arguments. One explicit, default-off
+  exception: when `protection.runtime.persist_prompts` is enabled, the
+  already-sanitized user/cron prompt excerpt (the same redacted value passed to the
+  verifier, via `_redact_command_for_llm`) is written to activity rows' `user_prompt`
+  column for debugging. It is opt-in, confirmation-gated on every surface,
+  retention-capped with every other row, resolved from a single audited source in
+  `_emit_activity`, and never read back by the agent or the verifier.
 - Approval IDs are short-lived four-digit codes, but one-time approvals are
   bound to an HMAC fingerprint of the exact tool arguments.
 - Session taint is intentionally coarse. Do not weaken it to content-only
@@ -156,9 +162,11 @@ the tests/docs are updated accordingly:
   message from an authenticated session owner (CLI or configured gateway owner),
   captured at gateway dispatch after the Security Module clears it. It is the
   user turn only (never system prompt, tool results, or model output), redacted,
-  held in volatile owner-keyed state, never persisted, and treated as
-  authorization evidence only — it must not override `risk_level` or absolute
-  deny rules, and group/cron/unauthenticated senders must never populate it.
+  held in volatile owner-keyed state, and treated as authorization evidence only —
+  it must not override `risk_level` or absolute deny rules, and
+  group/cron/unauthenticated senders must never populate it. It is not persisted
+  unless the operator opts into `protection.runtime.persist_prompts` (default off),
+  which writes this same redacted excerpt to the activity log for debugging.
   Both context channels are gated by privacy booleans: `llm_user_context`
   (default on) gates the owner channel above; `llm_cron_context` (default off)
   gates a parallel `cron_context` channel that supplies a cron job's own
@@ -232,7 +240,7 @@ re-authored to the schema below.
     ],
     "language_packs": {"en": true},
     "retention": {"max_rows": 100, "max_age_days": 7},
-    "runtime": {"dashboard_mutations": "auto"}
+    "runtime": {"dashboard_mutations": "auto", "persist_prompts": false}
   }
 }
 ```
@@ -438,6 +446,7 @@ underlying handler under its new group.
 /guardian protection tool delete <match_or_id>
 /guardian protection tool enable|disable <id_or_match>
 /guardian protection unknown-tools gate|allow
+/guardian protection persist-prompts on|off
 /guardian protection language-packs enable|disable <pack_id>
 ```
 

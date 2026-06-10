@@ -222,7 +222,7 @@ decision:
     "tools": [],
     "language_packs": { "en": true },
     "retention": { "max_rows": 100, "max_age_days": 7 },
-    "runtime": { "dashboard_mutations": "auto" }
+    "runtime": { "dashboard_mutations": "auto", "persist_prompts": false }
   }
 }
 ```
@@ -688,6 +688,7 @@ sit on top as the everyday commands.
 /guardian protection tool delete <match_or_id>
 /guardian protection tool enable|disable <id_or_match>
 /guardian protection unknown-tools gate|allow
+/guardian protection persist-prompts on|off
 /guardian protection language-packs enable|disable <pack_id>
 ```
 
@@ -713,12 +714,14 @@ Dashboard tabs follow the five-concept IA, in `decide` order — reading the nav
 left-to-right is reading the decision pipeline top-to-bottom (what happened → is it
 mine → is it covered by a grant → who judges the rest → the floor):
 
-- **Activity**: the merged decided stream (blocks + history) plus a pinned
-  *Pending approvals* list with same-screen Approve / Deny, a session **taint strip**
-  with *Clear session taint*, per-row **trust pills**, and a **deep-linked decision
-  step** whose clauses jump to the tab that governs them. Filters: decision, trust,
-  class/tag, tool, destination, recipient, date range, and search; rows expand to the
-  full resolved capability (the dashboard twin of `/guardian why`).
+- **Activity**: the merged decided stream (blocks + history) **grouped by turn** (one
+  user prompt and the actions it drove), plus a pinned *Pending approvals* list with
+  same-screen Approve / Deny, a session **taint strip** with *Clear session taint*,
+  per-row **trust pills**, and a **deep-linked decision step** whose clauses jump to the
+  tab that governs them. Filters: decision, trust, class/tag, tool, destination,
+  recipient, date range, and search; rows expand to the full resolved capability (the
+  dashboard twin of `/guardian why`). Each turn header shows the prompt that drove it
+  when prompt persistence is enabled (see Protection).
 - **What's Yours**: the self side of the boundary — a *Seen recently* list bucketed by
   trust with a one-click "this is mine → add to self", the self-allowlist (stores /
   identities / hosts), a grant banner when identities/hosts are set, and a *Check a
@@ -734,8 +737,10 @@ mine → is it covered by a grant → who judges the rest → the floor):
   model, and a verifier **scoreboard** (consulted checks + median latency).
 - **Protection**: the floor + machinery + diagnostics — Security Module hard-block
   rules, tool classification overrides (with the unknown-tools mode as a line item at
-  the bottom of that list), language packs, retention, and the per-check timing /
-  diagnostics table.
+  the bottom of that list), language packs, retention, a **Debugging** card with the
+  opt-in *Persist prompts* toggle (default off, confirmation-gated — writes the
+  sanitized user/cron prompt onto activity rows so turn headers show what was asked),
+  and the per-check timing / diagnostics table.
 
 Hermes mounts the dashboard API under `/api/plugins/hermes-guardian/`:
 

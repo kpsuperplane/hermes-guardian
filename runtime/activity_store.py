@@ -78,7 +78,9 @@ def _ensure_activity_db() -> None:
                         purpose TEXT NOT NULL DEFAULT '',
                         recipient_identity TEXT NOT NULL DEFAULT '',
                         destination_trust TEXT NOT NULL DEFAULT 'unknown',
-                        decision_step TEXT NOT NULL DEFAULT ''
+                        decision_step TEXT NOT NULL DEFAULT '',
+                        turn_id TEXT NOT NULL DEFAULT '',
+                        user_prompt TEXT NOT NULL DEFAULT ''
                     )
                     """
                 )
@@ -105,6 +107,14 @@ def _ensure_activity_db() -> None:
                     conn.execute("ALTER TABLE activity ADD COLUMN destination_trust TEXT NOT NULL DEFAULT 'unknown'")
                 if "decision_step" not in columns:
                     conn.execute("ALTER TABLE activity ADD COLUMN decision_step TEXT NOT NULL DEFAULT ''")
+                # Turn grouping + opt-in prompt persistence: turn_id groups a user prompt's
+                # actions; user_prompt holds the already-sanitized prompt only when the
+                # protection.runtime.persist_prompts flag is on. Additive, display-safe
+                # backfill ('') with the same retention as every other row.
+                if "turn_id" not in columns:
+                    conn.execute("ALTER TABLE activity ADD COLUMN turn_id TEXT NOT NULL DEFAULT ''")
+                if "user_prompt" not in columns:
+                    conn.execute("ALTER TABLE activity ADD COLUMN user_prompt TEXT NOT NULL DEFAULT ''")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_ts_idx ON activity(ts)")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_decision_idx ON activity(decision)")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_action_idx ON activity(action_family)")
@@ -244,6 +254,14 @@ def _emit_activity(
             module = "privacy"
     safe_classes = sorted(str(cls) for cls in (data_classes or []) if str(cls) in _ALL_PRIVACY_CLASSES)
     sid = _normalize_session_id(session_id)
+    # Turn grouping is always on (cheap random label). The prompt is persisted ONLY when
+    # the operator opts in; both sources (owner request / cron instruction) are already
+    # sanitized by _redact_command_for_llm, and we re-clamp defensively. Unauthenticated
+    # senders / non-cron sessions yield "" from both, so nothing is persisted for them.
+    turn_id = _current_turn_id(sid)
+    user_prompt = ""
+    if _persist_prompts_enabled():
+        user_prompt = (_recent_user_request_for_owner(owner_hash) or _cron_instruction_for_session(sid))[:500]
     try:
         _ensure_activity_db()
         with _activity_connect() as conn:
@@ -254,9 +272,9 @@ def _emit_activity(
                     tool_name, action_family, destination, data_classes, reason,
                     approval_id, rule_id, rule_source, action_detail,
                     module, rule_effect, rule_scope, purpose, recipient_identity,
-                    destination_trust, decision_step
+                    destination_trust, decision_step, turn_id, user_prompt
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     int(_now()),
@@ -281,6 +299,8 @@ def _emit_activity(
                     _normalize_rule_recipient_identity(recipient_identity or "none", allow_star=False),
                     _normalize_destination_trust_label(destination_trust),
                     _normalize_decision_step_label(decision_step),
+                    str(turn_id or "")[:60],
+                    str(user_prompt or "")[:500],
                 ),
             )
         _prune_activity_db()

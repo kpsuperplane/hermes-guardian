@@ -34,12 +34,43 @@ def _ensure_session(session_id: str | None, owner_hash: str | None = None) -> di
                 "browser_host": "",
                 "browser_private_hosts": set(),
                 "local_system_result_policies": [],
+                "turn_id": "",
             },
         )
         if owner_hash:
             state["owner_hash"] = owner_hash
             _OWNER_SESSIONS.setdefault(owner_hash, set()).add(sid)
         return state
+
+
+# --- Turn identity (history grouping) ----------------------------------------
+# A "turn" is one user prompt + the agent actions until the next user input. The
+# turn_id is stamped on every activity row so the dashboard can group by turn. It is
+# a random label (no PII).
+def _new_turn_id() -> str:
+    return f"turn_{secrets.token_hex(8)}"
+
+
+def _rotate_turn_id_for_owner(owner_hash: str) -> None:
+    """Start a fresh turn for an owner's sessions (called at the turn boundary)."""
+    if not owner_hash:
+        return
+    turn_id = _new_turn_id()
+    with _LOCK:
+        for sid in set(_OWNER_SESSIONS.get(owner_hash, set())):
+            _ensure_session(sid)["turn_id"] = turn_id
+
+
+def _current_turn_id(session_id: str | None) -> str:
+    """The session's current turn_id, lazily assigned if none exists yet (covers cron,
+    unauthenticated, and CLI sessions that never hit the gateway turn boundary)."""
+    with _LOCK:
+        state = _ensure_session(session_id)
+        turn_id = str(state.get("turn_id") or "")
+        if not turn_id:
+            turn_id = _new_turn_id()
+            state["turn_id"] = turn_id
+        return turn_id
 
 
 def _taint_session(session_id: str | None, classes: set[str]) -> None:

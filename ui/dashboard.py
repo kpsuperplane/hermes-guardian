@@ -167,6 +167,11 @@ def _dashboard_llm_cron_context_action(enabled: Any) -> tuple[dict[str, Any], in
     return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
 
 
+def _dashboard_persist_prompts_action(enabled: Any) -> tuple[dict[str, Any], int]:
+    ok, message = _set_persist_prompts(_config_bool(enabled, default=_DEFAULT_PERSIST_PROMPTS))
+    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+
+
 def _dashboard_llm_verifier_model_action(model: Any) -> tuple[dict[str, Any], int]:
     ok, message = _set_llm_verifier_model(str(model or ""))
     return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400

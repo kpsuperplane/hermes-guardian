@@ -12,6 +12,10 @@ _UNKNOWN_TOOLS_MODES = {"gate", "allow"}
 # (a job's own stored instruction) defaults off because cron runs unattended.
 _DEFAULT_LLM_USER_CONTEXT = True
 _DEFAULT_LLM_CRON_CONTEXT = False
+# Opt-in debugging: persist the (already-sanitized) user/cron prompt onto activity rows
+# so dashboard history groups can show what was asked. Default OFF — it relaxes the
+# "prompt is never persisted" invariant, so it is confirmation-gated on every surface.
+_DEFAULT_PERSIST_PROMPTS = False
 # Optional model the llm-mode verifier should run on (empty = Hermes default).
 # A fast classification model (e.g. a "mini" variant) cuts verifier latency
 # dramatically vs. a reasoning model. Requires the operator to grant
@@ -167,6 +171,7 @@ def _default_dashboard_config() -> dict[str, Any]:
     return {
         "mutations": _DEFAULT_DASHBOARD_MUTATIONS,
         "admin_token_env": _DEFAULT_DASHBOARD_ADMIN_TOKEN_ENV,
+        "persist_prompts": _DEFAULT_PERSIST_PROMPTS,
     }
 
 
@@ -206,7 +211,8 @@ def _normalize_dashboard_config(raw: Any) -> dict[str, Any]:
     token_env = str(block.get("admin_token_env") or _DEFAULT_DASHBOARD_ADMIN_TOKEN_ENV).strip()
     if not re.fullmatch(r"[A-Za-z0-9_]{1,80}", token_env):
         token_env = _DEFAULT_DASHBOARD_ADMIN_TOKEN_ENV
-    return {"mutations": mutations, "admin_token_env": token_env}
+    persist_prompts = _config_bool(block.get("persist_prompts"), default=_DEFAULT_PERSIST_PROMPTS)
+    return {"mutations": mutations, "admin_token_env": token_env, "persist_prompts": persist_prompts}
 
 
 def _default_self_config() -> dict[str, Any]:
@@ -992,6 +998,9 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
                 "admin_token_env": str(
                     dashboard.get("admin_token_env") or _DEFAULT_DASHBOARD_ADMIN_TOKEN_ENV
                 ),
+                "persist_prompts": _config_bool(
+                    dashboard.get("persist_prompts"), default=_DEFAULT_PERSIST_PROMPTS
+                ),
             },
         },
     }
@@ -1168,6 +1177,27 @@ def _set_llm_context_flag(key: str, enabled: bool, label: str) -> tuple[bool, st
     if not _save_privacy_config(_config_for_save(data, privacy=privacy)):
         return False, f"Failed to save {label} setting; Guardian remains unchanged."
     return True, f"LLM {label} turned {'on' if enabled else 'off'}."
+
+
+def _persist_prompts_enabled() -> bool:
+    return _config_bool(
+        _load_privacy_config().get("dashboard", {}).get("persist_prompts"),
+        default=_DEFAULT_PERSIST_PROMPTS,
+    )
+
+
+def _set_persist_prompts(enabled: bool) -> tuple[bool, str]:
+    data = _load_privacy_config()
+    dashboard = dict(data.get("dashboard") or {})
+    dashboard["persist_prompts"] = bool(enabled)
+    if not _save_privacy_config(_config_for_save(data, dashboard=dashboard)):
+        return False, "Failed to save prompt-persistence setting; Guardian remains unchanged."
+    if enabled:
+        return True, (
+            "Prompt persistence turned on. Sanitized user/cron prompts are now written to "
+            "the activity log for debugging. Turn off when done."
+        )
+    return True, "Prompt persistence turned off."
 
 
 def _set_llm_user_context(enabled: bool) -> tuple[bool, str]:

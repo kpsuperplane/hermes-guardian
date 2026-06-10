@@ -115,6 +115,8 @@ export interface ActivityRow {
   data_classes?: string;
   reason?: string;
   reason_short?: string;
+  turn_id?: string;
+  user_prompt?: string;
 }
 
 export interface CronJob {
@@ -171,6 +173,7 @@ export interface Policy {
   unknown_tools?: string;
   llm_user_context?: boolean;
   llm_cron_context?: boolean;
+  persist_prompts?: boolean;
   llm_verifier_model?: string;
   llm_verifier_model_options?: string[];
   activity_max_rows?: number;

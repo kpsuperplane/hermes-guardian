@@ -47,6 +47,7 @@ _GUARDIAN_HELP_LINES = [
     "  protection security enable|disable <rule_id>",
     "  protection tool set|delete|enable|disable ...",
     "  protection unknown-tools gate|allow",
+    "  protection persist-prompts on|off",
     "  protection language-packs enable|disable <pack_id>",
 ]
 
@@ -519,6 +520,14 @@ def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
         return _guardian_tools_command()
     if sub in {"unknown-tools", "unknown_tools"}:
         return _guardian_privacy_command(owner_hash, ["privacy", "unknown-tools", *tokens[2:]])
+    if sub in {"persist-prompts", "persist_prompts"}:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        enabled = _parse_on_off(tokens[2]) if len(tokens) >= 3 else None
+        if enabled is None:
+            return "Usage: /guardian protection persist-prompts on|off"
+        ok, message = _set_persist_prompts(enabled)
+        return message
     if sub in {"language-packs", "language-pack", "languages"}:
         return _guardian_language_packs_command(owner_hash, ["language-packs", *tokens[2:]])
     if not sub:
@@ -528,16 +537,19 @@ def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
         "/guardian protection security enable|disable <rule_id> | "
         "/guardian protection tool set|delete|enable|disable ... | "
         "/guardian protection unknown-tools gate|allow | "
+        "/guardian protection persist-prompts on|off | "
         "/guardian protection language-packs enable|disable <pack_id>"
     )
 
 
 def _guardian_protection_overview() -> str:
     """The PROTECTION parent screen: security rules + tool overrides + packs."""
+    persist = "on" if _persist_prompts_enabled() else "off"
     return "\n\n".join(
         [
             _guardian_security_command("", ["security"]),
             _guardian_tools_command(),
+            f"Prompt persistence: {persist} (sanitized user/cron prompt stored on activity rows for debugging)",
             _guardian_language_packs_command("", ["language-packs"]),
         ]
     )

@@ -43,6 +43,8 @@ export function GuardianPage() {
     setLlmUserContext,
     llmCronContext,
     setLlmCronContext,
+    persistPrompts,
+    setPersistPrompts,
     llmVerifierModel,
     setLlmVerifierModel,
     load,
@@ -63,6 +65,8 @@ export function GuardianPage() {
     setLlmUserContext,
     llmCronContext,
     setLlmCronContext,
+    persistPrompts,
+    setPersistPrompts,
     llmVerifierModel,
     setLlmVerifierModel,
     showToast,
@@ -212,6 +216,9 @@ export function GuardianPage() {
           unknownTools={unknownTools}
           unknownToolsSaving={actions.unknownToolsSaving}
           onChangeUnknownTools={actions.saveUnknownTools}
+          persistPrompts={persistPrompts}
+          persistPromptsSaving={actions.persistPromptsSaving}
+          onChangePersistPrompts={actions.savePersistPrompts}
           languagePacksSaving={actions.languagePacksSaving}
           onPatchLanguagePack={actions.patchLanguagePack}
           onSetAllLanguagePacks={actions.setAllLanguagePacks}

@@ -14,6 +14,8 @@ export interface PolicyController {
   setLlmUserContext: (enabled: boolean) => void;
   llmCronContext: boolean;
   setLlmCronContext: (enabled: boolean) => void;
+  persistPrompts: boolean;
+  setPersistPrompts: (enabled: boolean) => void;
   llmVerifierModel: string;
   setLlmVerifierModel: (model: string) => void;
   load: () => Promise<void>;
@@ -30,6 +32,7 @@ export function usePolicy(): PolicyController {
   const [unknownTools, setUnknownTools] = useState("gate");
   const [llmUserContext, setLlmUserContext] = useState(true);
   const [llmCronContext, setLlmCronContext] = useState(false);
+  const [persistPrompts, setPersistPrompts] = useState(false);
   const [llmVerifierModel, setLlmVerifierModel] = useState("");
 
   const load = useCallback(() => {
@@ -42,6 +45,7 @@ export function usePolicy(): PolicyController {
         setUnknownTools(value.unknown_tools || "gate");
         setLlmUserContext(value.llm_user_context !== false);
         setLlmCronContext(value.llm_cron_context === true);
+        setPersistPrompts(value.persist_prompts === true);
         setLlmVerifierModel(value.llm_verifier_model || "");
       })
       .catch((err: unknown) => {
@@ -68,6 +72,8 @@ export function usePolicy(): PolicyController {
     setLlmUserContext,
     llmCronContext,
     setLlmCronContext,
+    persistPrompts,
+    setPersistPrompts,
     llmVerifierModel,
     setLlmVerifierModel,
     load,

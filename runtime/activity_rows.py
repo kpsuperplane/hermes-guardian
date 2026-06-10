@@ -396,6 +396,8 @@ def _activity_row_from_sql(row: sqlite3.Row) -> dict[str, Any]:
         # from a pre-migration snapshot renders display-safe (unknown / empty step).
         "destination_trust": _row_value(row, "destination_trust", "unknown"),
         "decision_step": _row_value(row, "decision_step", ""),
+        "turn_id": _row_value(row, "turn_id", ""),
+        "user_prompt": _row_value(row, "user_prompt", ""),
     }
 
 
@@ -450,6 +452,10 @@ def _activity_datatables_row(row: dict[str, Any]) -> dict[str, Any]:
         "module": str(row.get("module") or ""),
         "rule_effect": str(row.get("rule_effect") or ""),
         "rule_scope": str(row.get("rule_scope") or ""),
+        # Turn grouping + opt-in persisted prompt (read-shaping only; deliberately NOT in
+        # the sort/search allowlists). user_prompt is the already-sanitized excerpt.
+        "turn_id": str(row.get("turn_id") or ""),
+        "user_prompt": str(row.get("user_prompt") or ""),
     }
 
 
@@ -664,6 +670,14 @@ def _runtime_risk_banners() -> list[dict[str, str]]:
                 "id": "llm_cron_context",
                 "severity": "medium",
                 "message": "LLM cron context is on; cron jobs supply their own authorization evidence to the verifier (high-risk cron egress still requires manual approval).",
+            }
+        )
+    if _persist_prompts_enabled():
+        banners.append(
+            {
+                "id": "persist_prompts",
+                "severity": "high",
+                "message": "Prompt persistence is ON; sanitized user/cron prompts are written to the activity log for debugging. This relaxes the metadata-only invariant — turn it off when you're done.",
             }
         )
     if _self_grants_present():
@@ -943,6 +957,7 @@ def _policy_snapshot() -> dict[str, Any]:
         "unknown_tools": _unknown_tools_mode(),
         "llm_user_context": _llm_user_context_enabled(),
         "llm_cron_context": _llm_cron_context_enabled(),
+        "persist_prompts": _persist_prompts_enabled(),
         "llm_verifier_model": _llm_verifier_model(),
         "llm_verifier_model_options": _verifier_model_options(),
         "tool_overrides": _tool_overrides_snapshot(),

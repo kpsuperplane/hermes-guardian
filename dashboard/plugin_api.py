@@ -148,6 +148,9 @@ def _require_dashboard_confirmation(action: str, body: dict[str, Any]) -> None:
     if action == "llm_cron_context" and _body_bool(body, "enabled"):
         if _confirmation_value(body) != "cron-context-on":
             raise HTTPException(status_code=400, detail="enabling cron context requires confirmation")
+    if action == "persist_prompts" and _body_bool(body, "enabled"):
+        if _confirmation_value(body) != "persist-prompts-on":
+            raise HTTPException(status_code=400, detail="enabling prompt persistence requires confirmation")
     # Destination-trust edits are security-relevant (they move what resolves to self /
     # trusted), so require an explicit confirmation token like the cron-context toggle
     # (doc 03 §3.1). Applies to self/trusted/sharing adds and removes.
@@ -347,6 +350,17 @@ async def set_verifier_model(request: Request, body: dict[str, Any]) -> JSONResp
         request,
         "llm_verifier_model",
         _guardian()._dashboard_llm_verifier_model_action(str(body.get("model") or "")),
+    )
+
+
+@router.post("/protection/persist-prompts")
+async def set_persist_prompts(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    _require_dashboard_confirmation("persist_prompts", body)
+    return _json_mutation_result(
+        request,
+        "persist_prompts",
+        _guardian()._dashboard_persist_prompts_action(_body_bool(body, "enabled")),
     )
 
 

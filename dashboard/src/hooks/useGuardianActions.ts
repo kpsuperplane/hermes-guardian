@@ -25,6 +25,8 @@ export interface GuardianActionDeps {
   setLlmUserContext: (enabled: boolean) => void;
   llmCronContext: boolean;
   setLlmCronContext: (enabled: boolean) => void;
+  persistPrompts: boolean;
+  setPersistPrompts: (enabled: boolean) => void;
   llmVerifierModel: string;
   setLlmVerifierModel: (model: string) => void;
   showToast: (message?: unknown, variant?: ToastVariant) => void;
@@ -53,6 +55,8 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     setLlmUserContext,
     llmCronContext,
     setLlmCronContext,
+    persistPrompts,
+    setPersistPrompts,
     llmVerifierModel,
     setLlmVerifierModel,
     showToast,
@@ -63,6 +67,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
   const [unknownToolsSaving, setUnknownToolsSaving] = useState(false);
   const [userContextSaving, setUserContextSaving] = useState(false);
   const [cronContextSaving, setCronContextSaving] = useState(false);
+  const [persistPromptsSaving, setPersistPromptsSaving] = useState(false);
   const [verifierModelSaving, setVerifierModelSaving] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<RuleForm>(Object.assign({}, DEFAULT_FORM));
@@ -174,6 +179,34 @@ export function useGuardianActions(deps: GuardianActionDeps) {
         showToast(errText(err), "error");
       })
       .finally(() => setCronContextSaving(false));
+  }
+
+  function savePersistPrompts(enabled: boolean) {
+    if (enabled === persistPrompts) return;
+    const previous = persistPrompts;
+    const body: { enabled: boolean; confirm?: string } = { enabled };
+    if (enabled) {
+      if (
+        !window.confirm(
+          "Turn on prompt persistence? The sanitized user/cron prompt will be written to the activity log for debugging. This relaxes the metadata-only invariant — turn it off when you're done.",
+        )
+      ) {
+        return;
+      }
+      body.confirm = "persist-prompts-on";
+    }
+    setPersistPrompts(enabled);
+    setPersistPromptsSaving(true);
+    api("/protection/persist-prompts", { method: "POST", body: JSON.stringify(body) })
+      .then((payload) => {
+        showToast(payload.message || "Saved.");
+        return load();
+      })
+      .catch((err) => {
+        setPersistPrompts(previous);
+        showToast(errText(err), "error");
+      })
+      .finally(() => setPersistPromptsSaving(false));
   }
 
   function saveVerifierModel(nextModel: string) {
@@ -492,6 +525,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     userContextSaving,
     cronContextSaving,
     verifierModelSaving,
+    persistPromptsSaving,
     languagePacksSaving,
     // rule modal
     showModal,
@@ -510,6 +544,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     saveUnknownTools,
     saveUserContext,
     saveCronContext,
+    savePersistPrompts,
     saveVerifierModel,
     patchSecurityRule,
     patchLanguagePack,

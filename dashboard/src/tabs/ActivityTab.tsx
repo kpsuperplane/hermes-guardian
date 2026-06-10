@@ -312,6 +312,57 @@ function FilterBar(props: { filters: Filters; setFilters: (next: Filters) => voi
   );
 }
 
+// --- Turn grouping (doc: group history by turn) ------------------------------
+// Rows arrive sorted ts DESC; walk them and start a new group whenever turn_id
+// changes. Rows with an empty turn_id (legacy / pre-migration) each become their
+// own singleton group with no header. A turn that straddles a server-side page
+// boundary renders as two partial groups (a header on each page) — accepted.
+interface TurnGroup {
+  turnId: string;
+  rows: ActivityRow[];
+}
+
+function groupByTurn(rows: ActivityRow[]): TurnGroup[] {
+  const groups: TurnGroup[] = [];
+  for (const row of rows) {
+    const turnId = text(row.turn_id);
+    const last = groups[groups.length - 1];
+    if (last && turnId && last.turnId === turnId) {
+      last.rows.push(row);
+    } else {
+      groups.push({ turnId, rows: [row] });
+    }
+  }
+  return groups;
+}
+
+function TurnHeaderRow(props: { group: TurnGroup }) {
+  const { group } = props;
+  const first = group.rows[0];
+  // The persisted prompt may be on any row of the turn (whichever was emitted while
+  // the setting was on); take the first non-empty one.
+  const prompt = text(group.rows.map((r) => text(r.user_prompt)).find(Boolean));
+  const when = text(first.time, timeText(first.ts));
+  const n = group.rows.length;
+  return (
+    <tr className="hermes-guardian-turn-header">
+      <td colSpan={5}>
+        <div className="hermes-guardian-turn-head">
+          <span className="hermes-guardian-turn-label">Turn</span>
+          {prompt ? (
+            <span className="hermes-guardian-turn-prompt">{prompt}</span>
+          ) : (
+            <span className="hermes-guardian-muted">(prompt not recorded)</span>
+          )}
+          <span className="hermes-guardian-turn-meta hermes-guardian-muted">
+            {when + " · " + n + (n === 1 ? " action" : " actions")}
+          </span>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 function ActivityRowItem(props: {
   row: ActivityRow;
   index: number;
@@ -526,13 +577,18 @@ export function ActivityTab(props: ActivityTabProps) {
           </thead>
           <tbody>
             {filtered.length ? (
-              filtered.map((row, index) => (
-                <ActivityRowItem
-                  key={row.id || index}
-                  row={row}
-                  index={index}
-                  onNavigate={onNavigate}
-                />
+              groupByTurn(filtered).map((group, gIndex) => (
+                <React.Fragment key={"turn-" + group.turnId + "-" + gIndex}>
+                  {group.turnId ? <TurnHeaderRow group={group} /> : null}
+                  {group.rows.map((row, index) => (
+                    <ActivityRowItem
+                      key={row.id || group.turnId + ":" + index}
+                      row={row}
+                      index={index}
+                      onNavigate={onNavigate}
+                    />
+                  ))}
+                </React.Fragment>
               ))
             ) : (
               <tr>
