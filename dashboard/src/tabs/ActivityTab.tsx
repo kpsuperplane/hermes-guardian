@@ -190,85 +190,124 @@ const TRUST_LEVELS = [
   "unknown",
 ];
 
+// Field-level filters tucked behind the "More filters" disclosure so the
+// default toolbar stays a single compact row.
+const ADVANCED_FILTER_KEYS: (keyof Filters)[] = [
+  "classTag",
+  "tool",
+  "destination",
+  "recipient",
+  "from",
+  "to",
+];
+
+function activeFilterCount(filters: Filters, keys: (keyof Filters)[]): number {
+  return keys.filter((key) => text(filters[key]).length > 0).length;
+}
+
 function FilterBar(props: { filters: Filters; setFilters: (next: Filters) => void }) {
   const { filters, setFilters } = props;
+  const [expanded, setExpanded] = useState(false);
   const set = (key: keyof Filters, value: string) =>
     setFilters(Object.assign({}, filters, { [key]: value }));
+
+  const advancedActive = activeFilterCount(filters, ADVANCED_FILTER_KEYS);
+  const anyActive = activeFilterCount(filters, Object.keys(filters) as (keyof Filters)[]) > 0;
+
   return (
-    <div className="hermes-guardian-activity-filters">
-      <select
-        className="hermes-guardian-select"
-        value={filters.decision}
-        onChange={(event) => set("decision", event.target.value)}
-      >
-        <option value="">All decisions</option>
-        <option value="allowed">allowed</option>
-        <option value="gated">gated</option>
-        <option value="blocked">blocked</option>
-        <option value="denied">denied</option>
-        <option value="read">read</option>
-      </select>
-      <select
-        className="hermes-guardian-select"
-        value={filters.trust}
-        onChange={(event) => set("trust", event.target.value)}
-      >
-        <option value="">All trust levels</option>
-        {TRUST_LEVELS.map((level) => (
-          <option key={level} value={level}>
-            {level}
-          </option>
-        ))}
-      </select>
-      <input
-        className="hermes-guardian-input"
-        type="text"
-        placeholder="class / tag"
-        value={filters.classTag}
-        onChange={(event) => set("classTag", event.target.value)}
-      />
-      <input
-        className="hermes-guardian-input"
-        type="text"
-        placeholder="tool"
-        value={filters.tool}
-        onChange={(event) => set("tool", event.target.value)}
-      />
-      <input
-        className="hermes-guardian-input"
-        type="text"
-        placeholder="destination"
-        value={filters.destination}
-        onChange={(event) => set("destination", event.target.value)}
-      />
-      <input
-        className="hermes-guardian-input"
-        type="text"
-        placeholder="recipient"
-        value={filters.recipient}
-        onChange={(event) => set("recipient", event.target.value)}
-      />
-      <input
-        className="hermes-guardian-input"
-        type="date"
-        title="From date"
-        value={filters.from}
-        onChange={(event) => set("from", event.target.value)}
-      />
-      <input
-        className="hermes-guardian-input"
-        type="date"
-        title="To date"
-        value={filters.to}
-        onChange={(event) => set("to", event.target.value)}
-      />
-      <input
-        className="hermes-guardian-input"
-        type="search"
-        placeholder="search"
-        value={filters.search}
-        onChange={(event) => set("search", event.target.value)}
-      />
+    <div className="hermes-guardian-activity-filterbar">
+      <div className="hermes-guardian-activity-filterbar-main">
+        <input
+          className="hermes-guardian-input hermes-guardian-filter-search"
+          type="search"
+          placeholder="Search activity"
+          value={filters.search}
+          onChange={(event) => set("search", event.target.value)}
+        />
+        <select
+          className="hermes-guardian-select hermes-guardian-filter-compact"
+          value={filters.decision}
+          onChange={(event) => set("decision", event.target.value)}
+        >
+          <option value="">All decisions</option>
+          <option value="allowed">allowed</option>
+          <option value="gated">gated</option>
+          <option value="blocked">blocked</option>
+          <option value="denied">denied</option>
+          <option value="read">read</option>
+        </select>
+        <select
+          className="hermes-guardian-select hermes-guardian-filter-compact"
+          value={filters.trust}
+          onChange={(event) => set("trust", event.target.value)}
+        >
+          <option value="">All trust</option>
+          {TRUST_LEVELS.map((level) => (
+            <option key={level} value={level}>
+              {level}
+            </option>
+          ))}
+        </select>
+        <Button
+          variant="secondary"
+          onClick={() => setExpanded(!expanded)}
+          title="Filter by tool, destination, recipient, class, or date"
+        >
+          {(expanded ? "Fewer filters" : "More filters") +
+            (advancedActive ? " (" + advancedActive + ")" : "")}
+        </Button>
+        {anyActive ? (
+          <Button variant="secondary" onClick={() => setFilters(EMPTY_FILTERS)}>
+            Clear
+          </Button>
+        ) : null}
+      </div>
+      {expanded ? (
+        <div className="hermes-guardian-activity-filters-advanced">
+          <input
+            className="hermes-guardian-input"
+            type="text"
+            placeholder="class / tag"
+            value={filters.classTag}
+            onChange={(event) => set("classTag", event.target.value)}
+          />
+          <input
+            className="hermes-guardian-input"
+            type="text"
+            placeholder="tool"
+            value={filters.tool}
+            onChange={(event) => set("tool", event.target.value)}
+          />
+          <input
+            className="hermes-guardian-input"
+            type="text"
+            placeholder="destination"
+            value={filters.destination}
+            onChange={(event) => set("destination", event.target.value)}
+          />
+          <input
+            className="hermes-guardian-input"
+            type="text"
+            placeholder="recipient"
+            value={filters.recipient}
+            onChange={(event) => set("recipient", event.target.value)}
+          />
+          <input
+            className="hermes-guardian-input"
+            type="date"
+            title="From date"
+            value={filters.from}
+            onChange={(event) => set("from", event.target.value)}
+          />
+          <input
+            className="hermes-guardian-input"
+            type="date"
+            title="To date"
+            value={filters.to}
+            onChange={(event) => set("to", event.target.value)}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

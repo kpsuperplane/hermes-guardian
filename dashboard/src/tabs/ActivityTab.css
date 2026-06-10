@@ -130,16 +130,43 @@
   color: var(--color-muted-foreground);
 }
 
-.hermes-guardian-activity-filters {
-  display: flex;
-  flex-wrap: wrap;
+.hermes-guardian-activity-filterbar {
+  display: grid;
   gap: 0.45rem;
 }
 
-.hermes-guardian-activity-filters .hermes-guardian-input,
-.hermes-guardian-activity-filters .hermes-guardian-select {
-  flex: 0 1 auto;
-  min-width: 8rem;
+.hermes-guardian-activity-filterbar-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+/* Search grows to fill the toolbar; the two selects stay sized to content. */
+.hermes-guardian-filter-search {
+  flex: 1 1 12rem;
+  min-width: 10rem;
+}
+
+.hermes-guardian-filter-compact {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.hermes-guardian-activity-filters-advanced {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-card) 60%, transparent);
+}
+
+.hermes-guardian-activity-filters-advanced .hermes-guardian-input {
+  flex: 1 1 8rem;
+  min-width: 7rem;
 }
 
 .hermes-guardian-activity-row:hover {
