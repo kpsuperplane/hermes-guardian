@@ -238,10 +238,80 @@ def _email_is_ambient_business(addr: str) -> bool:
     return domain.lower() not in _CONSUMER_EMAIL_DOMAINS
 
 
+# Inherently public/non-personal line types: toll-free, premium-rate, and shared-cost
+# numbers are business/published lines, never a private personal contact.
+_PUBLIC_PHONE_TYPES = frozenset({
+    phonenumbers.PhoneNumberType.TOLL_FREE,
+    phonenumbers.PhoneNumberType.PREMIUM_RATE,
+    phonenumbers.PhoneNumberType.SHARED_COST,
+})
+
+# Default region for numbers written without an international (+CC) prefix. Doc/skill content
+# is overwhelmingly NANP-formatted; an explicit +CC in the text always overrides this.
+_DEFAULT_PHONE_REGION = "US"
+
+# Reserved "fictional" ranges that libphonenumber accepts as structurally VALID but that are
+# never assigned to a real line — the placeholders that fill documentation and skill examples
+# (the canonical `555` numbers, the UK Ofcom "drama" ranges). This is the one classification
+# libphonenumber does not do for us, so we layer it on. Keyed by country calling code and
+# matched against the national significant number; extend per locale as needed.
+_FICTIONAL_NSN_RE: dict[int, re.Pattern[str]] = {
+    1: re.compile(r"\d{3}555\d{4}$"),  # NANP: central-office code 555 (e.g. 415-555-1212)
+    44: re.compile(  # UK: Ofcom-reserved drama ranges (London/regional/mobile/non-geographic)
+        r"(?:2079460|11[3-8]4960|1[2-6]14960|2890180|2920180|1632960|7700900|3069990|8081570)\d{3}$"
+    ),
+}
+
+
+def _phone_is_real_personal(numobj: Any) -> bool:
+    """True only for a parsed number that plausibly identifies a private personal line.
+
+    libphonenumber does the global heavy lifting: ``is_valid_number`` drops ids and garbage
+    digit runs (e.g. ``1234567890``), and ``number_type`` drops toll-free / premium / shared-
+    cost business lines. On top we drop the reserved fictional ranges it still treats as valid
+    (NANP ``555``, UK drama numbers) — the staple placeholders in skill docs and examples.
+    """
+    if not phonenumbers.is_valid_number(numobj):
+        return False
+    if phonenumbers.number_type(numobj) in _PUBLIC_PHONE_TYPES:
+        return False
+    fictional = _FICTIONAL_NSN_RE.get(numobj.country_code)
+    if fictional and fictional.match(phonenumbers.national_significant_number(numobj)):
+        return False
+    return True
+
+
+def _has_real_personal_phone(text: str) -> bool:
+    """Whether free text carries at least one real personal phone number (any country).
+
+    Uses libphonenumber's matcher at VALID leniency, so malformed numbers and bare digit runs
+    are never yielded; each candidate is then run through the personal/fictional filter.
+    """
+    try:
+        return any(
+            _phone_is_real_personal(match.number)
+            for match in phonenumbers.PhoneNumberMatcher(text, _DEFAULT_PHONE_REGION)
+        )
+    except Exception:
+        return False
+
+
 def _is_web_sourced_tool(tool_name: str) -> bool:
     """True for browser/web-read tools whose results are page content."""
     lower = str(tool_name or "").lower()
     return lower.startswith("browser") or bool(_WEB_READ_TOOL_RE.match(lower))
+
+
+# Read-only documentation tools: skill docs and MCP resource/document reads. Kept in sync
+# with the scanner's _DOC_READ_TOOL_NAMES / _DOC_READ_TOOL_RE (security/scanner.py).
+_DOC_READ_TOOL_NAMES = frozenset({"skill_view"})
+_DOC_READ_TOOL_RE = re.compile(r"(?:^|_)(?:read_resource|read_document|get_resource)$")
+
+
+def _is_doc_read_tool(tool_name: str) -> bool:
+    """True for read-only doc tools whose results are reference material."""
+    lower = re.sub(r"[^a-z0-9_]+", "_", str(tool_name or "").strip().lower())
+    return lower in _DOC_READ_TOOL_NAMES or bool(_DOC_READ_TOOL_RE.search(lower))
 
 
 def _web_content_taint_classes(value: Any, session_id: str | None) -> set[str]:
@@ -268,6 +338,47 @@ def _web_content_taint_classes(value: Any, session_id: str | None) -> set[str]:
     if not (_browser_has_private_input(session_id) or _browser_result_has_private_context(value)):
         return classes
     if _PHONE_RE.search(text) or _PRIVATE_FIELD_RE.search(text):
+        classes.add("contacts")
+    if any(not _email_is_ambient_business(addr) for addr in _EMAIL_ADDRESS_RE.findall(text)):
+        classes.add("contacts")
+    return classes
+
+
+def _doc_content_taint_classes(value: Any) -> set[str]:
+    """Confidence-gated taint for read-only doc content (skill docs, resource reads).
+
+    Doc results are reference material — skill templates, READMEs, examples — and routinely
+    embed placeholder contact info: ``you@example.com``, a sample ``+1-415-555-1212``, an
+    "Address:" label, or a 10-digit id that merely looks like a phone (a tweet/chat id). A
+    naive content scan taints ~1/3 of installed skill docs on those alone. So mirror the web
+    path: only structurally unambiguous signals, or a real consumer-provider personal
+    address, taint. Bare phone-shaped digits and private-field label words do NOT taint on
+    their own here — a doc carries no logged-in/private-host context to corroborate them.
+
+    An email-record *shape* (``From:`` / ``Subject:`` lines) is NOT a backstop here either:
+    skill docs routinely show a sample message template with placeholder values, which is
+    documentation of the format, not real correspondence. A doc embedding a genuine thread
+    still taints via the real consumer-provider address in it (the contacts check below).
+
+    Phone numbers are gated the same way as emails, via libphonenumber (see
+    _has_real_personal_phone): only a structurally real, non-published personal number, in any
+    country, taints. Fakes (a ``555`` / drama sample, an id that looks like a phone) and
+    business toll-free/premium numbers — the staples of skill docs — do not.
+
+    Tradeoff (intentional, narrower than _web_content_taint_classes): a placeholder mail
+    template in a skill reads as reference text and won't taint; the SSN / iCal /
+    consumer-email / real-personal-phone backstops remain, so a skill that genuinely embeds
+    someone's @gmail.com, mobile number, an SSN, or an iCal event still taints.
+    """
+    text = _stringify_for_scan(value)
+    if not text:
+        return set()
+    classes: set[str] = set()
+    if _SSN_RE.search(text):
+        classes.add("documents")
+    if _CALENDAR_CONTENT_RE.search(text):
+        classes.add("calendar")
+    if _has_real_personal_phone(text):
         classes.add("contacts")
     if any(not _email_is_ambient_business(addr) for addr in _EMAIL_ADDRESS_RE.findall(text)):
         classes.add("contacts")
@@ -424,6 +535,8 @@ def _taint_classes_for_tool_result(
         return classes | override_taints
     if _is_web_sourced_tool(tool_name):
         return _web_content_taint_classes(result_value, session_id) | override_taints
+    if _is_doc_read_tool(tool_name):
+        return _doc_content_taint_classes(result_value) | override_taints
     return _classes_from_content(result_value) | override_taints
 
 

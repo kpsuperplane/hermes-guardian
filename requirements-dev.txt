@@ -1,13 +1,16 @@
 # Pinned developer / CI dependencies for Hermes Guardian.
 #
-# The Guardian plugin itself has no runtime dependencies (pure standard-library
-# Python); optional integrations are declared as extras in pyproject.toml. This
-# file pins only what is needed to run the test suite and benchmarks reproducibly
-# in CI and locally.
+# The Guardian plugin has one runtime dependency — phonenumbers (libphonenumber),
+# pinned below and declared in pyproject.toml; everything else is standard-library
+# Python, with optional integrations declared as extras. This file pins what is
+# needed to run the test suite and benchmarks reproducibly in CI and locally.
 #
 # Install with:
 #   pip install -r requirements-dev.txt
 pytest==8.3.4
+
+# Runtime dependency: phone-number taint classification (privacy/tool_policy.py).
+phonenumbers==9.0.32
 
 # Optional at plugin runtime (the host Hermes venv provides it), but the test
 # suite reads host config / model-cache YAML to exercise verifier-model option

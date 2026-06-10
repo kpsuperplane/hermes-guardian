@@ -37,10 +37,17 @@ classifiers = [
     "Topic :: Security",
 ]
 
-# The core plugin is pure standard-library Python and has no runtime
-# dependencies. The extras below document the optional integrations. They are
-# imported lazily with fallbacks, so Guardian (and its test suite) runs without
-# them; install an extra only when you exercise that integration.
+# Phone-number taint classification (privacy/tool_policy.py) uses Google's
+# libphonenumber to tell a real personal line from a placeholder/fictional number
+# (the 555 and drama ranges that fill skill docs) or an inherently public
+# toll-free/premium business line. There is no comparable stdlib facility, so this
+# is a hard runtime dependency.
+dependencies = ["phonenumbers>=8"]
+
+# Apart from the above, the core plugin is standard-library Python. The extras
+# below document optional integrations. They are imported lazily with fallbacks,
+# so Guardian (and its test suite) runs without them; install an extra only when
+# you exercise that integration.
 [project.optional-dependencies]
 # Dashboard plugin API adapter (dashboard/plugin_api.py). In a normal deployment
 # FastAPI is provided by the host Hermes dashboard service; install this only to
@@ -59,4 +66,11 @@ Issues = "https://github.com/kpsuperplane/hermes-guardian/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# Live LLM verifier tests (tests/test_llm_verifier_live.py) hit a real model over
+# the network and are deselected by default; the dedicated CI job re-selects them
+# with `-m llm`. They self-skip unless OPENROUTER_API_KEY + GUARDIAN_LLM_TEST_MODEL
+# are set, so `-m llm` is green (skipped) without credentials.
+addopts = "-q -m 'not llm'"
+markers = [
+    "llm: live tests that call a real model on OpenRouter (deselected by default)",
+]

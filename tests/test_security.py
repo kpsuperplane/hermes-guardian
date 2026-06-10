@@ -369,6 +369,90 @@ def test_transform_tool_result_source_based_taint_classes():
         assert expected in plugin._session_taint("s1")
 
 
+def test_doc_read_placeholder_contacts_do_not_taint():
+    # Skill docs are reference material full of placeholder contact info — example
+    # addresses, sample phone numbers, "Address:" labels, ids that look like phones.
+    # Reading one must not taint `contacts` on those alone (the cross-channel lockdown
+    # keys off such taint, so a false positive would gate unrelated egress all turn).
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    skill_doc = (
+        "# Email CLI skill\n"
+        "Configure your account: `email = \"you@example.com\"`.\n"
+        "Send a test: `send --to support@acme.com`.\n"
+        "Address the failing case first; ping the on-call person.\n"
+        "Webhook deliver-chat-id: 1234567890\n"
+        "Sample SMS: imsg send --to \"+14155551212\" --text \"Hi\"\n"
+        "Support hotline: 1-800-922-8800\n"
+        "Example message template:\n"
+        "From: you@example.com\n"
+        "Subject: Test Message\n"
+    )
+    plugin._on_transform_tool_result(tool_name="skill_view", result=skill_doc, session_id="s1")
+
+    # Placeholders only: a sample 555 number, a chat id that looks like a phone, a toll-free
+    # business line, and a From:/Subject: template documenting the format — none is real
+    # private data, so nothing taints.
+    assert plugin._session_taint("s1") == set()
+    assert plugin._activity_rows({"decision": "tainted"}, limit=10) == []
+
+
+def test_doc_read_real_personal_contact_still_taints():
+    # The placeholder allowlist must not blind the doc path to genuine private data: a
+    # consumer-provider personal address, an SSN, or an email-record block still taint.
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    plugin._on_transform_tool_result(
+        tool_name="skill_view",
+        result="Draft a note to my manager jane.doe@gmail.com about Q3.",
+        session_id="contact",
+    )
+    assert "contacts" in plugin._session_taint("contact")
+
+    plugin._on_transform_tool_result(
+        tool_name="skill_view",
+        result="Applicant SSN on file: 123-45-6789.",
+        session_id="ssn",
+    )
+    assert "documents" in plugin._session_taint("ssn")
+
+    # A structurally real, non-published personal number (valid, not 555, not toll-free) is
+    # genuine contact info even in a doc — checked for a North-American and a foreign number.
+    plugin._on_transform_tool_result(
+        tool_name="skill_view",
+        result="Reach the operator's cell at 415-867-5309 in an emergency.",
+        session_id="phone",
+    )
+    assert "contacts" in plugin._session_taint("phone")
+
+    plugin._on_transform_tool_result(
+        tool_name="skill_view",
+        result="UK contact: +44 7911 123456. FR: +33 6 12 34 56 78.",
+        session_id="intl",
+    )
+    assert "contacts" in plugin._session_taint("intl")
+
+
+def test_doc_read_fake_and_business_phones_global_do_not_taint():
+    # libphonenumber + the fictional-range guard must drop placeholder and public numbers
+    # across locales: NANP 555, UK Ofcom drama (020 7946 0xxx), toll-free, and premium.
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    doc = (
+        "Examples only — never real lines:\n"
+        "US sample: +1 (415) 555-1212\n"
+        "UK drama:  +44 20 7946 0958\n"
+        "Toll-free: 1-800-922-8800\n"
+        "Premium:   1-900-830-0000\n"
+    )
+    plugin._on_transform_tool_result(tool_name="skill_view", result=doc, session_id="fakes")
+
+    assert "contacts" not in plugin._session_taint("fakes")
+
+
 def test_low_risk_terminal_result_does_not_taint_local_system():
     plugin = load_plugin()
     bind_owner(plugin)
