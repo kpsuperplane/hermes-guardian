@@ -300,6 +300,22 @@
   margin-top: 0.45rem;
 }
 
+/* Expand/collapse affordance: a chevron that rotates 90° when its check / turn is open.
+   Scoped with direct-child combinators so a turn's open state doesn't rotate the
+   chevrons of the checks nested inside it. */
+.hermes-guardian-chevron {
+  flex: 0 0 auto;
+  font-size: 0.6rem;
+  line-height: 1;
+  color: var(--color-muted-foreground);
+  transition: transform 0.12s ease;
+}
+
+.hermes-guardian-check-item-open > .hermes-guardian-check-row > .hermes-guardian-chevron,
+.hermes-guardian-turn-card-open > .hermes-guardian-turn-card-head > .hermes-guardian-chevron {
+  transform: rotate(90deg);
+}
+
 .hermes-guardian-activity-detail {
   display: grid;
   grid-template-columns: max-content 1fr;

@@ -405,6 +405,7 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
         onClick={() => setOpen(!open)}
         style={{ cursor: "pointer" }}
       >
+        <span className="hermes-guardian-chevron" aria-hidden="true">▸</span>
         <span className="hermes-guardian-check-target">
           <span className="hermes-guardian-check-tool">{tool}</span>
           <span className="hermes-guardian-check-route hermes-guardian-muted">
@@ -456,14 +457,22 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
 // inside. Rows are already filtered by the caller; an empty turn is never rendered.
 function TurnCard(props: { turn: ActivityTurn; onNavigate: (tab: TabId) => void }) {
   const { turn } = props;
+  const [open, setOpen] = useState(true); // turns are expanded by default; click to collapse
   const rows = turn.rows || [];
   const prompt = text(turn.user_prompt);
   const first = rows[0] || {};
   const when = text(first.time, timeText(turn.ts));
   const n = rows.length;
   return (
-    <div className="hermes-guardian-card hermes-guardian-turn-card">
-      <div className="hermes-guardian-turn-card-head">
+    <div
+      className={"hermes-guardian-card hermes-guardian-turn-card" + (open ? " hermes-guardian-turn-card-open" : "")}
+    >
+      <div
+        className="hermes-guardian-turn-card-head"
+        onClick={() => setOpen(!open)}
+        style={{ cursor: "pointer" }}
+      >
+        <span className="hermes-guardian-chevron" aria-hidden="true">▸</span>
         <div className="hermes-guardian-turn-card-title">
           <span className="hermes-guardian-turn-label">Turn</span>
           {prompt ? (
@@ -476,11 +485,13 @@ function TurnCard(props: { turn: ActivityTurn; onNavigate: (tab: TabId) => void 
           {when + " · " + n + (n === 1 ? " check" : " checks")}
         </div>
       </div>
-      <div className="hermes-guardian-turn-checks">
-        {rows.map((row, index) => (
-          <CheckItem key={row.id || index} row={row} onNavigate={props.onNavigate} />
-        ))}
-      </div>
+      {open ? (
+        <div className="hermes-guardian-turn-checks">
+          {rows.map((row, index) => (
+            <CheckItem key={row.id || index} row={row} onNavigate={props.onNavigate} />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
