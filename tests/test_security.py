@@ -64,6 +64,44 @@ def test_doc_read_tools_do_not_suppress_code_documentation():
     assert notion_result is None
 
 
+def test_doc_read_tools_do_not_suppress_benign_sensitive_link_urls():
+    plugin = load_plugin()
+
+    # Skill docs and MCP resource reads routinely embed benign URLs whose paths contain
+    # security terms (``/verify``, ``/confirm``, OAuth 2FA settings, ...). These are reference
+    # material, not a leak, so doc-read tools skip the "sensitive link" reason on the inbound
+    # read path. (Egress and non-doc reads still suppress them; see the asserts below.)
+    skill_doc = (
+        "# My Skill\n"
+        "To enable, visit https://app.example.com/settings/verify and confirm.\n"
+    )
+    assert plugin._on_transform_tool_result(tool_name="skill_view", result=skill_doc) is None
+    assert plugin._on_transform_tool_result(
+        tool_name="mcp_notion_read_resource",
+        result=json.dumps({"content": skill_doc}),
+    ) is None
+
+    # The carve-out is narrow: account-security content and hard secrets in a doc are STILL
+    # suppressed, and a non-doc inbound read (e.g. email) still suppresses sensitive links.
+    assert plugin._on_transform_tool_result(
+        tool_name="skill_view", result="Your verification code is 123456"
+    ) is not None
+    gmail = plugin._on_transform_tool_result(
+        tool_name="mcp_gmail_read",
+        result="Reset here https://example.com/reset-password?token=abc",
+    )
+    assert gmail is not None
+    assert parse_json(gmail)["hermes_guardian"]["reason"] == "sensitive link"
+
+    # Egress of a sensitive link is unaffected by the inbound carve-out.
+    blocked = plugin._on_pre_tool_call(
+        "send_message",
+        {"text": "https://example.com/reset-password?token=abc"},
+        session_id="s1",
+    )
+    assert blocked is not None and blocked["action"] == "block"
+
+
 def test_inbound_result_allows_api_token_assignments():
     plugin = load_plugin()
 
