@@ -366,6 +366,8 @@ function TurnHeaderRow(props: { group: TurnGroup }) {
 function ActivityRowItem(props: {
   row: ActivityRow;
   index: number;
+  inTurn?: boolean;
+  last?: boolean;
   onNavigate: (tab: TabId) => void;
 }) {
   const { row, onNavigate } = props;
@@ -409,10 +411,17 @@ function ActivityRowItem(props: {
   ];
   if (row.reason) detailPairs.push({ label: "Reason", value: text(row.reason) });
 
+  const nest = props.inTurn ? " hermes-guardian-row-nested" : "";
+  const lastNest = props.inTurn && props.last && !open ? " hermes-guardian-row-nested-last" : "";
   return (
     <React.Fragment>
       <tr
-        className={"hermes-guardian-activity-row" + (open ? " hermes-guardian-activity-row-open" : "")}
+        className={
+          "hermes-guardian-activity-row" +
+          (open ? " hermes-guardian-activity-row-open" : "") +
+          nest +
+          lastNest
+        }
         onClick={() => setOpen(!open)}
         style={{ cursor: "pointer" }}
       >
@@ -445,7 +454,13 @@ function ActivityRowItem(props: {
         </td>
       </tr>
       {open ? (
-        <tr className="hermes-guardian-activity-detail-row">
+        <tr
+          className={
+            "hermes-guardian-activity-detail-row" +
+            nest +
+            (props.inTurn && props.last ? " hermes-guardian-row-nested-last" : "")
+          }
+        >
           <td colSpan={5}>
             <dl className="hermes-guardian-activity-detail">
               {detailPairs.map((pair) => (
@@ -585,6 +600,8 @@ export function ActivityTab(props: ActivityTabProps) {
                       key={row.id || group.turnId + ":" + index}
                       row={row}
                       index={index}
+                      inTurn={Boolean(group.turnId)}
+                      last={Boolean(group.turnId) && index === group.rows.length - 1}
                       onNavigate={onNavigate}
                     />
                   ))}

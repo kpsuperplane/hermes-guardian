@@ -186,11 +186,25 @@
   background: color-mix(in srgb, var(--color-card) 88%, transparent);
 }
 
-/* Turn group header: one per user prompt, spanning the table. */
+/* Turn group header: one per user prompt, spanning the table. It opens a nested
+   block — an accent rail runs down the left of the header and its member rows. */
 .hermes-guardian-turn-header > td {
   background: color-mix(in srgb, var(--color-muted) 45%, transparent);
   border-top: 2px solid var(--color-border);
+  border-left: 3px solid color-mix(in srgb, var(--color-ring) 60%, var(--color-border));
   padding: 0.45rem 0.75rem;
+}
+
+/* A turn's member rows sit nested under the header: the left rail continues and the
+   first cell is indented so the rows read as children of the turn above them. */
+.hermes-guardian-row-nested > td:first-child {
+  border-left: 3px solid color-mix(in srgb, var(--color-ring) 60%, var(--color-border));
+  padding-left: 1.6rem;
+}
+
+/* Close the block under the last row of the turn. */
+.hermes-guardian-row-nested-last > td {
+  border-bottom: 2px solid var(--color-border);
 }
 
 .hermes-guardian-turn-head {
