@@ -47,6 +47,19 @@ def test_llm_verdict_schema_uses_distinct_authorization_labels():
     assert "User authorization:" not in plugin._LLM_POLICY_INSTRUCTIONS
 
 
+def test_instructions_treat_browser_form_fill_as_channel_consistent_egress():
+    """The verifier must judge a browser form-fill as egress like any other channel —
+    so a private-data form-fill cannot be waved through as a 'reversible UI interaction'
+    (the terminal->browser channel-shop)."""
+    instructions = load_plugin()._LLM_POLICY_INSTRUCTIONS
+    assert "Entering data into a page you do not own IS egress" in instructions
+    assert "browser_type" in instructions
+    # The "reversible UI interaction" off-ramp is explicitly closed, and ratings must be
+    # channel-consistent. (Match within a single wrapped line.)
+    assert "NOT lower the risk of a private-data form-fill" in instructions
+    assert "SAME export must rate the same" in instructions
+
+
 def test_llm_privacy_denial_falls_back_to_manual_approval(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
