@@ -828,6 +828,8 @@ def _policy_snapshot() -> dict[str, Any]:
                     "tool_name": approval.get("tool_name"),
                     "action_family": approval.get("action_family"),
                     "destination": approval.get("destination"),
+                    "destination_trust": _normalize_destination_trust_label(approval.get("destination_trust")),
+                    "decision_step": _normalize_decision_step_label(approval.get("decision_step")),
                     "purpose": approval.get("purpose", "unknown"),
                     "recipient_identity": approval.get("recipient_identity", "none"),
                     "data_classes": sorted(approval.get("data_classes") or []),

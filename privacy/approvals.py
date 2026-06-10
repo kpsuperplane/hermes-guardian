@@ -30,6 +30,9 @@ def _pending_approval_from_row(row: sqlite3.Row) -> dict[str, Any] | None:
         "cron_job_id": str(row["cron_job_id"] or ""),
         "cron_job_name": str(row["cron_job_name"] or ""),
         "reason": str(row["reason"] or ""),
+        "destination_trust": str(row["destination_trust"] or "unknown")
+        if "destination_trust" in row.keys() else "unknown",
+        "decision_step": str(row["decision_step"] or "") if "decision_step" in row.keys() else "",
     }
 
 
@@ -42,7 +45,8 @@ def _load_pending_approvals_from_store_unlocked() -> None:
                 SELECT id, session_id, owner_hash, tool_name, action_family,
                        destination, purpose, recipient_identity, legacy_destination,
                        data_classes, action_detail, fingerprint,
-                       created_at, expires_at, cron_job_id, cron_job_name, reason
+                       created_at, expires_at, cron_job_id, cron_job_name, reason,
+                       destination_trust, decision_step
                 FROM pending_approvals
                 WHERE expires_at > ?
                 """,
@@ -69,7 +73,8 @@ def _pending_approval_from_store_unlocked(approval_id: str) -> dict[str, Any] | 
                 SELECT id, session_id, owner_hash, tool_name, action_family,
                        destination, purpose, recipient_identity, legacy_destination,
                        data_classes, action_detail, fingerprint,
-                       created_at, expires_at, cron_job_id, cron_job_name, reason
+                       created_at, expires_at, cron_job_id, cron_job_name, reason,
+                       destination_trust, decision_step
                 FROM pending_approvals
                 WHERE id = ?
                 """,
@@ -91,9 +96,10 @@ def _save_pending_approval_to_store_unlocked(approval: dict[str, Any]) -> None:
                     id, session_id, owner_hash, tool_name, action_family,
                     destination, purpose, recipient_identity, legacy_destination,
                     data_classes, action_detail, fingerprint,
-                    created_at, expires_at, cron_job_id, cron_job_name, reason
+                    created_at, expires_at, cron_job_id, cron_job_name, reason,
+                    destination_trust, decision_step
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(approval.get("id") or ""),
@@ -119,6 +125,8 @@ def _save_pending_approval_to_store_unlocked(approval: dict[str, Any]) -> None:
                     str(approval.get("cron_job_id") or ""),
                     str(approval.get("cron_job_name") or ""),
                     str(approval.get("reason") or "")[:1000],
+                    _normalize_destination_trust_label(approval.get("destination_trust")),
+                    _normalize_decision_step_label(approval.get("decision_step")),
                 ),
             )
     except Exception as exc:
@@ -256,6 +264,10 @@ def _create_pending_approval(shape: dict[str, Any]) -> dict[str, Any]:
         "cron_job_id": cron_job_id,
         "cron_job_name": cron_job_name,
         "reason": "",
+        # Resolved at decision time (doc 03 §3.2) so a pending block carries its trust
+        # pill + decide() step into the dashboard. Metadata-only (enum label + step name).
+        "destination_trust": _normalize_destination_trust_label(shape.get("destination_trust")),
+        "decision_step": _normalize_decision_step_label(shape.get("decision_step")),
     }
     with _LOCK:
         _load_pending_approvals_from_store_unlocked()

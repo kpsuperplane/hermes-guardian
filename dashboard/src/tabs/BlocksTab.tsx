@@ -1,6 +1,7 @@
 import { React } from "@/sdk";
 import { Button } from "@/components/Button";
-import { classesText, text, timeText } from "@/lib/format";
+import { TrustPill } from "@/components/TrustPill";
+import { classesText, decisionStepText, text, timeText } from "@/lib/format";
 import type { RecentBlock } from "@/types";
 
 export type ApprovalAction = "approve-once" | "approve-always" | "dismiss";
@@ -106,6 +107,7 @@ export function BlocksTab({ blocks, onApprovalAction }: BlocksTabProps) {
                 <div>
                   <div className="hermes-guardian-block-title">
                     {text(block.action_family) + " -> " + text(block.destination)}
+                    <TrustPill trust={block.destination_trust} />
                   </div>
                   <div className="hermes-guardian-rule-subline">
                     {blockId ? (
@@ -164,6 +166,11 @@ export function BlocksTab({ blocks, onApprovalAction }: BlocksTabProps) {
                   <span title={staleTitle}>{staleApprovalText(block)}</span>
                 ) : null}
                 <span>{"Reason " + text(block.reason, "n/a")}</span>
+                {block.decision_step ? (
+                  <span title="Which decide() step produced this outcome">
+                    {"Decision " + decisionStepText(block.decision_step)}
+                  </span>
+                ) : null}
               </div>
             </div>
           );

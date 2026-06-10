@@ -129,7 +129,9 @@ def _ensure_activity_db() -> None:
                         reason TEXT NOT NULL DEFAULT '',
                         purpose TEXT NOT NULL DEFAULT 'unknown',
                         recipient_identity TEXT NOT NULL DEFAULT 'none',
-                        legacy_destination TEXT NOT NULL DEFAULT ''
+                        legacy_destination TEXT NOT NULL DEFAULT '',
+                        destination_trust TEXT NOT NULL DEFAULT 'unknown',
+                        decision_step TEXT NOT NULL DEFAULT ''
                     )
                     """
                 )
@@ -149,6 +151,12 @@ def _ensure_activity_db() -> None:
                     conn.execute("ALTER TABLE pending_approvals ADD COLUMN recipient_identity TEXT NOT NULL DEFAULT 'none'")
                 if "legacy_destination" not in pending_columns:
                     conn.execute("ALTER TABLE pending_approvals ADD COLUMN legacy_destination TEXT NOT NULL DEFAULT ''")
+                # destination_trust/decision_step (doc 03 §3.2) so a pending block keeps its
+                # trust pill + decision step across a gateway restart, not just in memory.
+                if "destination_trust" not in pending_columns:
+                    conn.execute("ALTER TABLE pending_approvals ADD COLUMN destination_trust TEXT NOT NULL DEFAULT 'unknown'")
+                if "decision_step" not in pending_columns:
+                    conn.execute("ALTER TABLE pending_approvals ADD COLUMN decision_step TEXT NOT NULL DEFAULT ''")
                 conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_session_idx ON pending_approvals(session_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_expires_idx ON pending_approvals(expires_at)")
                 conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_cron_job_idx ON pending_approvals(cron_job_id)")

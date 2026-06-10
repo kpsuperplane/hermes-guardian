@@ -47,6 +47,8 @@ export interface RecentBlock {
   decision?: string;
   action_family?: string;
   destination?: string;
+  destination_trust?: string;
+  decision_step?: string;
   tool_name?: string;
   module?: string;
   data_classes?: string[] | string;
@@ -65,6 +67,8 @@ export interface ActivityRow {
   tool?: string;
   action_family?: string;
   destination?: string;
+  destination_trust?: string;
+  decision_step?: string;
   purpose?: string;
   recipient_identity?: string;
   data_classes?: string;

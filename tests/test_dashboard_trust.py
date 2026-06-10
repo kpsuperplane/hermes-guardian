@@ -137,3 +137,44 @@ def test_policy_snapshot_exposes_destination_trust_summary():
     summary = snapshot["destination_trust"]
     for key in ("tally", "self", "trusted_recipients", "outward_sharing", "self_grants_present"):
         assert key in summary
+
+
+# --- Commit 1: a pending block carries the trust pill + decision step (doc 03 §3.2). ---
+def test_pending_block_snapshot_carries_trust_and_decision_step():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+
+    result = plugin._on_pre_tool_call(
+        tool_name="send_message",
+        args={"to": "stranger@example.com", "text": "hi"},
+        session_id="s1",
+    )
+    assert result is not None and result.get("action") == "block"
+
+    pending = plugin._policy_snapshot()["pending"]
+    assert pending, "expected a pending approval for the gated external send"
+    block = pending[0]
+    # External boundary crossing → step6, trust=external (the warning pill in the UI).
+    assert block["destination_trust"] == "external"
+    assert block["decision_step"] == "step6_approve_external"
+
+
+def test_pending_block_trust_survives_store_reload():
+    """A gateway restart reloads pending approvals from SQLite; the trust pill + step must
+    survive (Commit 1 persists them as columns, not in-memory only)."""
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    plugin._on_pre_tool_call(
+        tool_name="send_message",
+        args={"to": "stranger@example.com", "text": "hi"},
+        session_id="s1",
+    )
+    # Drop the in-memory cache and reload purely from the store, as a restart would.
+    plugin._PENDING_APPROVALS.clear()
+    plugin._load_pending_approvals_from_store_unlocked()
+    reloaded = list(plugin._PENDING_APPROVALS.values())
+    assert reloaded, "pending approval should reload from the store"
+    assert reloaded[0]["destination_trust"] == "external"
+    assert reloaded[0]["decision_step"] == "step6_approve_external"

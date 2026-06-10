@@ -1,7 +1,8 @@
 import { React } from "@/sdk";
 import { Button } from "@/components/Button";
+import { TrustPill } from "@/components/TrustPill";
 import { HISTORY_PAGE_SIZES } from "@/constants";
-import { text, timeText } from "@/lib/format";
+import { decisionStepText, text, timeText } from "@/lib/format";
 import type { ActivityRow } from "@/types";
 
 export interface HistoryTabProps {
@@ -21,10 +22,16 @@ function historyTargetCell(row: ActivityRow) {
   const destination = text(row.destination, "n/a");
   const purpose = text(row.purpose);
   const recipient = text(row.recipient_identity);
+  // Reads taint the session but never egress, so destination trust isn't meaningful
+  // for them — only show the pill on outbound (non-read) rows.
+  const isRead = text(row.decision) === "read" || text(row.decision) === "tainted";
   return (
     <div className="hermes-guardian-history-target">
       <div className="hermes-guardian-history-tool">{tool}</div>
-      <div className="hermes-guardian-history-route">{action + " -> " + destination}</div>
+      <div className="hermes-guardian-history-route">
+        {action + " -> " + destination}
+        {!isRead && row.destination_trust ? <TrustPill trust={row.destination_trust} /> : null}
+      </div>
       {purpose || recipient ? (
         <div className="hermes-guardian-muted">
           {"purpose " + text(purpose, "unknown") + " recipient " + text(recipient, "none")}
@@ -37,12 +44,24 @@ function historyTargetCell(row: ActivityRow) {
 function historyReasonCell(row: ActivityRow): React.ReactNode {
   const full = text(row.reason || row.reason_short);
   const short = text(row.reason_short || row.reason);
-  if (!full || full === short) return full;
+  const step = decisionStepText(row.decision_step);
+  const reason =
+    !full || full === short ? (
+      full
+    ) : (
+      <details className="hermes-guardian-history-reason" title={full}>
+        <summary>{short}</summary>
+        <div className="hermes-guardian-history-reason-full">{full}</div>
+      </details>
+    );
+  if (!step) return reason;
   return (
-    <details className="hermes-guardian-history-reason" title={full}>
-      <summary>{short}</summary>
-      <div className="hermes-guardian-history-reason-full">{full}</div>
-    </details>
+    <div className="hermes-guardian-history-reason-cell">
+      <div>{reason}</div>
+      <div className="hermes-guardian-muted" title="Which decide() step produced this outcome">
+        {step}
+      </div>
+    </div>
   );
 }
 
