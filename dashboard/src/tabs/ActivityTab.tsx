@@ -375,7 +375,7 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
     { label: "Direction", value: isRead ? "read" : "write" },
     {
       label: "Destination",
-      value: destination + " (" + text(row.destination_trust, "unknown") + ")",
+      value: destination + (taints.length > 0 ? " (" + text(row.destination_trust, "unknown") + ")" : ""),
     },
     { label: "Purpose", value: text(row.purpose, "unknown") },
     { label: "Recipient", value: text(row.recipient_identity, "none") },
@@ -414,7 +414,12 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
         <span className="hermes-guardian-check-decision" title={text(row.decision)}>
           {decisionEmoji(row)}
         </span>
-        {!isRead && row.destination_trust ? <TrustPill trust={row.destination_trust} /> : null}
+        {/* Trust is only resolved when private data is in scope; for reads / no-private-data
+           allows it defaults to "unknown" (not evaluated), so only show the pill when the
+           check actually carried a taint — where the trust level is meaningful. */}
+        {!isRead && taints.length > 0 && row.destination_trust ? (
+          <TrustPill trust={row.destination_trust} />
+        ) : null}
         {taints.length ? (
           <span className="hermes-guardian-chips hermes-guardian-history-taint-chips">
             {taints.map((cls) => (
