@@ -186,7 +186,7 @@ def test_dashboard_rule_delete_action_removes_persistent_rule(tmp_path):
     assert payload["ok"] is True
     assert "Deleted privacy rule rule_delete_me" in payload["message"]
     data = json.loads((tmp_path / "rules.json").read_text())
-    assert [rule["id"] for rule in data["privacy"]["rules"]] == ["rule_keep"]
+    assert [rule["id"] for rule in data["sharing"]["rules"]] == ["rule_keep"]
     assert [rule["rule_id"] for rule in payload["policy"]["rules"]] == ["rule_keep"]
 
 

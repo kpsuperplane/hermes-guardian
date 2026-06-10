@@ -38,11 +38,12 @@ def test_settings_persist_and_preserve_other_privacy_config(tmp_path):
     assert plugin._set_privacy_mode("strict")[0]
 
     data = json.loads((tmp_path / "rules.json").read_text())
-    privacy = data["privacy"]
-    assert privacy["llm_user_context"] is False
-    assert privacy["llm_cron_context"] is True
-    assert privacy["unknown_tools"] == "allow"
-    assert privacy["mode"] == "strict"
+    # v4 on-disk: the review block carries mode + context flags + unknown-tools.
+    review = data["review"]
+    assert review["owner_context"] is False
+    assert review["cron_context"] is True
+    assert review["unknown_tools"] == "allow"
+    assert review["mode"] == "strict"
     assert plugin._llm_user_context_enabled() is False
     assert plugin._llm_cron_context_enabled() is True
 
@@ -50,9 +51,10 @@ def test_settings_persist_and_preserve_other_privacy_config(tmp_path):
 def test_normalization_coerces_loose_values(tmp_path):
     plugin = load_plugin()
     path = tmp_path / "rules.json"
+    # v4 review block; loose string booleans normalize via _config_bool.
     path.write_text(json.dumps({
-        "version": 1,
-        "privacy": {"mode": "llm", "llm_user_context": "off", "llm_cron_context": "yes"},
+        "version": 4,
+        "review": {"mode": "llm", "owner_context": "off", "cron_context": "yes"},
     }))
     plugin._PERSISTENT_RULES_PATH = path
     plugin._PERSISTENT_RULES_CACHE = None
@@ -65,9 +67,11 @@ def test_normalization_coerces_loose_values(tmp_path):
 def test_invalid_context_value_is_rejected_to_fail_closed(tmp_path):
     plugin = load_plugin()
     path = tmp_path / "rules.json"
+    # A hard-typed review.cron_context (an object) is rejected at validation so the
+    # whole document fails closed to strict rather than silently coercing.
     path.write_text(json.dumps({
-        "version": 1,
-        "privacy": {"mode": "llm", "llm_cron_context": {"unexpected": "object"}},
+        "version": 4,
+        "review": {"mode": "llm", "cron_context": {"unexpected": "object"}},
     }))
     plugin._PERSISTENT_RULES_PATH = path
     plugin._PERSISTENT_RULES_CACHE = None

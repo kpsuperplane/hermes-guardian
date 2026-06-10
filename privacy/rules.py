@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-_PRIVACY_RULE_FILE_VERSION = 3
+_PRIVACY_RULE_FILE_VERSION = 4
 _DEFAULT_PRIVACY_MODE = "llm"
 _PRIVACY_MODES = {"strict", "read-only", "llm", "off"}
 _DEFAULT_UNKNOWN_TOOLS = "gate"
@@ -191,9 +191,16 @@ def _normalize_retention_config(raw: Any) -> dict[str, Any]:
 
 
 def _normalize_dashboard_config(raw: Any) -> dict[str, Any]:
-    """Normalize the ``dashboard`` block (doc 03 §1.2), fail closed to defaults."""
+    """Normalize the runtime/dashboard block, fail closed to defaults.
+
+    Reads the v4 ``protection.runtime`` key ``dashboard_mutations`` (doc 04 §2) and
+    the internal ``mutations`` alias so the internal structure is identical whether
+    sourced from the on-disk file or an in-memory mutation.
+    """
     block = raw if isinstance(raw, dict) else {}
-    mutations = str(block.get("mutations") or _DEFAULT_DASHBOARD_MUTATIONS).strip().lower()
+    mutations = str(
+        block.get("dashboard_mutations") or block.get("mutations") or _DEFAULT_DASHBOARD_MUTATIONS
+    ).strip().lower()
     if mutations not in {"auto", "on", "off"}:
         mutations = _DEFAULT_DASHBOARD_MUTATIONS
     token_env = str(block.get("admin_token_env") or _DEFAULT_DASHBOARD_ADMIN_TOKEN_ENV).strip()
@@ -443,7 +450,8 @@ def _normalize_trusted_recipient_entry(entry: Any) -> dict[str, Any] | None:
     if not identity:
         return None
     classes = _normalize_rule_classes(entry.get("classes", entry.get("class", ["*"])))
-    return {"identity": identity, "classes": classes or ["*"]}
+    note = re.sub(r"\s+", " ", str(entry.get("note") or "")).strip()[:200]
+    return {"identity": identity, "classes": classes or ["*"], "note": note}
 
 
 def _normalize_trusted_recipients(raw: Any) -> dict[str, Any]:
@@ -514,13 +522,17 @@ def _normalize_language_pack_ids(raw: Any = None) -> list[str]:
         normalized = list(_language._enabled_pack_ids(",".join(str(item) for item in raw)))
     else:
         normalized = list(_language._enabled_pack_ids(str(raw or "")))
-    ids: list[str] = []
-    for pack_id in normalized:
-        if pack_id in available and pack_id not in ids:
-            ids.append(pack_id)
-    if "en" in available and "en" not in ids:
-        ids.insert(0, "en")
-    return ids or ["en"]
+    selected: set[str] = {pack_id for pack_id in normalized if pack_id in available}
+    if "en" in available:
+        selected.add("en")
+    # Emit in a CANONICAL order (the available-pack definition order, `en` first) so the
+    # result is independent of the input order. This keeps the internal structure stable
+    # across a v4 round-trip, where `sort_keys=True` serialization reorders the on-disk
+    # toggle map and would otherwise leak an alphabetical ordering back into `enabled`.
+    ordered = (["en"] if "en" in selected else []) + [
+        pack_id for pack_id in available if pack_id != "en" and pack_id in selected
+    ]
+    return ordered or ["en"]
 
 
 def _default_language_pack_config() -> dict[str, Any]:
@@ -600,83 +612,230 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
     return normalized
 
 
-def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
-    default = _default_privacy_config()
+# --- v4 five-block schema (refactor doc 04) ----------------------------------
+# The ON-DISK policy file is organized into the five IA concepts, in `decide`
+# order: `whats_yours`, `sharing`, `review`, `protection`, plus `version`/meta.
+# (Activity has no configuration.) The loader parses these blocks DIRECTLY into
+# the unchanged internal in-memory structure the engine already consumes — only
+# this parsing front-end is aware of the file shape. There is no back-compat:
+# old-shape files are not migrated; they surface as the normal fail-closed path.
+#
+# The conceptual correspondence (doc 04 §3), file block -> internal key:
+#   whats_yours.stores/.identities/.hosts -> self.destinations/.identities/.hosts
+#   sharing.trusted_recipients            -> trusted_recipients.entries
+#   sharing.rules                         -> privacy.rules
+#   sharing.outward.extra                 -> outward_sharing.extra (builtin code-owned)
+#   review.mode/.owner_context/.cron_context/.verifier_model/.unknown_tools
+#                                         -> privacy.mode/.llm_user_context/...
+#   protection.security                   -> security.rules
+#   protection.tools                      -> privacy.tools
+#   protection.language_packs             -> language_packs.enabled
+#   protection.retention                  -> retention
+#   protection.runtime                    -> dashboard
+#
+# `review.allow_model_override` is accepted (and ignored) for forward-compat: the
+# model-override grant lives host-side in config.yaml, not in this document, so it
+# has no internal consumer. The loader never branches on `version`.
+_V4_TOP_LEVEL_BLOCKS = ("whats_yours", "sharing", "review", "protection")
+
+
+def _looks_like_v4_config(parsed: Any) -> bool:
+    """True iff ``parsed`` is recognizably a v4 five-block document.
+
+    A wholly empty object is treated as v4 (every block fills from safe defaults).
+    A document carrying ONLY old-shape top-level keys (``privacy`` / ``self`` /
+    ``trusted_recipients`` / ``outward_sharing`` / ``language_packs`` / ``retention`` /
+    ``dashboard`` and no v4 block) is an old-shape file and is rejected so it fails
+    closed to strict rather than silently half-loading. ``version``/``security`` are
+    ambiguous (present in both), so they don't count toward recognition.
+    """
     if not isinstance(parsed, dict):
-        return default
-    privacy = parsed.get("privacy")
-    if not isinstance(privacy, dict):
-        privacy = {}
-    security = parsed.get("security") if isinstance(parsed.get("security"), dict) else {}
-    language_packs = parsed.get("language_packs") if isinstance(parsed.get("language_packs"), dict) else {}
-    normalized_rules = [
-        normalized
-        for normalized in (_normalize_privacy_rule(rule) for rule in privacy.get("rules", []))
-        if normalized is not None
-    ]
+        return False
+    if any(block in parsed for block in _V4_TOP_LEVEL_BLOCKS):
+        return True
+    legacy_keys = (
+        "privacy",
+        "self",
+        "trusted_recipients",
+        "outward_sharing",
+        "language_packs",
+        "retention",
+        "dashboard",
+    )
+    if any(key in parsed for key in legacy_keys):
+        return False
+    # No v4 blocks and no old-shape keys: an empty/meta-only object. Treat as v4 so
+    # the safe defaults seed every block (a bare `{"version": 4}` is a valid file).
+    return True
+
+
+def _v4_whats_yours_to_self(raw: Any) -> dict[str, Any]:
+    """Parse the v4 ``whats_yours`` block into the internal ``self`` structure.
+
+    `stores` maps to the internal `destinations` allowlist; `identities`/`hosts`
+    pass through. Reuses `_normalize_self_config` so the same fail-closed / safe-seed
+    semantics apply (a non-dict or missing block -> default stores + empty id/hosts).
+    """
+    block = raw if isinstance(raw, dict) else {}
+    return _normalize_self_config(
+        {
+            "destinations": block.get("stores"),
+            "identities": block.get("identities"),
+            "hosts": block.get("hosts"),
+        }
+        if isinstance(raw, dict)
+        else raw
+    )
+
+
+def _v4_sharing_rules(raw: Any) -> list[dict[str, Any]]:
+    """Parse the v4 ``sharing.rules`` list into internal privacy rules, fail closed.
+
+    A malformed (non-list) ``sharing.rules`` drops to an empty rule list (doc 04 §5.3);
+    individual malformed entries are dropped by `_normalize_privacy_rule`.
+    """
+    items = raw if isinstance(raw, list) else []
+    out: list[dict[str, Any]] = []
+    for entry in items:
+        normalized = _normalize_privacy_rule(entry)
+        if normalized is not None:
+            out.append(normalized)
+    return out
+
+
+def _v4_outward_extra(raw: Any) -> dict[str, Any]:
+    """Parse the v4 ``sharing.outward`` block; builtin subtypes stay code-owned.
+
+    Only ``extra`` is honored as an ADD; the builtin set is never narrowable and is
+    never read from config (doc 04 §3/§5.5). `_normalize_outward_sharing` enforces
+    both — an operator-supplied ``builtin`` only contributes non-builtin additions.
+    """
+    block = raw if isinstance(raw, dict) else {}
+    return _normalize_outward_sharing({"extra": block.get("extra"), "builtin": block.get("builtin")})
+
+
+def _v4_protection_security_to_rules(raw: Any) -> list[dict[str, Any]]:
+    """Parse the v4 ``protection.security`` toggle MAP into internal rule entries.
+
+    The v4 shape is ``{rule_id: bool, ...}`` (doc 04 §2). A list of ``{id, enabled}``
+    objects is also accepted (the internal shape) so a round-tripped document still
+    loads. Unknown ids are dropped; missing ids default to their safe default-enabled.
+    """
+    if isinstance(raw, dict):
+        rules = [{"id": rid, "enabled": enabled} for rid, enabled in raw.items()]
+    elif isinstance(raw, list):
+        rules = raw
+    else:
+        rules = []
+    return _normalize_security_rules(rules)
+
+
+def _v4_protection_language_packs(raw: Any) -> dict[str, Any]:
+    """Parse the v4 ``protection.language_packs`` toggle MAP into the internal block.
+
+    The v4 shape is ``{pack_id: bool, ...}`` (doc 04 §2): a pack is enabled iff its
+    value is truthy. English is always kept available. An ``{"enabled": [...]}`` list
+    (the internal shape) is also accepted for round-trip stability.
+    """
+    if isinstance(raw, dict) and "enabled" in raw:
+        return _normalize_language_pack_config(raw)
+    if isinstance(raw, dict):
+        enabled = [pack_id for pack_id, on in raw.items() if _config_bool(on, default=False)]
+        return _normalize_language_pack_config({"enabled": enabled})
+    return _default_language_pack_config()
+
+
+def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
+    """Parse the on-disk v4 five-block schema into the internal engine structure.
+
+    The internal structure is byte-for-byte the same one the engine consumed before
+    the reshape — only the parsing of the file changed. An object that is not a
+    recognizable v4 document (e.g. an old-shape file) raises ``ValueError`` so the
+    caller fails closed to strict with a clear log line, rather than half-loading.
+    """
+    if not _looks_like_v4_config(parsed):
+        raise ValueError(
+            "unrecognized config shape — re-author per the v4 schema "
+            "(whats_yours / sharing / review / protection)"
+        )
+    whats_yours = parsed.get("whats_yours")
+    sharing = parsed.get("sharing") if isinstance(parsed.get("sharing"), dict) else {}
+    review = parsed.get("review") if isinstance(parsed.get("review"), dict) else {}
+    protection = parsed.get("protection") if isinstance(parsed.get("protection"), dict) else {}
     return {
         "version": _PRIVACY_RULE_FILE_VERSION,
+        # 4 — REVIEW: case-by-case judgment (decide step 6).
         "privacy": {
-            "mode": _normalize_privacy_mode(privacy.get("mode")),
-            "unknown_tools": _normalize_unknown_tools_mode(privacy.get("unknown_tools")),
+            "mode": _normalize_privacy_mode(review.get("mode")),
+            "unknown_tools": _normalize_unknown_tools_mode(review.get("unknown_tools")),
             "llm_user_context": _config_bool(
-                privacy.get("llm_user_context"), default=_DEFAULT_LLM_USER_CONTEXT
+                review.get("owner_context"), default=_DEFAULT_LLM_USER_CONTEXT
             ),
             "llm_cron_context": _config_bool(
-                privacy.get("llm_cron_context"), default=_DEFAULT_LLM_CRON_CONTEXT
+                review.get("cron_context"), default=_DEFAULT_LLM_CRON_CONTEXT
             ),
-            "llm_verifier_model": _normalize_verifier_model(privacy.get("llm_verifier_model")),
-            "rules": normalized_rules,
-            "tools": _normalize_tool_overrides(privacy.get("tools")),
+            "llm_verifier_model": _normalize_verifier_model(review.get("verifier_model")),
+            # 3 — SHARING: standing authorization (decide step 5).
+            "rules": _v4_sharing_rules(sharing.get("rules")),
+            # 5 — PROTECTION: tool classification overrides (engine plumbing).
+            "tools": _normalize_tool_overrides(protection.get("tools")),
         },
-        # Destination-trust blocks (doc 01 §4). A version<current config that lacks
-        # these keys gets the safe defaults injected here for free (the normalizers
-        # default a missing/non-dict block to its safe subset).
-        "self": _normalize_self_config(parsed.get("self")),
-        "trusted_recipients": _normalize_trusted_recipients(parsed.get("trusted_recipients")),
-        "outward_sharing": _normalize_outward_sharing(parsed.get("outward_sharing")),
+        # 2 — WHAT'S YOURS: destination trust (decide steps 2–3).
+        "self": _v4_whats_yours_to_self(whats_yours),
+        # 3 — SHARING: trusted recipients + outward-sharing extras (decide step 5).
+        "trusted_recipients": _normalize_trusted_recipients(
+            {"entries": sharing.get("trusted_recipients")}
+        ),
+        "outward_sharing": _v4_outward_extra(sharing.get("outward")),
+        # 5 — PROTECTION: the floor + machinery.
         "security": {
-            "rules": _normalize_security_rules(security.get("rules")),
+            "rules": _v4_protection_security_to_rules(protection.get("security")),
         },
-        "language_packs": _normalize_language_pack_config(language_packs),
-        # Named retention/dashboard blocks fold the env knobs into the document (doc 03
-        # §1.2). A version<3 / absent block normalizes to the defaults here, so an old
-        # config gains them for free. Env vars still override at read time (see
-        # _retention_setting / _dashboard_setting) and are surfaced in `/guardian status`.
-        "retention": _normalize_retention_config(parsed.get("retention")),
-        "dashboard": _normalize_dashboard_config(parsed.get("dashboard")),
+        "language_packs": _v4_protection_language_packs(protection.get("language_packs")),
+        "retention": _normalize_retention_config(protection.get("retention")),
+        "dashboard": _normalize_dashboard_config(protection.get("runtime")),
     }
 
 
 def _validate_persistent_privacy_config(parsed: Any) -> None:
+    """Reject a structurally broken v4 document so the load fails closed to strict.
+
+    Block-level malformations (e.g. a non-list ``sharing.rules``) are NOT fatal here —
+    they drop to their safe default in the normalizer (doc 04 §5.3). This validator
+    only rejects shapes that signal a wholly wrong document: a non-object top level, a
+    non-recognizable (old-shape) file, an invalid ``review.mode``, or a hard-typed
+    ``review`` context flag — each of which must fail closed rather than half-load.
+    """
     if not isinstance(parsed, dict):
         raise ValueError("privacy rule file must be a JSON object")
-    privacy = parsed.get("privacy")
-    if not isinstance(privacy, dict):
-        raise ValueError("privacy rule file missing privacy object")
-    if "mode" in privacy:
-        raw_mode = str(privacy.get("mode") or "").strip().lower().replace("_", "-")
-        if raw_mode not in _PRIVACY_MODES:
-            raise ValueError("privacy rule file has invalid privacy mode")
-    if "rules" in privacy and not isinstance(privacy.get("rules"), list):
-        raise ValueError("privacy rule file privacy.rules must be a list")
-    if "unknown_tools" in privacy:
-        raw_unknown = str(privacy.get("unknown_tools") or "").strip().lower().replace("_", "-").replace("-", "")
-        if raw_unknown not in {"gate", "secure", "block", "allow", "permissive", "off", "legacy"}:
-            raise ValueError("privacy rule file has invalid privacy.unknown_tools")
-    if "tools" in privacy and not isinstance(privacy.get("tools"), list):
-        raise ValueError("privacy rule file privacy.tools must be a list")
-    for context_key in ("llm_user_context", "llm_cron_context"):
-        if context_key in privacy and not isinstance(privacy.get(context_key), (bool, int, str)):
-            raise ValueError(f"privacy rule file has invalid privacy.{context_key}")
-    if "llm_verifier_model" in privacy and not isinstance(privacy.get("llm_verifier_model"), str):
-        raise ValueError("privacy rule file has invalid privacy.llm_verifier_model")
-    security = parsed.get("security")
-    if security is not None:
-        if not isinstance(security, dict):
-            raise ValueError("privacy rule file security must be an object")
-        if "rules" in security and not isinstance(security.get("rules"), list):
-            raise ValueError("privacy rule file security.rules must be a list")
+    if not _looks_like_v4_config(parsed):
+        raise ValueError(
+            "unrecognized config shape — re-author per the v4 schema "
+            "(whats_yours / sharing / review / protection)"
+        )
+    review = parsed.get("review")
+    if review is not None and not isinstance(review, dict):
+        raise ValueError("privacy rule file review must be an object")
+    if isinstance(review, dict):
+        if "mode" in review:
+            raw_mode = str(review.get("mode") or "").strip().lower().replace("_", "-")
+            if raw_mode not in _PRIVACY_MODES:
+                raise ValueError("privacy rule file has invalid review.mode")
+        if "unknown_tools" in review:
+            raw_unknown = (
+                str(review.get("unknown_tools") or "").strip().lower().replace("_", "-").replace("-", "")
+            )
+            if raw_unknown not in {"gate", "secure", "block", "allow", "permissive", "off", "legacy"}:
+                raise ValueError("privacy rule file has invalid review.unknown_tools")
+        for context_key in ("owner_context", "cron_context"):
+            if context_key in review and not isinstance(review.get(context_key), (bool, int, str)):
+                raise ValueError(f"privacy rule file has invalid review.{context_key}")
+        if "verifier_model" in review and not isinstance(review.get("verifier_model"), str):
+            raise ValueError("privacy rule file has invalid review.verifier_model")
+    for block_name in ("sharing", "protection"):
+        block = parsed.get(block_name)
+        if block is not None and not isinstance(block, dict):
+            raise ValueError(f"privacy rule file {block_name} must be an object")
 
 
 def _load_privacy_config() -> dict[str, Any]:
@@ -712,13 +871,137 @@ def _load_privacy_config() -> dict[str, Any]:
         return _PERSISTENT_RULES_CACHE
 
 
+def _normalize_internal_config(data: Any) -> dict[str, Any]:
+    """Normalize the INTERNAL (engine-facing) config structure in place.
+
+    The mutators (`_config_for_save` + the per-block setters) operate on the internal
+    structure, not on the on-disk v4 file. This re-normalizes that internal structure so
+    a save is always clean and idempotent, independent of the on-disk schema. The result
+    is the same internal shape the loader produces; `_serialize_config_to_v4` then encodes
+    it to the v4 file. (Splitting this from `_normalize_privacy_config`, which parses the
+    v4 file, is what lets docs 02/03's mutators stay config-shape-agnostic — doc 04 §4.)
+    """
+    default = _default_privacy_config()
+    if not isinstance(data, dict):
+        return default
+    privacy = data.get("privacy") if isinstance(data.get("privacy"), dict) else {}
+    security = data.get("security") if isinstance(data.get("security"), dict) else {}
+    language_packs = data.get("language_packs") if isinstance(data.get("language_packs"), dict) else {}
+    normalized_rules = [
+        normalized
+        for normalized in (_normalize_privacy_rule(rule) for rule in privacy.get("rules", []))
+        if normalized is not None
+    ]
+    return {
+        "version": _PRIVACY_RULE_FILE_VERSION,
+        "privacy": {
+            "mode": _normalize_privacy_mode(privacy.get("mode")),
+            "unknown_tools": _normalize_unknown_tools_mode(privacy.get("unknown_tools")),
+            "llm_user_context": _config_bool(
+                privacy.get("llm_user_context"), default=_DEFAULT_LLM_USER_CONTEXT
+            ),
+            "llm_cron_context": _config_bool(
+                privacy.get("llm_cron_context"), default=_DEFAULT_LLM_CRON_CONTEXT
+            ),
+            "llm_verifier_model": _normalize_verifier_model(privacy.get("llm_verifier_model")),
+            "rules": normalized_rules,
+            "tools": _normalize_tool_overrides(privacy.get("tools")),
+        },
+        "self": _normalize_self_config(data.get("self")),
+        "trusted_recipients": _normalize_trusted_recipients(data.get("trusted_recipients")),
+        "outward_sharing": _normalize_outward_sharing(data.get("outward_sharing")),
+        "security": {"rules": _normalize_security_rules(security.get("rules"))},
+        "language_packs": _normalize_language_pack_config(language_packs),
+        "retention": _normalize_retention_config(data.get("retention")),
+        "dashboard": _normalize_dashboard_config(data.get("dashboard")),
+    }
+
+
+def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
+    """Encode the internal engine structure to the on-disk v4 five-block schema.
+
+    The inverse of `_normalize_privacy_config`'s parse: the five IA blocks in `decide`
+    order. Security/language-pack toggles are written as the v4 ``{id: bool}`` maps;
+    outward-sharing writes only the operator ``extra`` additions (builtin is code-owned
+    and never serialized). Round-tripping load->serialize->load is the internal-identity
+    floor (doc 04 §5.6).
+    """
+    privacy = internal.get("privacy") if isinstance(internal.get("privacy"), dict) else {}
+    self_block = internal.get("self") if isinstance(internal.get("self"), dict) else {}
+    trusted = internal.get("trusted_recipients") if isinstance(internal.get("trusted_recipients"), dict) else {}
+    outward = internal.get("outward_sharing") if isinstance(internal.get("outward_sharing"), dict) else {}
+    security_rules = (internal.get("security") or {}).get("rules") or []
+    lang = (internal.get("language_packs") or {}).get("enabled") or []
+    retention = internal.get("retention") if isinstance(internal.get("retention"), dict) else {}
+    dashboard = internal.get("dashboard") if isinstance(internal.get("dashboard"), dict) else {}
+    available_packs = _available_language_pack_map()
+    enabled_packs = set(lang)
+    # Serialize the toggle map enabled-first, in the internal `enabled` order, so a
+    # load->serialize->load round-trip preserves order (JSON object keys are ordered;
+    # the v4 parser rebuilds `enabled` from this iteration order). Doc 04 §5.6 floor.
+    ordered_pack_ids = [pack_id for pack_id in lang if pack_id in available_packs]
+    ordered_pack_ids += [pack_id for pack_id in available_packs if pack_id not in enabled_packs]
+    return {
+        "version": _PRIVACY_RULE_FILE_VERSION,
+        "whats_yours": {
+            "stores": list(self_block.get("destinations") or []),
+            "identities": list(self_block.get("identities") or []),
+            "hosts": list(self_block.get("hosts") or []),
+        },
+        "sharing": {
+            "trusted_recipients": [
+                {
+                    "identity": str(entry.get("identity") or ""),
+                    "classes": list(entry.get("classes") or ["*"]),
+                    "note": str(entry.get("note") or ""),
+                }
+                for entry in (trusted.get("entries") or [])
+                if isinstance(entry, dict)
+            ],
+            "rules": list(privacy.get("rules") or []),
+            "outward": {"extra": list(outward.get("extra") or [])},
+        },
+        "review": {
+            "mode": _normalize_privacy_mode(privacy.get("mode")),
+            "owner_context": _config_bool(
+                privacy.get("llm_user_context"), default=_DEFAULT_LLM_USER_CONTEXT
+            ),
+            "cron_context": _config_bool(
+                privacy.get("llm_cron_context"), default=_DEFAULT_LLM_CRON_CONTEXT
+            ),
+            "verifier_model": _normalize_verifier_model(privacy.get("llm_verifier_model")),
+            "unknown_tools": _normalize_unknown_tools_mode(privacy.get("unknown_tools")),
+        },
+        "protection": {
+            "security": {
+                str(rule.get("id")): bool(rule.get("enabled", True))
+                for rule in security_rules
+                if isinstance(rule, dict) and rule.get("id")
+            },
+            "tools": list(privacy.get("tools") or []),
+            "language_packs": {pack_id: (pack_id in enabled_packs) for pack_id in ordered_pack_ids},
+            "retention": {
+                "max_rows": int(retention.get("max_rows", _DEFAULT_RETENTION_MAX_ROWS)),
+                "max_age_days": int(retention.get("max_age_days", _DEFAULT_RETENTION_MAX_AGE_DAYS)),
+            },
+            "runtime": {
+                "dashboard_mutations": str(dashboard.get("mutations") or _DEFAULT_DASHBOARD_MUTATIONS),
+                "admin_token_env": str(
+                    dashboard.get("admin_token_env") or _DEFAULT_DASHBOARD_ADMIN_TOKEN_ENV
+                ),
+            },
+        },
+    }
+
+
 def _save_privacy_config(data: dict[str, Any]) -> bool:
     global _PERSISTENT_RULES_CACHE, _PERSISTENT_RULES_ERROR, _PERSISTENT_RULES_MTIME
-    normalized = _normalize_privacy_config(data)
+    normalized = _normalize_internal_config(data)
+    on_disk = _serialize_config_to_v4(normalized)
     with _LOCK:
         try:
             tmp = _PERSISTENT_RULES_PATH.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(normalized, indent=2, sort_keys=True) + "\n")
+            tmp.write_text(json.dumps(on_disk, indent=2, sort_keys=True) + "\n")
             tmp.replace(_PERSISTENT_RULES_PATH)
             _PERSISTENT_RULES_CACHE = normalized
             _apply_language_pack_config(_PERSISTENT_RULES_CACHE)

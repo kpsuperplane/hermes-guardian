@@ -40,7 +40,7 @@ def test_guardian_rule_delete_slash_alias_removes_persistent_rule(tmp_path):
 
     assert response == "Deleted privacy rule rule_delete_me."
     data = json.loads((tmp_path / "rules.json").read_text())
-    assert [rule["id"] for rule in data["privacy"]["rules"]] == ["rule_keep"]
+    assert [rule["id"] for rule in data["sharing"]["rules"]] == ["rule_keep"]
 
 
 def test_non_owner_slash_cannot_change_global_privacy_mode():
@@ -73,7 +73,7 @@ def test_guardian_rule_add_defaults_platform_slash_to_caller_scope(tmp_path):
 
     assert "Added privacy allow rule" in response
     data = json.loads((tmp_path / "rules.json").read_text())
-    rule = data["privacy"]["rules"][0]
+    rule = data["sharing"]["rules"][0]
     assert rule["scope"]["owner_hash"] == plugin._hash_identity("telegram", "owner")
     assert rule["match"]["data_classes"] == ["communications"]
     assert rule["match"]["purpose"] == "*"
@@ -149,7 +149,7 @@ def test_guardian_rule_move_requires_target_rule_permission(tmp_path):
 
     data = json.loads((tmp_path / "rules.json").read_text())
     assert response == "No matching privacy rule found for move."
-    assert [rule["id"] for rule in data["privacy"]["rules"]] == ["rule_kevin", "rule_other"]
+    assert [rule["id"] for rule in data["sharing"]["rules"]] == ["rule_kevin", "rule_other"]
 
 
 def test_guardian_rules_command_uses_readable_card_format(tmp_path):

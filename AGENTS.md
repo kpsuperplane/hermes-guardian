@@ -181,18 +181,44 @@ the tests/docs are updated accordingly:
 
 ## Policy And State Files
 
-`guardian-rules.json` uses this normalized top-level shape:
+`guardian-rules.json` is organized into the five IA concepts, in `decide` order —
+`whats_yours` → `sharing` → `review` → `protection`, plus `version`/meta (Activity
+is pure output, so it has no config block). The on-disk **v4 schema** is the only
+shape: there is no back-compat, no version detection, and the loader does NOT branch
+on `version`. An old-shape file is not migrated — it fails closed to strict with a
+clear log line (`"unrecognized config shape — re-author per the v4 schema"`) — and is
+re-authored to the schema below.
 
 ```json
 {
-  "version": 1,
-  "privacy": {
-    "mode": "strict",
-    "unknown_tools": "gate",
-    "llm_user_context": true,
-    "llm_cron_context": false,
-    "llm_verifier_model": "",
+  "version": 4,
+  "whats_yours": {
+    "stores": ["store:files", "store:notes", "store:calendar", "store:drive", "draft:*"],
+    "identities": [],
+    "hosts": []
+  },
+  "sharing": {
+    "trusted_recipients": [
+      {"identity": "ally@example.com", "classes": ["communications"], "note": ""}
+    ],
     "rules": [],
+    "outward": {"extra": []}
+  },
+  "review": {
+    "mode": "strict",
+    "owner_context": true,
+    "cron_context": false,
+    "verifier_model": "",
+    "unknown_tools": "gate"
+  },
+  "protection": {
+    "security": {
+      "account_security_content": true,
+      "credential_content": true,
+      "sensitive_links": true,
+      "intrinsic_exfiltration": true,
+      "private_network_reads": true
+    },
     "tools": [
       {
         "id": "tool_ab12cd34",
@@ -203,24 +229,42 @@ the tests/docs are updated accordingly:
         "enabled": true,
         "note": "acme MCP server is a trusted read"
       }
-    ]
-  },
-  "security": {
-    "rules": [
-      {"id": "account_security_content", "enabled": true},
-      {"id": "credential_content", "enabled": true},
-      {"id": "sensitive_links", "enabled": true},
-      {"id": "intrinsic_exfiltration", "enabled": true},
-      {"id": "private_network_reads", "enabled": true}
-    ]
+    ],
+    "language_packs": {"en": true},
+    "retention": {"max_rows": 100, "max_age_days": 7},
+    "runtime": {"dashboard_mutations": "auto"}
   }
 }
 ```
 
-`privacy.unknown_tools` is `gate` (default) or `allow`. In `gate`, an unrecognized
+Internally, `privacy/rules.py` keeps the SAME normalized in-memory structure the
+engine has always consumed (`privacy.{mode,unknown_tools,llm_user_context,
+llm_cron_context,llm_verifier_model,rules,tools}`, `self`, `trusted_recipients`,
+`outward_sharing`, `security.rules`, `language_packs.enabled`, `retention`,
+`dashboard`). Only the parsing front-end changed: `_normalize_privacy_config` parses
+the v4 file into that internal structure, `_serialize_config_to_v4` encodes it back
+out, and `_normalize_internal_config` re-normalizes the internal structure on save.
+`decide`, `classify`, and `resolve_destination_trust` never notice the file reshape.
+The conceptual file→internal map (doc 04 §3): `whats_yours.stores/.identities/.hosts`
+→ `self.destinations/.identities/.hosts`; `sharing.trusted_recipients` →
+`trusted_recipients.entries`; `sharing.rules` → `privacy.rules`;
+`sharing.outward.extra` → `outward_sharing.extra` (builtin subtypes are code-owned and
+never read from / written to config); `review.mode/.owner_context/.cron_context/
+.verifier_model/.unknown_tools` → `privacy.mode/.llm_user_context/.llm_cron_context/
+.llm_verifier_model/.unknown_tools`; `protection.security` (a `{id: bool}` toggle map)
+→ `security.rules`; `protection.tools` → `privacy.tools`; `protection.language_packs`
+(a `{id: bool}` toggle map) → `language_packs.enabled`; `protection.retention` →
+`retention`; `protection.runtime` → `dashboard`.
+
+`review.unknown_tools` is `gate` (default) or `allow`. In `gate`, an unrecognized
 tool (not a known built-in, not covered by a `privacy.tools` override) is classified
 as `tool_unknown` and gated under taint, mirroring `mcp_unknown`. `allow` restores
 the legacy permissive behavior and raises a runtime risk banner.
+
+The key names below (`privacy.tools`, `privacy.llm_*`, `privacy.llm_verifier_model`)
+are the INTERNAL in-memory keys the engine and mutators use; on disk they live under
+the v4 `protection.tools` / `review.owner_context` / `review.cron_context` /
+`review.verifier_model` keys per the file→internal map above.
 
 `privacy.tools` is the user-managed tool override registry. Each entry has a `match`
 (exact tool name or a single trailing-`*` prefix), optional `taints` (source classes

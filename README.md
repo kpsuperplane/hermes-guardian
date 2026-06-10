@@ -186,28 +186,56 @@ Set the mode from a Hermes gateway:
 /guardian review mode llm
 ```
 
-Or edit `guardian-rules.json`:
+Or edit `guardian-rules.json`. The file is organized into the five IA concepts,
+in `decide` order — `whats_yours` → `sharing` → `review` → `protection` (Activity
+is pure output, so it has no config block) — so reading the file is reading the
+decision:
 
 ```json
 {
-  "version": 1,
-  "privacy": {
-    "mode": "llm",
-    "rules": []
+  "version": 4,
+  "whats_yours": {
+    "stores": ["store:files", "store:notes", "store:calendar", "store:drive", "draft:*"],
+    "identities": [],
+    "hosts": []
   },
-  "security": {
-    "rules": [
-      {"id": "account_security_content", "enabled": true},
-      {"id": "credential_content", "enabled": true},
-      {"id": "sensitive_links", "enabled": true},
-      {"id": "intrinsic_exfiltration", "enabled": true},
-      {"id": "private_network_reads", "enabled": true}
-    ]
+  "sharing": {
+    "trusted_recipients": [],
+    "rules": [],
+    "outward": { "extra": [] }
+  },
+  "review": {
+    "mode": "llm",
+    "owner_context": true,
+    "cron_context": false,
+    "verifier_model": "",
+    "unknown_tools": "gate"
+  },
+  "protection": {
+    "security": {
+      "account_security_content": true,
+      "credential_content": true,
+      "sensitive_links": true,
+      "intrinsic_exfiltration": true,
+      "private_network_reads": true
+    },
+    "tools": [],
+    "language_packs": { "en": true },
+    "retention": { "max_rows": 100, "max_age_days": 7 },
+    "runtime": { "dashboard_mutations": "auto" }
   }
 }
 ```
 
-Rule mutation helpers preserve both privacy rules and security rule settings.
+This v4 schema is the only shape: there is no back-compatibility with older files,
+no version detection, and the loader does not branch on `version`. An old-shape
+file is not migrated — it fails closed to strict with a clear log line, and is
+re-authored to the schema above. Any block may be omitted; missing blocks fill
+from safe defaults (`review.mode` defaults to `llm`, `whats_yours.stores` seeds the
+single-operator stores, `sharing` is empty). Outward-sharing builtin subtypes are
+code-owned and never read from config; only `sharing.outward.extra` adds to them.
+Mutations from the dashboard, the slash commands, and direct edits all persist this
+shape, and rule mutation helpers preserve every block.
 
 ### LLM mode details
 
@@ -284,8 +312,8 @@ verdicts briefly per session, so a retried blocked action does not re-pay the
 verifier latency (denials only — a cached deny can never become a false allow).
 Watch the effect in the **Performance** tab.
 
-Both context channels are toggleable, in the dashboard Settings tab, by slash
-command, or directly in `guardian-rules.json` under `privacy`:
+Both context channels are toggleable, in the dashboard Review tab, by slash
+command, or directly in `guardian-rules.json` under `review`:
 
 ```text
 /guardian review owner-context on|off   # default on
@@ -293,7 +321,7 @@ command, or directly in `guardian-rules.json` under `privacy`:
 ```
 
 ```json
-{ "privacy": { "llm_user_context": true, "llm_cron_context": false } }
+{ "review": { "owner_context": true, "cron_context": false } }
 ```
 
 `llm_user_context` (default on) gates the owner channel above. `llm_cron_context`

@@ -177,8 +177,8 @@ def test_approval_always_persists_narrow_rule(tmp_path):
     assert "Approved" in plugin._handle_guardian_command(f"approve {approval_id} always")
 
     data = json.loads((tmp_path / "rules.json").read_text())
-    assert len(data["privacy"]["rules"]) == 1
-    rule = data["privacy"]["rules"][0]
+    assert len(data["sharing"]["rules"]) == 1
+    rule = data["sharing"]["rules"][0]
     assert rule["match"]["destination"] == "messaging"
     assert rule["match"]["action_family"] == "message_send"
     assert rule["match"]["purpose"] == "unknown"
@@ -296,8 +296,8 @@ def test_cron_approval_can_be_approved_from_separate_process(monkeypatch, tmp_pa
         ).fetchone()[0]
     assert count == 0
     data = json.loads(rules_path.read_text())
-    assert data["privacy"]["rules"][0]["match"]["destination"] == "messaging"
-    assert data["privacy"]["rules"][0]["match"]["recipient_identity"] == creator._recipient_identity_from_value("friend")
+    assert data["sharing"]["rules"][0]["match"]["destination"] == "messaging"
+    assert data["sharing"]["rules"][0]["match"]["recipient_identity"] == creator._recipient_identity_from_value("friend")
 
 
 def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
@@ -325,7 +325,7 @@ def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
     assert "Approved message_send" in response
     assert approval_id not in approver._PENDING_APPROVALS
     data = json.loads(rules_path.read_text())
-    rule = data["privacy"]["rules"][0]
+    rule = data["sharing"]["rules"][0]
     assert rule["remaining_invocations"] == 1
     assert rule["scope"]["session_id"] == "s1"
     assert rule["fingerprint"]
@@ -340,7 +340,7 @@ def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
 
     assert runner._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
     data = json.loads(rules_path.read_text())
-    assert data["privacy"]["rules"] == []
+    assert data["sharing"]["rules"] == []
     assert runner._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is not None
 
 
@@ -363,8 +363,8 @@ def test_cron_always_approval_is_scoped_to_same_cron_job(monkeypatch, tmp_path):
 
     assert "always for cron job Example Availability Check (aaaaaaaaaaaa)" in response
     data = json.loads((tmp_path / "rules.json").read_text())
-    assert data["privacy"]["rules"][0]["scope"]["cron_job_id"] == "aaaaaaaaaaaa"
-    assert data["privacy"]["rules"][0]["scope"]["cron_job_name"] == "Example Availability Check"
+    assert data["sharing"]["rules"][0]["scope"]["cron_job_id"] == "aaaaaaaaaaaa"
+    assert data["sharing"]["rules"][0]["scope"]["cron_job_name"] == "Example Availability Check"
     rules_text = plugin._handle_guardian_command("sharing")
     assert "Scope: [Cron] Example Availability Check" in rules_text
     policy = plugin._policy_snapshot()

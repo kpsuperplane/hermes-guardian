@@ -1,9 +1,10 @@
-"""One-policy-document config tests (doc 03 §1, §7 tests 1-3 + carryover fix).
+"""One-policy-document config tests (doc 03 §1 + doc 04 carryover fix).
 
-Covers: back-compat load of a version<3 config (self defaults seeded), fail-closed
-parse of malformed blocks, the non-narrowable outward-sharing builtin, the env-override
-surfacing, and the Phase-1 carryover bug fix (an operator-customized self block must
-survive an unrelated mode/rule save).
+Covers: a partial v4 file filling the rest from safe defaults, fail-closed parse of
+malformed v4 blocks, the non-narrowable outward-sharing builtin, the env-override
+surfacing, and the carryover bug fix (an operator-customized self block must survive
+an unrelated mode/rule save). All config is authored in the v4 five-block schema —
+there is no back-compat with the old key paths.
 
 Per project memory, NO real agent/cron/Telegram identifiers appear here — only
 synthetic placeholders.
@@ -22,31 +23,33 @@ def _write_config(plugin, data: dict) -> None:
     plugin._PERSISTENT_RULES_MTIME = None
 
 
-# --- 1. Back-compat load: a version=2 (or absent) config gains seeded self defaults. --
-def test_version_2_config_loads_with_seeded_self_defaults():
+# --- 1. v4 partial load: a file with only some blocks fills the rest from defaults. ---
+def test_v4_partial_config_fills_defaults():
     plugin = load_plugin()
     _write_config(
         plugin,
         {
-            "version": 2,
-            "privacy": {
+            "version": 4,
+            "review": {
                 "mode": "strict",
-                "rules": [privacy_rule(rule_id="legacy_allow", effect="allow")],
+            },
+            "sharing": {
+                "rules": [privacy_rule(rule_id="rule_allow", effect="allow")],
             },
         },
     )
     config = plugin._load_privacy_config()
-    # No crash; existing rules honored unchanged.
-    assert [r["id"] for r in config["privacy"]["rules"]] == ["legacy_allow"]
-    # self defaults seeded; identities/hosts default EMPTY (back-compat injection).
+    # Authored rule honored unchanged (sharing.rules -> internal privacy.rules).
+    assert [r["id"] for r in config["privacy"]["rules"]] == ["rule_allow"]
+    # whats_yours absent -> self defaults seeded; identities/hosts default EMPTY.
     assert config["self"]["destinations"]  # non-empty default store list
     assert config["self"]["identities"] == []
     assert config["self"]["hosts"] == []
     assert "trusted_recipients" in config and config["trusted_recipients"]["entries"] == []
     assert set(config["outward_sharing"]["builtin"]) == set(plugin._OUTWARD_SHARING_BUILTIN_SUBTYPES)
-    # version is bumped to the current document version on normalize.
-    assert config["version"] == plugin._PRIVACY_RULE_FILE_VERSION == 3
-    # retention / dashboard blocks injected with defaults.
+    # version is the current document version on normalize.
+    assert config["version"] == plugin._PRIVACY_RULE_FILE_VERSION == 4
+    # protection block absent -> retention / dashboard injected with defaults.
     assert config["retention"]["max_rows"] == plugin._DEFAULT_RETENTION_MAX_ROWS
     assert config["dashboard"]["mutations"] == plugin._DEFAULT_DASHBOARD_MUTATIONS
 
@@ -57,10 +60,10 @@ def test_malformed_self_block_drops_to_safe_subset():
     _write_config(
         plugin,
         {
-            "version": 3,
-            "privacy": {"mode": "strict", "rules": []},
-            "self": "not-a-dict",  # wholly malformed self block
-            "outward_sharing": 12345,  # malformed
+            "version": 4,
+            "review": {"mode": "strict"},
+            "whats_yours": "not-a-dict",  # wholly malformed block
+            "sharing": {"outward": 12345},  # malformed outward block
         },
     )
     config = plugin._load_privacy_config()
@@ -88,10 +91,10 @@ def test_outward_sharing_builtin_is_not_narrowable():
     _write_config(
         plugin,
         {
-            "version": 3,
-            "privacy": {"mode": "strict", "rules": []},
+            "version": 4,
+            "review": {"mode": "strict"},
             # operator tries to drop "share" and keep only "invite"; add an extra.
-            "outward_sharing": {"builtin": ["invite"], "extra": ["crosspost"]},
+            "sharing": {"outward": {"builtin": ["invite"], "extra": ["crosspost"]}},
         },
     )
     config = plugin._load_privacy_config()

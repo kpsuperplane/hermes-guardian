@@ -30,7 +30,9 @@ def test_disabling_spanish_language_pack_updates_scanner_and_json(tmp_path):
     assert plugin._sensitive_reason("Restablecer tu contraseña ahora") is None
     assert plugin._sensitive_reason("Reset your password now") == "password reset"
     data = json.loads((tmp_path / "rules.json").read_text())
-    assert data["language_packs"]["enabled"] == [pack_id for pack_id in _ALL_PACK_IDS if pack_id != "es"]
+    # v4 on-disk: protection.language_packs is a {pack_id: bool} toggle map.
+    enabled = {pack_id for pack_id, on in data["protection"]["language_packs"].items() if on}
+    assert enabled == {pack_id for pack_id in _ALL_PACK_IDS if pack_id != "es"}
 
 
 def test_language_pack_can_be_disabled_by_direct_json_edit(tmp_path):
@@ -38,14 +40,13 @@ def test_language_pack_can_be_disabled_by_direct_json_edit(tmp_path):
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin._PERSISTENT_RULES_CACHE = None
     plugin._PERSISTENT_RULES_MTIME = None
+    # v4 five-block schema: only English enabled in protection.language_packs.
     (tmp_path / "rules.json").write_text(json.dumps({
-        "version": 1,
-        "privacy": {
-            "mode": "strict",
-            "rules": [],
-        },
-        "language_packs": {
-            "enabled": ["en"],
+        "version": 4,
+        "review": {"mode": "strict"},
+        "sharing": {"rules": []},
+        "protection": {
+            "language_packs": {"en": True, "es": False},
         },
     }))
 
@@ -67,8 +68,9 @@ def test_privacy_and_security_saves_preserve_language_pack_config(tmp_path):
 
     data = json.loads((tmp_path / "rules.json").read_text())
 
-    assert data["privacy"]["mode"] == "read-only"
-    assert data["language_packs"]["enabled"] == [pack_id for pack_id in _ALL_PACK_IDS if pack_id != "es"]
+    assert data["review"]["mode"] == "read-only"
+    enabled = {pack_id for pack_id, on in data["protection"]["language_packs"].items() if on}
+    assert enabled == {pack_id for pack_id in _ALL_PACK_IDS if pack_id != "es"}
 
 
 def test_english_language_pack_cannot_be_disabled():

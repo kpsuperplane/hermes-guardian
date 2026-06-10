@@ -28,9 +28,11 @@ def test_security_rule_can_be_saved_in_json(tmp_path):
     assert ok is True
     assert "Disabled security rule account_security_content" in message
     data = json.loads((tmp_path / "rules.json").read_text())
-    configured = {rule["id"]: rule["enabled"] for rule in data["security"]["rules"]}
+    # v4 on-disk: protection.security is a {rule_id: bool} toggle map; review.mode
+    # carries the privacy mode.
+    configured = data["protection"]["security"]
     assert configured["account_security_content"] is False
-    assert data["privacy"]["mode"] == "llm"
+    assert data["review"]["mode"] == "llm"
 
 
 def test_security_rule_can_be_disabled_by_direct_json_edit(tmp_path):
@@ -38,19 +40,15 @@ def test_security_rule_can_be_disabled_by_direct_json_edit(tmp_path):
     plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin._PERSISTENT_RULES_CACHE = None
     plugin._PERSISTENT_RULES_MTIME = None
+    # v4 five-block schema: review.mode + protection.security toggle map.
     (tmp_path / "rules.json").write_text(json.dumps({
-        "version": 1,
-        "privacy": {
-            "mode": "strict",
-            "rules": [],
-        },
-        "security": {
-            "rules": [
-                {
-                    "id": "credential_content",
-                    "enabled": "false",
-                }
-            ],
+        "version": 4,
+        "review": {"mode": "strict"},
+        "sharing": {"rules": []},
+        "protection": {
+            "security": {
+                "credential_content": "false",
+            },
         },
     }))
 
@@ -70,9 +68,9 @@ def test_privacy_saves_preserve_security_rules(tmp_path):
     assert plugin._set_privacy_mode("read-only")[0]
 
     data = json.loads((tmp_path / "rules.json").read_text())
-    configured = {rule["id"]: rule["enabled"] for rule in data["security"]["rules"]}
+    configured = data["protection"]["security"]
     assert configured["sensitive_links"] is False
-    assert data["privacy"]["mode"] == "read-only"
+    assert data["review"]["mode"] == "read-only"
 
 
 def test_disabling_account_security_content_allows_semantic_auth_code_but_not_credentials():

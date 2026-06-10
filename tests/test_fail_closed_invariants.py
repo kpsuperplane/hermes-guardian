@@ -74,7 +74,8 @@ def test_corrupt_privacy_policy_file_forces_strict_without_llm_auto_allow(tmp_pa
 def test_malformed_privacy_policy_file_forces_strict(tmp_path):
     plugin = load_plugin()
     rules_path = tmp_path / "guardian-rules.json"
-    rules_path.write_text(json.dumps({"privacy": {"mode": "auto-approve", "rules": []}}))
+    # An invalid v4 review.mode is rejected at validation, forcing fail-closed strict.
+    rules_path.write_text(json.dumps({"version": 4, "review": {"mode": "auto-approve"}}))
     _use_rules_path(plugin, rules_path)
 
     assert plugin._privacy_policy() == "strict"
