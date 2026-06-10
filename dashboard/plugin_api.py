@@ -241,6 +241,11 @@ async def activity_datatables(request: Request) -> dict[str, Any]:
     return _guardian()._activity_datatables_payload(dict(request.query_params))
 
 
+@router.get("/activity/turns")
+async def activity_turns(request: Request) -> dict[str, Any]:
+    return _guardian()._activity_turns_payload(dict(request.query_params))
+
+
 @router.post("/privacy/mode")
 async def set_privacy_mode(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)

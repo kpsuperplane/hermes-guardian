@@ -523,6 +523,96 @@ def _activity_datatables_payload(params: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def _activity_turns_payload(params: dict[str, str]) -> dict[str, Any]:
+    """History grouped by TURN for the dashboard, paginated by turn (not by row), newest
+    first. Each returned turn carries all of its checks so a turn's actions never straddle
+    a page. Legacy rows (turn_id='') are each their own single-check turn. Read-only,
+    metadata-only — reuses the same row shaping as the datatables payload.
+    """
+    def parse_int(name: str, default: int) -> int:
+        try:
+            return int(str(params.get(name, default)).strip())
+        except (TypeError, ValueError):
+            return default
+
+    draw = max(0, parse_int("draw", 0))
+    start = max(0, parse_int("start", 0))
+    length = parse_int("length", 25)
+    if length not in {25, 50, 100}:
+        length = 25
+
+    # Group key: a real turn_id, or a per-row sentinel for legacy/ungrouped rows so each
+    # is its own singleton turn (turn_ids are "turn_<hex>", never "row_<id>").
+    gkey_expr = "COALESCE(NULLIF(turn_id, ''), 'row_' || id)"
+    gkeys: list[str] = []
+    rows_by_gkey: dict[str, list[dict[str, Any]]] = {}
+    total_turns = 0
+    try:
+        _ensure_activity_db()
+        with _activity_connect() as conn:
+            total_turns = int(
+                conn.execute(
+                    f"SELECT COUNT(*) AS n FROM (SELECT 1 FROM activity GROUP BY {gkey_expr})"
+                ).fetchone()["n"]
+            )
+            page = conn.execute(
+                f"SELECT {gkey_expr} AS gkey, MAX(ts) AS mts, MAX(id) AS mid "
+                "FROM activity GROUP BY gkey ORDER BY mts DESC, mid DESC LIMIT ? OFFSET ?",
+                (length, start),
+            ).fetchall()
+            gkeys = [str(r["gkey"]) for r in page]
+            rows_by_gkey = {k: [] for k in gkeys}
+            turn_ids = [k for k in gkeys if not k.startswith("row_")]
+            legacy_ids = [int(k[4:]) for k in gkeys if k.startswith("row_") and k[4:].isdigit()]
+            where: list[str] = []
+            args: list[Any] = []
+            if turn_ids:
+                where.append("turn_id IN (" + ",".join("?" * len(turn_ids)) + ")")
+                args.extend(turn_ids)
+            if legacy_ids:
+                where.append("id IN (" + ",".join("?" * len(legacy_ids)) + ")")
+                args.extend(legacy_ids)
+            if where:
+                fetched = conn.execute(
+                    "SELECT * FROM activity WHERE " + " OR ".join(where) + " ORDER BY ts DESC, id DESC",
+                    args,
+                ).fetchall()
+                for raw in fetched:
+                    row = _activity_row_from_sql(raw)
+                    tid = str(row.get("turn_id") or "")
+                    gkey = tid if tid else ("row_" + str(raw["id"]))
+                    if gkey in rows_by_gkey:
+                        rows_by_gkey[gkey].append(row)
+    except Exception:
+        return {"draw": draw, "recordsTotal": 0, "recordsFiltered": 0, "turns": []}
+
+    turns: list[dict[str, Any]] = []
+    for gkey in gkeys:
+        rows = rows_by_gkey.get(gkey) or []
+        if not rows:
+            continue
+        prompt = ""
+        for row in rows:
+            if str(row.get("user_prompt") or "").strip():
+                prompt = str(row["user_prompt"]).strip()
+                break
+        turns.append(
+            {
+                "turn_id": "" if gkey.startswith("row_") else gkey,
+                "user_prompt": prompt,
+                "ts": max(int(row.get("ts") or 0) for row in rows),
+                "rows": [_activity_datatables_row(row) for row in rows],
+            }
+        )
+
+    return {
+        "draw": draw,
+        "recordsTotal": total_turns,
+        "recordsFiltered": total_turns,
+        "turns": turns,
+    }
+
+
 def _activity_group_key(row: dict[str, Any]) -> tuple[str, ...]:
     return (
         str(row.get("decision") or ""),

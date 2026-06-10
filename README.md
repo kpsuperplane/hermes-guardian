@@ -714,14 +714,15 @@ Dashboard tabs follow the five-concept IA, in `decide` order — reading the nav
 left-to-right is reading the decision pipeline top-to-bottom (what happened → is it
 mine → is it covered by a grant → who judges the rest → the floor):
 
-- **Activity**: the merged decided stream (blocks + history) **grouped by turn** (one
-  user prompt and the actions it drove), plus a pinned *Pending approvals* list with
-  same-screen Approve / Dismiss, a session **taint strip** with *Clear session taint*,
-  per-row **trust pills**, and a **deep-linked decision step** whose clauses jump to the
-  tab that governs them. Filters: decision, trust, class/tag, tool, destination,
-  recipient, date range, and search; rows expand to the full resolved capability (the
-  dashboard twin of `/guardian why`). Each turn header shows the prompt that drove it
-  when prompt persistence is enabled (see Protection).
+- **Activity**: the decided stream as **turn cards** — each card is one turn (one user
+  prompt and the checks it drove), paginated by turn, with its checks nested inside and
+  expandable to the full resolved capability (the dashboard twin of `/guardian why`).
+  Plus a pinned *Pending approvals* list with same-screen Approve / Dismiss, a session
+  **taint strip** with *Clear session taint*, per-check **trust pills**, and
+  **deep-linked decision steps** whose clauses jump to the tab that governs them.
+  Filters (decision, trust, class/tag, tool, destination, recipient, date range, search)
+  narrow the checks within each card. Each card header shows the prompt that drove the
+  turn when prompt persistence is enabled (the Debugging toggle on this tab).
 - **What's Yours**: the self side of the boundary — a *Seen recently* list bucketed by
   trust with a one-click "this is mine → add to self", the self-allowlist (stores /
   identities / hosts), a grant banner when identities/hosts are set, and a *Check a

@@ -183,8 +183,18 @@ export interface Policy {
 
 export interface HistoryResponse {
   data?: ActivityRow[];
+  turns?: ActivityTurn[];
   recordsFiltered?: number;
   recordsTotal?: number;
+}
+
+// A turn: one user prompt and all the checks it drove. turn_id is "" for legacy
+// (pre-feature) singleton rows; user_prompt is present only when persistence is on.
+export interface ActivityTurn {
+  turn_id?: string;
+  user_prompt?: string;
+  ts?: number;
+  rows?: ActivityRow[];
 }
 
 // --- Activity pending approvals (doc 02 §Tab1) ---

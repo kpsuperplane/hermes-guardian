@@ -1,25 +1,24 @@
 import { useCallback, useState } from "@/sdk";
 import { api } from "@/api/client";
 import { HISTORY_PAGE_SIZES } from "@/constants";
-import type { ActivityRow, HistoryResponse } from "@/types";
+import type { ActivityTurn, HistoryResponse } from "@/types";
 
 export interface HistoryController {
-  activity: ActivityRow[];
+  turns: ActivityTurn[];
   page: number;
   setPage: (page: number) => void;
   pageSize: number;
   setPageSize: (size: number) => void;
-  total: number;
+  total: number; // total number of TURNS (pagination is by turn, not by row)
   loading: boolean;
   error: string;
   loadHistory: (page: number, pageSize: number) => Promise<void>;
 }
 
-// Paginated activity history backed by the DataTables endpoint. The effect that
-// triggers loadHistory when the active tab/page changes lives in GuardianPage,
-// since it depends on which tab is showing.
+// History grouped by turn, paginated by TURN, backed by GET /activity/turns. The effect
+// that triggers loadHistory when the active tab/page changes lives in GuardianPage.
 export function useHistory(): HistoryController {
-  const [activity, setActivity] = useState<ActivityRow[]>([]);
+  const [turns, setTurns] = useState<ActivityTurn[]>([]);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [total, setTotal] = useState(0);
@@ -34,17 +33,17 @@ export function useHistory(): HistoryController {
     setLoading(true);
     setError("");
     return api(
-      "/activity/datatables?draw=1&start=" +
+      "/activity/turns?draw=1&start=" +
         encodeURIComponent(start) +
         "&length=" +
         encodeURIComponent(safeSize),
     )
       .then((payload: HistoryResponse) => {
-        setActivity(payload.data || []);
+        setTurns(payload.turns || []);
         setTotal(Number(payload.recordsFiltered || payload.recordsTotal || 0));
       })
       .catch((err: unknown) => {
-        setActivity([]);
+        setTurns([]);
         setTotal(0);
         setError(String((err as Error)?.message || err));
       })
@@ -54,7 +53,7 @@ export function useHistory(): HistoryController {
   }, []);
 
   return {
-    activity,
+    turns,
     page,
     setPage,
     pageSize,

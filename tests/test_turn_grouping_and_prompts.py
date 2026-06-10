@@ -185,6 +185,85 @@ def test_turn_fields_exposed_but_not_in_sort_or_search_allowlists():
     assert "user_prompt" not in plugin._DATATABLES_SEARCH_COLUMNS
 
 
+# --- Turn-paginated payload (dashboard cards) --------------------------------
+def test_turns_payload_groups_and_orders_by_recency(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    bind_owner(plugin)
+    owner = _owner_hash(plugin)
+
+    plugin._on_pre_gateway_dispatch(gateway_event("first", user_id="owner"))
+    plugin._emit_activity("blocked", session_id="s1", owner_hash=owner, tool_name="a", reason="r")
+    plugin._emit_activity("allowed", session_id="s1", owner_hash=owner, tool_name="b", reason="r")
+    plugin._on_pre_gateway_dispatch(gateway_event("second", user_id="owner"))
+    plugin._emit_activity("blocked", session_id="s1", owner_hash=owner, tool_name="c", reason="r")
+
+    payload = plugin._activity_turns_payload({"draw": "1", "start": "0", "length": "25"})
+    assert payload["recordsTotal"] == 2
+    turns = payload["turns"]
+    assert len(turns) == 2
+    # Newest turn first; each turn carries all of its checks together.
+    assert [r["tool_name"] for r in turns[0]["rows"]] == ["c"]
+    assert sorted(r["tool_name"] for r in turns[1]["rows"]) == ["a", "b"]
+    assert turns[0]["ts"] >= turns[1]["ts"]
+
+
+def test_turns_payload_offset_paginates_by_turn(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    bind_owner(plugin)
+    owner = _owner_hash(plugin)
+    for i in range(3):
+        plugin._on_pre_gateway_dispatch(gateway_event(f"turn {i}", user_id="owner"))
+        plugin._emit_activity("blocked", session_id="s1", owner_hash=owner, tool_name=f"t{i}", reason="r")
+
+    page = plugin._activity_turns_payload({"start": "1", "length": "25"})
+    assert page["recordsTotal"] == 3
+    assert len(page["turns"]) == 2  # newest turn skipped by the offset
+    tools = [r["tool_name"] for t in page["turns"] for r in t["rows"]]
+    assert "t2" not in tools
+
+
+def test_turns_payload_legacy_rows_are_singletons():
+    plugin = load_plugin()
+    plugin._ensure_activity_db()
+    cols = (
+        "ts, decision, mode, session_label, session_hash, owner_hash, tool_name, "
+        "action_family, destination, data_classes, reason, approval_id, rule_id, rule_source"
+    )
+    with plugin._activity_connect() as conn:
+        for ts, tool in ((1000, "legacy1"), (1001, "legacy2")):
+            conn.execute(
+                f"INSERT INTO activity ({cols}) VALUES (?, 'blocked','strict','s','h','o',?,'x','d','','r','','','')",
+                (ts, tool),
+            )
+    payload = plugin._activity_turns_payload({"start": "0", "length": "25"})
+    singletons = [t for t in payload["turns"] if t["turn_id"] == ""]
+    assert len(singletons) == 2
+    assert all(len(t["rows"]) == 1 for t in singletons)
+
+
+# --- Slash /guardian activity grouped by turn --------------------------------
+def test_slash_activity_groups_by_turn_with_nested_checks(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    bind_owner(plugin)
+    owner = _owner_hash(plugin)
+    plugin._set_persist_prompts(True)
+
+    plugin._on_pre_gateway_dispatch(gateway_event("subscribe me to the newsletter", user_id="owner"))
+    plugin._emit_activity("blocked", session_id="s1", owner_hash=owner, tool_name="browser_type",
+                          action_family="browser_type", reason="requires approval")
+    plugin._emit_activity("allowed", session_id="s1", owner_hash=owner, tool_name="web_read",
+                          action_family="web_read", reason="public read")
+
+    out = plugin._handle_guardian_command("activity 5")
+    assert "**Turn**" in out
+    assert "2 checks" in out
+    assert "subscribe me to the newsletter" in out  # prompt shown when persisted
+    assert "browser_type" in out and "web_read" in out  # both checks nested under the turn
+
+
 def _load_plugin_api():
     import importlib.util
 

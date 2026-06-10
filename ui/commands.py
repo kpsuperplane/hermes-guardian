@@ -169,33 +169,54 @@ def _guardian_history_command(
         except ValueError:
             command = tokens[0].lower() if tokens else "history"
             return f"Usage: /guardian {command} [limit]"
-    limit = max(1, min(limit, 25))
-    rows = _grouped_activity_rows(filters or {}, limit=limit)
+    limit = max(1, min(limit, 25))  # number of TURNS to show
+    rows = _activity_rows(filters or {}, limit=1000)
     if not rows:
         return empty_message
 
-    lines = [f"🛡️ **{title}** · newest first · {len(rows)} shown"]
+    # Group rows into turns (one user prompt + its checks). Legacy rows (turn_id='')
+    # are each their own single-check turn. Order follows recency (rows are ts DESC).
+    order: list[str] = []
+    groups: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
-        timestamp = _activity_time_text(row)
-        raw_decision = str(row.get("decision") or "").strip()
-        icon = _activity_status_icon(raw_decision)
-        taints = _activity_taints_text(row, code=True)
-        tool = _clip_text(_activity_display_tool(row), 72, ellipsis="...", fallback="n/a")
-        count = int(row.get("count") or 1)
-        count_suffix = f" x{count}" if count > 1 else ""
-        entry_lines = [
-            "",
-            f"{icon} **`{tool}`**{count_suffix}",
-            timestamp,
-            taints,
-        ]
-        action_detail = _clip_text(row.get("action_detail") or "", 220, ellipsis="...", fallback="")
-        if action_detail:
-            entry_lines.append(f"Action: `{action_detail}`")
-        reason_text = _activity_reason_line_text(row)
-        if reason_text:
-            entry_lines.append(reason_text)
-        lines.extend(entry_lines)
+        turn_id = str(row.get("turn_id") or "")
+        key = turn_id if turn_id else f"row_{row.get('id')}"
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(row)
+    turn_keys = order[:limit]
+
+    _MAX_CHECKS_PER_TURN = 20
+    lines = [f"🛡️ **{title}** · newest first · {len(turn_keys)} turn{'s' if len(turn_keys) != 1 else ''}"]
+    for key in turn_keys:
+        turn_rows = groups[key]
+        first = turn_rows[0]
+        when = _activity_time_text(first)
+        n = len(turn_rows)
+        prompt = ""
+        for candidate in turn_rows:
+            text_value = str(candidate.get("user_prompt") or "").strip()
+            if text_value:
+                prompt = text_value
+                break
+        lines.append("")
+        lines.append(f"**Turn** · {when} · {n} check{'s' if n != 1 else ''}")
+        if prompt:
+            lines.append(f"> {_clip_text(prompt, 200, ellipsis='...', fallback='')}")
+        for check in turn_rows[:_MAX_CHECKS_PER_TURN]:
+            icon = _activity_status_icon(str(check.get("decision") or "").strip())
+            tool = _clip_text(_activity_display_tool(check), 60, ellipsis="...", fallback="n/a")
+            taints = _activity_taints_text(check, code=True)
+            lines.append(f"↳ {icon} `{tool}` · {taints}")
+            action_detail = _clip_text(check.get("action_detail") or "", 200, ellipsis="...", fallback="")
+            if action_detail:
+                lines.append(f"   Action: `{action_detail}`")
+            reason_text = _activity_reason_line_text(check)
+            if reason_text:
+                lines.append(f"   {reason_text}")
+        if n > _MAX_CHECKS_PER_TURN:
+            lines.append(f"↳ … +{n - _MAX_CHECKS_PER_TURN} more checks")
     return "\n".join(lines)
 
 

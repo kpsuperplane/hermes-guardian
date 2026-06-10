@@ -139,21 +139,16 @@ def test_guardian_history_command_lists_recent_sanitized_activity():
 
     response = plugin._handle_guardian_command("activity")
 
-    assert "🛡️ **Guardian activity** · newest first · 2 shown" in response
-    assert "✅ **`mcp_notion_update_page`**" in response
+    # Both checks share one session -> one turn with two nested checks, newest first.
+    assert "🛡️ **Guardian activity** · newest first · 1 turn" in response
+    assert "2 checks" in response
+    assert "↳ ✅ `mcp_notion_update_page`" in response
     assert "🏷️ `documents`" in response
     assert "Allowed: matched allow rule (`env`)" in response
-    assert "❌ **`send_message`**" in response
+    assert "↳ ❌ `send_message`" in response
     assert "🏷️ `communications`" in response
     assert "Blocked: requires approval (`peg_test`)" in response
-    assert "**Action:**" not in response
-    assert "**Status:**" not in response
-    assert "**Classes:**" not in response
-    assert "**Reason:**" not in response
-    assert "1. ALLOWED" not in response
-    assert "2. BLOCKED" not in response
-    assert "-> `n/a`" not in response
-    assert response.index("✅ **`mcp_notion_update_page`**") < response.index("Allowed: matched allow rule")
+    assert response.index("mcp_notion_update_page") < response.index("send_message")
 
 
 def test_guardian_history_shows_terminal_action_detail():
@@ -164,12 +159,12 @@ def test_guardian_history_shows_terminal_action_detail():
 
     response = plugin._handle_guardian_command("activity")
 
-    assert "✅ **`terminal`**" in response
+    assert "↳ ✅ `terminal`" in response
     assert "Action: `pwd | grep root`" in response
     assert "Allowed: no private data in scope" in response
 
 
-def test_guardian_history_command_groups_quick_same_tool_calls(monkeypatch):
+def test_guardian_activity_lists_each_check_within_a_turn(monkeypatch):
     plugin = load_plugin()
     monkeypatch.setenv("HERMES_GUARDIAN_HISTORY_TIMEZONE", "America/Los_Angeles")
     now = {"value": 1780775040}
@@ -190,13 +185,13 @@ def test_guardian_history_command_groups_quick_same_tool_calls(monkeypatch):
 
     response = plugin._handle_guardian_command("activity")
 
-    assert "🛡️ **Guardian activity** · newest first · 1 shown" in response
-    assert "❌ **`browser_type`** x3" in response
+    # One session -> one turn; each check is listed individually (no metadata collapsing).
+    assert "🛡️ **Guardian activity** · newest first · 1 turn" in response
+    assert "3 checks" in response
+    assert response.count("↳ ❌ `browser_type`") == 3
     assert "Jun 6, 2026 12:44 PM PDT" in response
-    assert " - Jun 6, 2026 12:44 PM PDT" not in response
     assert "🏷️ `communications`" in response
     assert "Blocked: requires approval (`peg_3`)" in response
-    assert response.count("❌ **`browser_type`**") == 1
 
 
 def test_guardian_history_command_empty_and_limit_handling():
@@ -217,9 +212,10 @@ def test_guardian_history_command_empty_and_limit_handling():
 
     response = plugin._handle_guardian_command("activity 100")
 
-    assert "🛡️ **Guardian activity** · newest first · 25 shown" in response
-    assert response.count("\n❌ **`message_send`**") == 25
-    assert response.count("\nBlocked: test") == 25
+    # 30 distinct sessions -> 30 single-check turns; the limit clamps to 25 turns.
+    assert "🛡️ **Guardian activity** · newest first · 25 turns" in response
+    assert response.count("↳ ❌ `message_send`") == 25
+    assert response.count("\n   Blocked: test") == 25
 
 
 def test_guardian_dashboard_is_not_a_chat_command():

@@ -182,36 +182,30 @@
   min-width: 7rem;
 }
 
-.hermes-guardian-activity-row:hover {
-  background: color-mix(in srgb, var(--color-card) 88%, transparent);
+/* --- Turn cards: history grouped by turn ------------------------------------
+   Each card is one turn (its prompt + meta header) with its checks stacked inside. */
+.hermes-guardian-turn-card {
+  padding: 0;
+  overflow: hidden;
 }
 
-/* Turn group header: one per user prompt, spanning the table. It opens a nested
-   block — an accent rail runs down the left of the header and its member rows. */
-.hermes-guardian-turn-header > td {
-  background: color-mix(in srgb, var(--color-muted) 45%, transparent);
-  border-top: 2px solid var(--color-border);
-  border-left: 3px solid color-mix(in srgb, var(--color-ring) 60%, var(--color-border));
-  padding: 0.45rem 0.75rem;
+.hermes-guardian-turn-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  flex-wrap: wrap;
+  padding: 0.7rem 0.9rem;
+  background: color-mix(in srgb, var(--color-muted) 30%, transparent);
+  border-bottom: 1px solid var(--color-border);
 }
 
-/* A turn's member rows sit nested under the header: the left rail continues and the
-   first cell is indented so the rows read as children of the turn above them. */
-.hermes-guardian-row-nested > td:first-child {
-  border-left: 3px solid color-mix(in srgb, var(--color-ring) 60%, var(--color-border));
-  padding-left: 1.6rem;
-}
-
-/* Close the block under the last row of the turn. */
-.hermes-guardian-row-nested-last > td {
-  border-bottom: 2px solid var(--color-border);
-}
-
-.hermes-guardian-turn-head {
+.hermes-guardian-turn-card-title {
   display: flex;
   align-items: baseline;
   gap: 0.55rem;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .hermes-guardian-turn-label {
@@ -223,27 +217,79 @@
 }
 
 .hermes-guardian-turn-prompt {
-  font-weight: 600;
+  font-weight: 650;
   overflow-wrap: anywhere;
 }
 
-.hermes-guardian-turn-meta {
-  margin-left: auto;
+.hermes-guardian-turn-card-meta {
   font-size: 0.78rem;
   white-space: nowrap;
 }
 
-/* Expanded detail: a full-width row beneath its activity row, rendered as a
-   two-column key/value table. The open row and its detail share a subtle inset
-   background and drop the divider between them so they read as one block. */
-.hermes-guardian-activity-row-open > td,
-.hermes-guardian-activity-detail-row > td {
-  background: color-mix(in srgb, var(--color-muted) 30%, transparent);
+.hermes-guardian-turn-checks {
+  display: flex;
+  flex-direction: column;
 }
 
-.hermes-guardian-activity-detail-row > td {
+/* A single check inside a turn card. Click to expand the key/value detail. */
+.hermes-guardian-check-item {
+  padding: 0.5rem 0.9rem;
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+}
+
+.hermes-guardian-check-item:first-child {
   border-top: 0;
-  padding-top: 0.2rem;
+}
+
+.hermes-guardian-check-item:hover {
+  background: color-mix(in srgb, var(--color-card) 88%, transparent);
+}
+
+.hermes-guardian-check-item-open {
+  background: color-mix(in srgb, var(--color-muted) 18%, transparent);
+}
+
+.hermes-guardian-check-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.hermes-guardian-check-decision {
+  font-weight: 650;
+  min-width: 4.5rem;
+}
+
+.hermes-guardian-check-time {
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.hermes-guardian-check-target {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1 1 14rem;
+}
+
+.hermes-guardian-check-tool {
+  font-weight: 650;
+}
+
+.hermes-guardian-check-route {
+  font-size: 0.78rem;
+}
+
+.hermes-guardian-check-step {
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+}
+
+.hermes-guardian-check-detail {
+  margin-top: 0.45rem;
 }
 
 .hermes-guardian-activity-detail {

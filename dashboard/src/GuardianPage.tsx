@@ -161,7 +161,7 @@ export function GuardianPage() {
           onApprovalAction={(approval: PendingApproval, action) =>
             actions.approvalAction(approval as RecentBlock, action)
           }
-          activity={history.activity}
+          turns={history.turns}
           loading={history.loading}
           error={history.error}
           total={history.total}

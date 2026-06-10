@@ -670,6 +670,7 @@ _CORE_LOGIC_ALLOWED_REBINDS = {
 }
 _CORE_LOGIC_REQUIRED_SYMBOLS = (
     "_activity_datatables_payload",
+    "_activity_turns_payload",
     "_apply_language_pack_config",
     "_dashboard_rule_create_action",
     "_guardian_cli_setup",

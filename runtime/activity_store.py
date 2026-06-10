@@ -120,6 +120,7 @@ def _ensure_activity_db() -> None:
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_action_idx ON activity(action_family)")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_destination_idx ON activity(destination)")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_approval_idx ON activity(approval_id)")
+                conn.execute("CREATE INDEX IF NOT EXISTS activity_turn_idx ON activity(turn_id)")
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS pending_approvals (

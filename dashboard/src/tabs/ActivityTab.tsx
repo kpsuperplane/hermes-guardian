@@ -1,11 +1,11 @@
 import { React, useMemo, useState } from "@/sdk";
 import { Button } from "@/components/Button";
 import { DecisionStep } from "@/components/DecisionStep";
-import { TrustPill, trustLabel } from "@/components/TrustPill";
+import { TrustPill } from "@/components/TrustPill";
 import { HISTORY_PAGE_SIZES } from "@/constants";
 import { classesText, text, timeText } from "@/lib/format";
 import type { TabId } from "@/lib/deepLinks";
-import type { ActivityRow, PendingApproval } from "@/types";
+import type { ActivityRow, ActivityTurn, PendingApproval } from "@/types";
 import type { ApprovalAction } from "@/hooks/useGuardianActions";
 
 export interface ActivityTabProps {
@@ -16,8 +16,8 @@ export interface ActivityTabProps {
   approvals: PendingApproval[];
   approvalsLoading: boolean;
   onApprovalAction: (approval: PendingApproval, action: ApprovalAction) => void;
-  // Decided stream (merged blocks + history)
-  activity: ActivityRow[];
+  // History grouped by turn (server-paginated by turn)
+  turns: ActivityTurn[];
   loading: boolean;
   error: string;
   total: number;
@@ -351,79 +351,22 @@ function FilterBar(props: { filters: Filters; setFilters: (next: Filters) => voi
   );
 }
 
-// --- Turn grouping (doc: group history by turn) ------------------------------
-// Rows arrive sorted ts DESC; walk them and start a new group whenever turn_id
-// changes. Rows with an empty turn_id (legacy / pre-migration) each become their
-// own singleton group with no header. A turn that straddles a server-side page
-// boundary renders as two partial groups (a header on each page) — accepted.
-interface TurnGroup {
-  turnId: string;
-  rows: ActivityRow[];
-}
-
-function groupByTurn(rows: ActivityRow[]): TurnGroup[] {
-  const groups: TurnGroup[] = [];
-  for (const row of rows) {
-    const turnId = text(row.turn_id);
-    const last = groups[groups.length - 1];
-    if (last && turnId && last.turnId === turnId) {
-      last.rows.push(row);
-    } else {
-      groups.push({ turnId, rows: [row] });
-    }
-  }
-  return groups;
-}
-
-function TurnHeaderRow(props: { group: TurnGroup }) {
-  const { group } = props;
-  const first = group.rows[0];
-  // The persisted prompt may be on any row of the turn (whichever was emitted while
-  // the setting was on); take the first non-empty one.
-  const prompt = text(group.rows.map((r) => text(r.user_prompt)).find(Boolean));
-  const when = text(first.time, timeText(first.ts));
-  const n = group.rows.length;
-  return (
-    <tr className="hermes-guardian-turn-header">
-      <td colSpan={5}>
-        <div className="hermes-guardian-turn-head">
-          <span className="hermes-guardian-turn-label">Turn</span>
-          {prompt ? (
-            <span className="hermes-guardian-turn-prompt">{prompt}</span>
-          ) : (
-            <span className="hermes-guardian-muted">(prompt not recorded)</span>
-          )}
-          <span className="hermes-guardian-turn-meta hermes-guardian-muted">
-            {when + " · " + n + (n === 1 ? " action" : " actions")}
-          </span>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function ActivityRowItem(props: {
-  row: ActivityRow;
-  index: number;
-  inTurn?: boolean;
-  last?: boolean;
-  onNavigate: (tab: TabId) => void;
-}) {
+// --- Turn cards (history grouped by turn) ------------------------------------
+// A "check" line-item: one activity row inside a turn card. Click to expand the full
+// key/value detail (the dashboard twin of /guardian why).
+function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }) {
   const { row, onNavigate } = props;
   const [open, setOpen] = useState(false);
   const tool = text(row.tool_name || row.tool, "n/a");
   const destination = text(row.destination, "n/a");
   const action = text(row.action_family, "n/a");
   const isRead = text(row.decision) === "read" || text(row.decision) === "tainted";
-  // data_classes can arrive as an array or as a delimiter-joined string; render
-  // one chip per taint either way.
+  // data_classes can arrive as an array or a delimiter-joined string; one chip per taint.
   const taints = (
     Array.isArray(row.data_classes) ? row.data_classes : text(row.data_classes).split(/[,]/)
   )
     .map((cls) => text(cls).trim())
     .filter(Boolean);
-  // Key/value pairs for the expanded detail, rendered as a full-width table below
-  // the row. Classes render as chips; everything else as text.
   const detailPairs: Array<{ label: string; value: React.ReactNode }> = [
     { label: "Direction", value: isRead ? "read" : "write" },
     {
@@ -450,69 +393,83 @@ function ActivityRowItem(props: {
   ];
   if (row.reason) detailPairs.push({ label: "Reason", value: text(row.reason) });
 
-  const nest = props.inTurn ? " hermes-guardian-row-nested" : "";
-  const lastNest = props.inTurn && props.last && !open ? " hermes-guardian-row-nested-last" : "";
   return (
-    <React.Fragment>
-      <tr
-        className={
-          "hermes-guardian-activity-row" +
-          (open ? " hermes-guardian-activity-row-open" : "") +
-          nest +
-          lastNest
-        }
+    <div className={"hermes-guardian-check-item" + (open ? " hermes-guardian-check-item-open" : "")}>
+      <div
+        className="hermes-guardian-check-row"
         onClick={() => setOpen(!open)}
         style={{ cursor: "pointer" }}
       >
-        <td>{text(row.decision)}</td>
-        <td>{text(row.time, timeText(row.ts))}</td>
-        <td>
-          <div className="hermes-guardian-history-target">
-            <div className="hermes-guardian-history-tool">{tool}</div>
-            <div className="hermes-guardian-history-route">{action + " -> " + destination}</div>
-            {row.decision_step ? (
-              <div className="hermes-guardian-muted">
-                <DecisionStep step={row.decision_step} onNavigate={onNavigate} />
-              </div>
-            ) : null}
-          </div>
-        </td>
-        <td className="hermes-guardian-history-trust">
-          {!isRead && row.destination_trust ? trustLabel(row.destination_trust) : ""}
-        </td>
-        <td>
-          {taints.length ? (
-            <div className="hermes-guardian-chips hermes-guardian-history-taint-chips">
-              {taints.map((cls) => (
-                <span key={cls} className="hermes-guardian-chip">
-                  {cls}
-                </span>
-              ))}
-            </div>
-          ) : null}
-        </td>
-      </tr>
-      {open ? (
-        <tr
-          className={
-            "hermes-guardian-activity-detail-row" +
-            nest +
-            (props.inTurn && props.last ? " hermes-guardian-row-nested-last" : "")
-          }
-        >
-          <td colSpan={5}>
-            <dl className="hermes-guardian-activity-detail">
-              {detailPairs.map((pair) => (
-                <React.Fragment key={pair.label}>
-                  <dt>{pair.label}</dt>
-                  <dd>{pair.value}</dd>
-                </React.Fragment>
-              ))}
-            </dl>
-          </td>
-        </tr>
+        <span className="hermes-guardian-check-decision">{text(row.decision)}</span>
+        <span className="hermes-guardian-check-time hermes-guardian-muted">
+          {text(row.time, timeText(row.ts))}
+        </span>
+        <span className="hermes-guardian-check-target">
+          <span className="hermes-guardian-check-tool">{tool}</span>
+          <span className="hermes-guardian-check-route hermes-guardian-muted">
+            {action + " -> " + destination}
+          </span>
+        </span>
+        {!isRead && row.destination_trust ? <TrustPill trust={row.destination_trust} /> : null}
+        {taints.length ? (
+          <span className="hermes-guardian-chips hermes-guardian-history-taint-chips">
+            {taints.map((cls) => (
+              <span key={cls} className="hermes-guardian-chip">
+                {cls}
+              </span>
+            ))}
+          </span>
+        ) : null}
+      </div>
+      {row.decision_step ? (
+        <div className="hermes-guardian-check-step hermes-guardian-muted">
+          <DecisionStep step={row.decision_step} onNavigate={onNavigate} />
+        </div>
       ) : null}
-    </React.Fragment>
+      {open ? (
+        <dl className="hermes-guardian-activity-detail hermes-guardian-check-detail">
+          {detailPairs.map((pair) => (
+            <React.Fragment key={pair.label}>
+              <dt>{pair.label}</dt>
+              <dd>{pair.value}</dd>
+            </React.Fragment>
+          ))}
+        </dl>
+      ) : null}
+    </div>
+  );
+}
+
+// A turn card: the prompt (or a "Turn" label) + a meta line, then its checks nested
+// inside. Rows are already filtered by the caller; an empty turn is never rendered.
+function TurnCard(props: { turn: ActivityTurn; onNavigate: (tab: TabId) => void }) {
+  const { turn } = props;
+  const rows = turn.rows || [];
+  const prompt = text(turn.user_prompt);
+  const first = rows[0] || {};
+  const when = text(first.time, timeText(turn.ts));
+  const n = rows.length;
+  return (
+    <div className="hermes-guardian-card hermes-guardian-turn-card">
+      <div className="hermes-guardian-turn-card-head">
+        <div className="hermes-guardian-turn-card-title">
+          <span className="hermes-guardian-turn-label">Turn</span>
+          {prompt ? (
+            <span className="hermes-guardian-turn-prompt">{prompt}</span>
+          ) : (
+            <span className="hermes-guardian-muted">prompt not recorded</span>
+          )}
+        </div>
+        <div className="hermes-guardian-turn-card-meta hermes-guardian-muted">
+          {when + " · " + n + (n === 1 ? " check" : " checks")}
+        </div>
+      </div>
+      <div className="hermes-guardian-turn-checks">
+        {rows.map((row, index) => (
+          <CheckItem key={row.id || index} row={row} onNavigate={props.onNavigate} />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -523,7 +480,7 @@ export function ActivityTab(props: ActivityTabProps) {
     approvals,
     approvalsLoading,
     onApprovalAction,
-    activity,
+    turns,
     loading,
     error,
     total,
@@ -539,9 +496,17 @@ export function ActivityTab(props: ActivityTabProps) {
 
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
 
-  const filtered = useMemo(
-    () => activity.filter((row) => rowMatchesFilters(row, filters)),
-    [activity, filters],
+  // Filters apply to the checks WITHIN each turn; a turn with no matching checks is
+  // hidden. Pagination is by turn (server-side), so this only narrows the loaded page.
+  const visibleTurns = useMemo(
+    () =>
+      turns
+        .map((turn) => ({
+          ...turn,
+          rows: (turn.rows || []).filter((row) => rowMatchesFilters(row, filters)),
+        }))
+        .filter((turn) => (turn.rows || []).length > 0),
+    [turns, filters],
   );
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -587,7 +552,7 @@ export function ActivityTab(props: ActivityTabProps) {
           {loading
             ? "Loading activity..."
             : total
-              ? "Showing " + filtered.length + " of " + total + " (page " + (currentPage + 1) + "/" + totalPages + ")"
+              ? "Showing " + visibleTurns.length + " of " + total + (total === 1 ? " turn" : " turns") + " (page " + (currentPage + 1) + "/" + totalPages + ")"
               : "No activity yet."}
         </div>
         <div className="hermes-guardian-actions">
@@ -622,49 +587,15 @@ export function ActivityTab(props: ActivityTabProps) {
         </div>
       </div>
       {error ? <div className="hermes-guardian-banner">{error}</div> : null}
-      <div className="hermes-guardian-table-wrap">
-        <table className="hermes-guardian-table">
-          <colgroup>
-            <col className="hermes-guardian-history-status-col" />
-            <col className="hermes-guardian-history-time-col" />
-            <col className="hermes-guardian-history-target-col" />
-            <col className="hermes-guardian-history-trust-col" />
-            <col className="hermes-guardian-history-taints-col" />
-          </colgroup>
-          <thead>
-            <tr>
-              {["Status", "Time", "Tool / route / why", "Trust", "Taints"].map((label) => (
-                <th key={label}>{label}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length ? (
-              groupByTurn(filtered).map((group, gIndex) => (
-                <React.Fragment key={"turn-" + group.turnId + "-" + gIndex}>
-                  {group.turnId ? <TurnHeaderRow group={group} /> : null}
-                  {group.rows.map((row, index) => (
-                    <ActivityRowItem
-                      key={row.id || group.turnId + ":" + index}
-                      row={row}
-                      index={index}
-                      inTurn={Boolean(group.turnId)}
-                      last={Boolean(group.turnId) && index === group.rows.length - 1}
-                      onNavigate={onNavigate}
-                    />
-                  ))}
-                </React.Fragment>
-              ))
-            ) : (
-              <tr>
-                <td colSpan={5} className="hermes-guardian-muted">
-                  {loading ? "Loading activity..." : "No matching activity."}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      {visibleTurns.length ? (
+        visibleTurns.map((turn, index) => (
+          <TurnCard key={turn.turn_id || "turn-" + index} turn={turn} onNavigate={onNavigate} />
+        ))
+      ) : (
+        <div className="hermes-guardian-card hermes-guardian-muted">
+          {loading ? "Loading activity..." : "No matching activity."}
+        </div>
+      )}
     </div>
   );
 }

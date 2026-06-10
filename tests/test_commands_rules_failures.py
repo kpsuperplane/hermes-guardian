@@ -238,14 +238,16 @@ def test_guardian_failures_command_lists_only_failed_command_activity():
 
     response = plugin._handle_guardian_command("activity failures")
 
-    assert "🛡️ **Guardian failures** · newest first · 3 shown" in response
-    assert "❌ **`terminal`**" in response
+    # All on one session -> one turn with the 3 failed checks nested under it.
+    assert "🛡️ **Guardian failures** · newest first · 1 turn" in response
+    assert "3 checks" in response
+    assert "↳ ❌ `terminal`" in response
     assert "Blocked: auth code" in response
-    assert "❌ **`browser_type`**" in response
+    assert "↳ ❌ `browser_type`" in response
     assert "Dismissed: requires approval" in response
-    assert "❌ **`send_message`**" in response
+    assert "↳ ❌ `send_message`" in response
     assert "Blocked: requires approval (`peg_test`)" in response
-    assert "✅ **`terminal`**" not in response
+    assert "no private data in scope" not in response  # the allowed terminal is filtered out
     assert "gmail" not in response
 
 
@@ -276,8 +278,9 @@ def test_guardian_failures_command_alias_empty_and_limit_handling():
 
     response = plugin._handle_guardian_command("activity failed 1")
 
-    assert "🛡️ **Guardian failures** · newest first · 1 shown" in response
-    assert response.count("\n❌ **`") == 1
+    # Two failed checks on distinct sessions -> two turns; limit clamps to 1 turn.
+    assert "🛡️ **Guardian failures** · newest first · 1 turn" in response
+    assert response.count("↳ ❌ `") == 1
 
 
 def test_guardian_history_command_clarifies_legacy_private_source_reason():
@@ -293,7 +296,7 @@ def test_guardian_history_command_clarifies_legacy_private_source_reason():
 
     response = plugin._handle_guardian_command("activity")
 
-    assert "📥 **`mcp_gmail_search`**" in response
+    assert "↳ 📥 `mcp_gmail_search`" in response
     assert "`mcp_gmail_search` -> `n/a`" not in response
     assert "🏷️ `communications`" in response
     assert "Read/result allowed" not in response
@@ -315,8 +318,8 @@ def test_guardian_history_labels_terminal_taint_as_result():
 
     response = plugin._handle_guardian_command("activity")
 
-    assert "📥 **`terminal result`**" in response
-    assert "📥 **`terminal`**" not in response
+    assert "↳ 📥 `terminal result`" in response
+    assert "↳ 📥 `terminal` ·" not in response  # labeled "terminal result", not bare "terminal"
 
 
 def test_guardian_history_command_uses_configured_timezone(monkeypatch):
