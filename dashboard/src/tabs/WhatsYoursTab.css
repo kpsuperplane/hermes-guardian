@@ -17,6 +17,26 @@
   margin-top: 0.85rem;
 }
 
+/* Stores / Identities / Hosts as three columns (Seen recently + What's yours).
+   Collapses to a single column (stacked rows) on narrow viewports. */
+.hermes-guardian-dest-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 0.85rem;
+}
+
+.hermes-guardian-dest-columns .hermes-guardian-dest-group {
+  margin-top: 0;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .hermes-guardian-dest-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
 .hermes-guardian-dest-group-title {
   font-weight: 650;
   font-size: 0.82rem;

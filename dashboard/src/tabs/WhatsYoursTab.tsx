@@ -28,6 +28,33 @@ function trustRank(trust: string): number {
   return idx === -1 ? TRUST_ORDER.length : idx;
 }
 
+// The three self buckets, in the same order as "What's yours" below, so both
+// sections read as the same three columns.
+type SelfKind = "stores" | "identities" | "hosts";
+
+const SELF_COLUMNS: Array<{ key: SelfKind; title: string; seenEmpty: string }> = [
+  { key: "stores", title: "Stores", seenEmpty: "No stores seen." },
+  { key: "identities", title: "Identities", seenEmpty: "No identities seen." },
+  { key: "hosts", title: "Hosts", seenEmpty: "No hosts seen." },
+];
+
+// Bucket an observed destination into one of the three self kinds. Prefer the
+// backend's self-grant suggestion kind when present; otherwise fall back to the
+// destination's shape (scheme / "@" / hostname). Unrecognized sinks read as stores.
+function seenKind(entry: SeenDestination): SelfKind {
+  const suggest = entry.suggest;
+  if (suggest && suggest.kind === "host") return "hosts";
+  if (suggest && suggest.kind === "identity") return "identities";
+  if (suggest && suggest.kind === "destination") return "stores";
+  const d = text(entry.destination).toLowerCase();
+  if (/^(store:|draft:|mcp:|kanban:|app:)/.test(d)) return "stores";
+  if (d.indexOf("@") >= 0 || /^(email:|message:|dm:|chat:|sms:|tel:|user:|recipient:)/.test(d)) {
+    return "identities";
+  }
+  if (/^(host:|https?:\/\/)/.test(d) || /^[a-z0-9-]+(\.[a-z0-9-]+)+/.test(d)) return "hosts";
+  return "stores";
+}
+
 // A single add-input + button row used by every editable list.
 function AddRow(props: {
   placeholder: string;
@@ -85,6 +112,34 @@ function EditableList(props: {
   );
 }
 
+function SeenItem(props: {
+  entry: SeenDestination;
+  busy?: boolean;
+  onAddToSelf: (suggest: { kind: string; value: string }, destination: string) => void;
+}) {
+  const { entry } = props;
+  const destination = text(entry.destination, "(none)");
+  return (
+    <li className="hermes-guardian-dest-item">
+      <span className="hermes-guardian-dest-seen-label">
+        <TrustPill trust={entry.trust} />
+        <Mono>{destination}</Mono>
+        {entry.count ? <span className="hermes-guardian-muted">{"x" + entry.count}</span> : null}
+      </span>
+      {entry.suggest ? (
+        <Button
+          variant="secondary"
+          disabled={props.busy}
+          title={"Add " + entry.suggest.kind + " " + entry.suggest.value + " to your self-allowlist"}
+          onClick={() => props.onAddToSelf(entry.suggest as { kind: string; value: string }, destination)}
+        >
+          This is mine → add to self
+        </Button>
+      ) : null}
+    </li>
+  );
+}
+
 function SeenSection(props: {
   seen: SeenDestination[];
   tally: Record<string, number>;
@@ -115,30 +170,32 @@ function SeenSection(props: {
         </div>
       </div>
       {sorted.length ? (
-        <ul className="hermes-guardian-dest-list">
-          {sorted.map((entry, index) => {
-            const destination = text(entry.destination, "(none)");
+        <div className="hermes-guardian-dest-columns">
+          {SELF_COLUMNS.map((col) => {
+            const entries = sorted.filter((entry) => seenKind(entry) === col.key);
             return (
-              <li key={destination + ":" + text(entry.trust) + ":" + index} className="hermes-guardian-dest-item">
-                <span className="hermes-guardian-dest-seen-label">
-                  <TrustPill trust={entry.trust} />
-                  <Mono>{destination}</Mono>
-                  {entry.count ? <span className="hermes-guardian-muted">{"x" + entry.count}</span> : null}
-                </span>
-                {entry.suggest ? (
-                  <Button
-                    variant="secondary"
-                    disabled={props.busy}
-                    title={"Add " + entry.suggest.kind + " " + entry.suggest.value + " to your self-allowlist"}
-                    onClick={() => props.onAddToSelf(entry.suggest as { kind: string; value: string }, destination)}
-                  >
-                    This is mine → add to self
-                  </Button>
-                ) : null}
-              </li>
+              <div key={col.key} className="hermes-guardian-dest-group">
+                <div className="hermes-guardian-dest-group-title">{col.title}</div>
+                {entries.length ? (
+                  <ul className="hermes-guardian-dest-list">
+                    {entries.map((entry, index) => (
+                      <SeenItem
+                        key={text(entry.destination) + ":" + text(entry.trust) + ":" + index}
+                        entry={entry}
+                        busy={props.busy}
+                        onAddToSelf={props.onAddToSelf}
+                      />
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="hermes-guardian-muted hermes-guardian-dest-empty">
+                    {col.seenEmpty}
+                  </div>
+                )}
+              </div>
             );
           })}
-        </ul>
+        </div>
       ) : (
         <div className="hermes-guardian-muted hermes-guardian-dest-empty">
           No outbound destinations observed yet.
@@ -210,52 +267,54 @@ export function WhatsYoursTab({ controller }: WhatsYoursTabProps) {
           </div>
         </div>
 
-        <div className="hermes-guardian-dest-group">
-          <div className="hermes-guardian-dest-group-title">Stores</div>
-          <EditableList
-            items={stores}
-            disabled={busy}
-            emptyHint="No owned stores."
-            onRemove={(value) => removeSelf("destination", value)}
-          />
-          <AddRow
-            placeholder="store:crm or draft:*"
-            buttonLabel="Add store"
-            disabled={busy}
-            onAdd={(value) => addSelf("destination", value)}
-          />
-        </div>
+        <div className="hermes-guardian-dest-columns">
+          <div className="hermes-guardian-dest-group">
+            <div className="hermes-guardian-dest-group-title">Stores</div>
+            <EditableList
+              items={stores}
+              disabled={busy}
+              emptyHint="No owned stores."
+              onRemove={(value) => removeSelf("destination", value)}
+            />
+            <AddRow
+              placeholder="store:crm or draft:*"
+              buttonLabel="Add store"
+              disabled={busy}
+              onAdd={(value) => addSelf("destination", value)}
+            />
+          </div>
 
-        <div className="hermes-guardian-dest-group">
-          <div className="hermes-guardian-dest-group-title">Identities (send-to-self)</div>
-          <EditableList
-            items={identities}
-            disabled={busy}
-            emptyHint="No identities declared — sends to any address are treated as external (the safe default)."
-            onRemove={(value) => removeSelf("identity", value)}
-          />
-          <AddRow
-            placeholder="you@example.com"
-            buttonLabel="Add identity"
-            disabled={busy}
-            onAdd={(value) => addSelf("identity", value)}
-          />
-        </div>
+          <div className="hermes-guardian-dest-group">
+            <div className="hermes-guardian-dest-group-title">Identities (send-to-self)</div>
+            <EditableList
+              items={identities}
+              disabled={busy}
+              emptyHint="No identities declared — sends to any address are treated as external (the safe default)."
+              onRemove={(value) => removeSelf("identity", value)}
+            />
+            <AddRow
+              placeholder="you@example.com"
+              buttonLabel="Add identity"
+              disabled={busy}
+              onAdd={(value) => addSelf("identity", value)}
+            />
+          </div>
 
-        <div className="hermes-guardian-dest-group">
-          <div className="hermes-guardian-dest-group-title">Hosts (own infrastructure)</div>
-          <EditableList
-            items={hosts}
-            disabled={busy}
-            emptyHint="No hosts declared — every host is treated as external until you add it."
-            onRemove={(value) => removeSelf("host", value)}
-          />
-          <AddRow
-            placeholder="myvps.example.com"
-            buttonLabel="Add host"
-            disabled={busy}
-            onAdd={(value) => addSelf("host", value)}
-          />
+          <div className="hermes-guardian-dest-group">
+            <div className="hermes-guardian-dest-group-title">Hosts (own infrastructure)</div>
+            <EditableList
+              items={hosts}
+              disabled={busy}
+              emptyHint="No hosts declared — every host is treated as external until you add it."
+              onRemove={(value) => removeSelf("host", value)}
+            />
+            <AddRow
+              placeholder="myvps.example.com"
+              buttonLabel="Add host"
+              disabled={busy}
+              onAdd={(value) => addSelf("host", value)}
+            />
+          </div>
         </div>
       </div>
 

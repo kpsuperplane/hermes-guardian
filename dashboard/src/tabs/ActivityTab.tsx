@@ -323,11 +323,13 @@ function ActivityRowItem(props: {
   const destination = text(row.destination, "n/a");
   const action = text(row.action_family, "n/a");
   const isRead = text(row.decision) === "read" || text(row.decision) === "tainted";
-  const taints = Array.isArray(row.data_classes)
-    ? row.data_classes
-    : row.data_classes
-      ? [String(row.data_classes)]
-      : [];
+  // data_classes can arrive as an array or as a delimiter-joined string; render
+  // one chip per taint either way.
+  const taints = (
+    Array.isArray(row.data_classes) ? row.data_classes : text(row.data_classes).split(/[,]/)
+  )
+    .map((cls) => text(cls).trim())
+    .filter(Boolean);
   return (
     <tr
       className="hermes-guardian-activity-row"
