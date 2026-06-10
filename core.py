@@ -270,6 +270,14 @@ _EMAIL_ADDRESS_RE = _security._EMAIL_ADDRESS_RE
 _PHONE_RE = _security._PHONE_RE
 _SSN_RE = _security._SSN_RE
 _PRIVATE_FIELD_RE = _security._PRIVATE_FIELD_RE
+# Strict iCalendar structural markers. Strong, unambiguous calendar-content signal —
+# it never matches casual prose ("meeting at 3"), so it adds no false-positive taint.
+# Lets a calendar event read/exported as iCal carry the `calendar` class instead of
+# being mislabeled `contacts` purely because it lists attendee email addresses.
+_CALENDAR_CONTENT_RE = re.compile(
+    r"BEGIN:VEVENT|BEGIN:VCALENDAR|(^|\n)(DTSTART|DTEND|RRULE|VALARM|FREEBUSY)[;:]",
+    re.I,
+)
 _LANGUAGE_PACKS = _language._COMPILED_LANGUAGE_PACKS
 
 _SOURCE_TAINT_RULES: list[tuple[re.Pattern[str], set[str]]] = [

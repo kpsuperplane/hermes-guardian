@@ -182,6 +182,12 @@ def _classes_from_content(value: Any) -> set[str]:
         classes.add("contacts")
     if _SSN_RE.search(text):
         classes.add("documents")
+    if _CALENDAR_CONTENT_RE.search(text):
+        # iCal-structured calendar data (e.g. a VEVENT) carries `calendar`, so a calendar
+        # event is not mislabeled `contacts` just because it lists attendee emails. Same
+        # policy class (personal_private) -> no gating change, but a clearer signal to the
+        # verifier and the activity UI.
+        classes.add("calendar")
     return classes
 
 
