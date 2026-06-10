@@ -192,9 +192,9 @@
 /* Destination-trust pills (doc 01 §2). Owned destinations read calm; trusted is a
    soft accent; external/public/unknown are boundary crossings and read as a warning. */
 .hermes-guardian-pill.hermes-guardian-trust-owned {
-  border-color: color-mix(in srgb, var(--color-muted-foreground) 30%, var(--color-border));
-  background: color-mix(in srgb, var(--color-muted) 45%, transparent);
-  color: var(--color-muted-foreground);
+  border-color: color-mix(in srgb, #22c55e 45%, var(--color-border));
+  background: color-mix(in srgb, #22c55e 14%, var(--color-card));
+  color: color-mix(in srgb, #16a34a 55%, var(--color-foreground));
 }
 
 .hermes-guardian-pill.hermes-guardian-trust-trusted {
@@ -204,9 +204,9 @@
 }
 
 .hermes-guardian-pill.hermes-guardian-trust-external {
-  border-color: color-mix(in srgb, var(--color-destructive) 50%, var(--color-border));
-  background: color-mix(in srgb, var(--color-destructive) 12%, var(--color-card));
-  color: var(--color-destructive);
+  border-color: color-mix(in srgb, #f59e0b 50%, var(--color-border));
+  background: color-mix(in srgb, #f59e0b 14%, var(--color-card));
+  color: color-mix(in srgb, #d97706 60%, var(--color-foreground));
 }
 
 .hermes-guardian-chips {
