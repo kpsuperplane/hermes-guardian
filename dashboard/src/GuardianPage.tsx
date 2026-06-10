@@ -18,11 +18,12 @@ import { RulesTab } from "@/tabs/RulesTab";
 import { SettingsTab } from "@/tabs/SettingsTab";
 import { ToolsTab } from "@/tabs/ToolsTab";
 
+// Display labels are plain-language; internal ids are unchanged to avoid churn.
 const TABS: Array<[string, string]> = [
   ["settings", "Settings"],
-  ["tools", "Tools"],
-  ["rules", "Egress Rules"],
-  ["blocks", "Recent Blocks"],
+  ["tools", "Connectors"],
+  ["rules", "Allow rules"],
+  ["blocks", "Activity"],
   ["destinations", "Destinations & Trust"],
   ["history", "History"],
   ["performance", "Performance"],
@@ -141,6 +142,7 @@ export function GuardianPage() {
           privacyMode={privacyMode}
           modeSaving={actions.modeSaving}
           onChangePrivacyMode={actions.saveMode}
+          onGoToDestinations={() => setTab("destinations")}
           llmUserContext={llmUserContext}
           llmCronContext={llmCronContext}
           userContextSaving={actions.userContextSaving}

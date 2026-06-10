@@ -150,6 +150,7 @@ export interface Suggestions {
 }
 
 export interface Policy {
+  destination_trust?: DestinationsSummary;
   rules?: Rule[];
   recent_blocks?: RecentBlock[];
   risk_banners?: RiskBanner[];

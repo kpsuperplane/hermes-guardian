@@ -1,14 +1,25 @@
 import { React } from "@/sdk";
+import { Button } from "@/components/Button";
 import { text } from "@/lib/format";
 import type { LanguagePack, Policy } from "@/types";
 
-const PRIVACY_MODES = ["strict", "read-only", "llm", "off"];
+const PRIVACY_MODES = ["llm", "strict", "read-only", "off"];
+
+// One-line consequence for each mode (doc 03 commit 3b). Values are unchanged; this
+// is help text only.
+const MODE_CONSEQUENCES: Record<string, string> = {
+  llm: "Review only genuine boundary crossings (recommended).",
+  strict: "Review every outbound action yourself.",
+  "read-only": "Block all outbound sharing.",
+  off: "Guardian disabled (security filtering still runs).",
+};
 
 export interface SettingsTabProps {
   policy: Policy | null;
   privacyMode: string;
   modeSaving: boolean;
   onChangePrivacyMode: (mode: string) => void;
+  onGoToDestinations: () => void;
   llmUserContext: boolean;
   llmCronContext: boolean;
   userContextSaving: boolean;
@@ -29,6 +40,7 @@ export function SettingsTab({
   privacyMode,
   modeSaving,
   onChangePrivacyMode,
+  onGoToDestinations,
   llmUserContext,
   llmCronContext,
   userContextSaving,
@@ -57,14 +69,45 @@ export function SettingsTab({
   const languagePackSummary =
     enabledLanguagePacks.length + " of " + languagePacks.length + " enabled";
 
+  const trust = (policy && policy.destination_trust) || {};
+  const trustSelf = trust.self || {};
+  const yoursSummary =
+    (trustSelf.destinations || []).length +
+    " stores · " +
+    (trustSelf.identities || []).length +
+    " identities · " +
+    (trustSelf.hosts || []).length +
+    " hosts · " +
+    ((trust.trusted_recipients || []).length) +
+    " trusted";
+
   return (
     <div className="hermes-guardian-grid">
       <div className="hermes-guardian-card">
         <div className="hermes-guardian-card-head">
           <div>
-            <div className="hermes-guardian-card-title">Privacy policy</div>
+            <div className="hermes-guardian-card-title">What's yours</div>
             <div className="hermes-guardian-muted">
-              Security filtering remains active in every privacy mode.
+              The destinations Guardian treats as you — writes there are never gated. Anything
+              it can't confirm is yours is treated as someone else.
+            </div>
+            <div className="hermes-guardian-rule-meta">
+              <span>{yoursSummary}</span>
+            </div>
+          </div>
+          <div className="hermes-guardian-actions">
+            <Button variant="secondary" onClick={onGoToDestinations}>
+              Manage in Destinations & Trust
+            </Button>
+          </div>
+        </div>
+      </div>
+      <div className="hermes-guardian-card">
+        <div className="hermes-guardian-card-head">
+          <div>
+            <div className="hermes-guardian-card-title">What happens when data leaves you</div>
+            <div className="hermes-guardian-muted">
+              {MODE_CONSEQUENCES[privacyMode] || "Security filtering runs in every mode."}
             </div>
           </div>
           <div className="hermes-guardian-actions">
@@ -76,13 +119,16 @@ export function SettingsTab({
             >
               {PRIVACY_MODES.map((mode) => (
                 <option key={mode} value={mode}>
-                  {mode}
+                  {mode + " — " + (MODE_CONSEQUENCES[mode] || "")}
                 </option>
               ))}
             </select>
           </div>
         </div>
       </div>
+      <details className="hermes-guardian-advanced">
+        <summary>Advanced</summary>
+        <div className="hermes-guardian-grid hermes-guardian-advanced-body">
       {privacyMode === "llm" ? (
       <div className="hermes-guardian-card">
         <div className="hermes-guardian-card-title">LLM approval context</div>
@@ -264,6 +310,8 @@ export function SettingsTab({
           </span>
         </div>
       </div>
+        </div>
+      </details>
     </div>
   );
 }

@@ -1,3 +1,22 @@
+/* Advanced (collapsed) section wrapping the less-frequent settings cards. */
+.hermes-guardian-advanced {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-card) 92%, transparent);
+  padding: 0.5rem 1rem 1rem;
+}
+
+.hermes-guardian-advanced > summary {
+  cursor: pointer;
+  font-weight: 700;
+  padding: 0.5rem 0;
+  list-style: revert;
+}
+
+.hermes-guardian-advanced-body {
+  margin-top: 0.5rem;
+}
+
 .hermes-guardian-security-check {
   align-items: flex-start;
 }

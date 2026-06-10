@@ -172,6 +172,14 @@ export function DestinationsTab({ controller }: DestinationsTabProps) {
 
   return (
     <div className="hermes-guardian-grid">
+      <div className="hermes-guardian-card hermes-guardian-dest-blurb">
+        <div className="hermes-guardian-card-title">How Guardian decides</div>
+        <div className="hermes-guardian-muted">
+          Guardian allows anything that stays with you — your own stores, your own machine. It
+          asks for approval when private data is about to reach someone else. Anything it can't
+          confirm is yours is treated as someone else.
+        </div>
+      </div>
       <SeenSection
         seen={(data && data.seen) || []}
         tally={(data && data.tally) || {}}

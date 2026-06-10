@@ -665,13 +665,23 @@ Guardian appears in the main Hermes dashboard at `/guardian` via
 
 Dashboard tabs:
 
-- **Settings**: edit privacy mode, toggle the LLM approval context channels
-  (user-prompt and cron), set the unknown-tools mode, manage tool overrides,
-  toggle Security Module rules, and manage language packs.
-- **Rules**: create, edit, delete, enable/disable, and reorder privacy rules.
-- **Recent Blocks**: inspect privacy/security blocks, approve pending actions,
-  and dismiss approvals.
-- **History**: browse paginated sanitized activity rows.
+- **Settings**: leads with *What's yours* (a summary of the self-allowlist, linking
+  into Destinations & Trust) and *What happens when data leaves you* (the privacy
+  mode, each option labelled with its consequence); the rest — LLM approval context
+  channels, verifier model, unknown-tools mode, Security Module rules, and language
+  packs — is under a collapsed *Advanced* section.
+- **Connectors** (formerly Tools): manage tool overrides and the unknown-tools mode.
+- **Allow rules** (formerly Egress Rules): create, edit, delete, enable/disable, and
+  reorder privacy rules.
+- **Activity** (formerly Recent Blocks): inspect privacy/security blocks — each row
+  shows a **destination-trust pill** and a plain-language **decision step** — approve
+  pending actions, and dismiss approvals.
+- **Destinations & Trust**: the destination-trust model made visible and editable —
+  a *Seen recently* list bucketed by trust with a one-click "this is mine → add to
+  self", the self-allowlist (stores / identities / hosts), trusted recipients, and the
+  outward-sharing subtypes (builtin shown read-only, extra editable). Edits are
+  admin-token + confirmation gated.
+- **History**: browse paginated sanitized activity rows (with trust + decision step).
 - **Performance**: per-check overhead Guardian adds — overall, LLM-verifier vs
   deterministic, per-hook-type (avg/p50/p95/max), and recent samples.
 
@@ -682,6 +692,7 @@ GET /api/plugins/hermes-guardian/policy
 GET /api/plugins/hermes-guardian/performance
 GET /api/plugins/hermes-guardian/activity
 GET /api/plugins/hermes-guardian/activity/datatables
+GET /api/plugins/hermes-guardian/destinations
 POST /api/plugins/hermes-guardian/privacy/mode
 POST /api/plugins/hermes-guardian/privacy/unknown-tools
 POST /api/plugins/hermes-guardian/privacy/user-context
@@ -697,6 +708,12 @@ PATCH /api/plugins/hermes-guardian/tools/{override_id}
 DELETE /api/plugins/hermes-guardian/tools/{override_id}
 POST /api/plugins/hermes-guardian/approvals/{approval_id}/approve
 POST /api/plugins/hermes-guardian/approvals/{approval_id}/dismiss
+POST /api/plugins/hermes-guardian/destinations/self
+POST /api/plugins/hermes-guardian/destinations/self/remove
+POST /api/plugins/hermes-guardian/destinations/trusted
+POST /api/plugins/hermes-guardian/destinations/trusted/remove
+POST /api/plugins/hermes-guardian/destinations/sharing
+POST /api/plugins/hermes-guardian/destinations/sharing/remove
 ```
 
 Mutation routes can be disabled with:
