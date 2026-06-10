@@ -395,6 +395,7 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
     },
     { label: "Decision", value: text(row.decision) },
   ];
+  if (row.action_detail) detailPairs.push({ label: "Action", value: text(row.action_detail) });
   if (row.reason) detailPairs.push({ label: "Reason", value: text(row.reason) });
 
   return (

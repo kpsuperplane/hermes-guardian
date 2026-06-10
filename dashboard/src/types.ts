@@ -115,6 +115,7 @@ export interface ActivityRow {
   purpose?: string;
   recipient_identity?: string;
   data_classes?: string;
+  action_detail?: string;
   reason?: string;
   reason_short?: string;
   turn_id?: string;
