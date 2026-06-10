@@ -12,6 +12,10 @@
   font-size: 0.82rem;
   font-weight: 600;
   padding: 0.38rem 0.65rem;
+  /* Keep multi-word labels on one line: buttons wrap as whole units within a
+     flex row rather than shrinking and breaking their text. */
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .hermes-guardian-button {

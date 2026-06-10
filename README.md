@@ -731,11 +731,11 @@ mine → is it covered by a grant → who judges the rest → the floor):
   before you commit it. Trust/sharing edits are admin-token + confirmation gated.
 - **Review**: case-by-case judgment — the privacy **mode** (each option written as a
   who-reviews sentence), the owner/cron authorization context toggles, the verifier
-  model, the unknown-tools mode, and a verifier **scoreboard** (consulted checks +
-  median latency).
+  model, and a verifier **scoreboard** (consulted checks + median latency).
 - **Protection**: the floor + machinery + diagnostics — Security Module hard-block
-  rules, tool classification overrides, language packs, retention, and the per-check
-  timing / diagnostics table.
+  rules, tool classification overrides (with the unknown-tools mode as a line item at
+  the bottom of that list), language packs, retention, and the per-check timing /
+  diagnostics table.
 
 Hermes mounts the dashboard API under `/api/plugins/hermes-guardian/`:
 

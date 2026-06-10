@@ -5,5 +5,31 @@
   margin-top: 1rem;
 }
 
+/* Unknown-tools setting as a line item at the bottom of the tool-classification
+   list: label/description on the left, the gate/allow select on the right. */
+.hermes-guardian-unknown-tools-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.hermes-guardian-unknown-tools-label {
+  display: grid;
+  gap: 0.15rem;
+  font-weight: 650;
+  min-width: 0;
+  flex: 1 1 16rem;
+}
+
+.hermes-guardian-unknown-tools-row .hermes-guardian-select {
+  width: auto;
+  flex: 0 0 auto;
+}
+
 /* --- Protection tab (doc 02 §Tab5): security checks, language packs, and
    override cards reuse the shared classes defined in ReviewTab.css. --- */

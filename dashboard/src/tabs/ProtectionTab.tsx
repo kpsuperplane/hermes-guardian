@@ -3,6 +3,8 @@ import { Button } from "@/components/Button";
 import { text } from "@/lib/format";
 import type { LanguagePack, Performance, PerfStats, Policy, ToolOverride } from "@/types";
 
+const UNKNOWN_TOOL_MODES = ["gate", "allow"];
+
 export interface ProtectionTabProps {
   policy: Policy | null;
   onPatchSecurityRule: (ruleId: string, enabled: boolean) => void;
@@ -11,6 +13,10 @@ export interface ProtectionTabProps {
   onEditOverride: (override: ToolOverride) => void;
   onToggleOverride: (override: ToolOverride) => void;
   onDeleteOverride: (override: ToolOverride) => void;
+  // Unknown-tools mode (sits at the bottom of the tool-classification list)
+  unknownTools: string;
+  unknownToolsSaving: boolean;
+  onChangeUnknownTools: (mode: string) => void;
   // Language packs
   languagePacksSaving: boolean;
   onPatchLanguagePack: (packId: string, enabled: boolean) => void;
@@ -88,6 +94,9 @@ function ToolClassification(props: {
   onEditOverride: (override: ToolOverride) => void;
   onToggleOverride: (override: ToolOverride) => void;
   onDeleteOverride: (override: ToolOverride) => void;
+  unknownTools: string;
+  unknownToolsSaving: boolean;
+  onChangeUnknownTools: (mode: string) => void;
 }) {
   const toolOverrides = (props.policy && props.policy.tool_overrides) || [];
   return (
@@ -161,6 +170,27 @@ function ToolClassification(props: {
       )}
       <div className="hermes-guardian-tools-override-actions">
         <Button onClick={props.onNewOverride}>New override</Button>
+      </div>
+      <div className="hermes-guardian-unknown-tools-row">
+        <div className="hermes-guardian-unknown-tools-label">
+          <span>Unknown tools</span>
+          <span className="hermes-guardian-muted">
+            What happens to a tool Guardian doesn't recognize. Gated under taint by default;
+            'allow' restores the legacy permissive behavior and is not recommended.
+          </span>
+        </div>
+        <select
+          className="hermes-guardian-select"
+          value={props.unknownTools}
+          disabled={props.unknownToolsSaving}
+          onChange={(event) => props.onChangeUnknownTools(event.target.value)}
+        >
+          {UNKNOWN_TOOL_MODES.map((mode) => (
+            <option key={mode} value={mode}>
+              {mode}
+            </option>
+          ))}
+        </select>
       </div>
     </div>
   );
@@ -355,6 +385,9 @@ export function ProtectionTab(props: ProtectionTabProps) {
         onEditOverride={props.onEditOverride}
         onToggleOverride={props.onToggleOverride}
         onDeleteOverride={props.onDeleteOverride}
+        unknownTools={props.unknownTools}
+        unknownToolsSaving={props.unknownToolsSaving}
+        onChangeUnknownTools={props.onChangeUnknownTools}
       />
       <LanguagePacks
         policy={props.policy}

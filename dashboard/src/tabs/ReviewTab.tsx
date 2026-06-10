@@ -28,8 +28,6 @@ const MODE_OPTIONS: Array<{ value: string; label: string; consequence: string }>
   },
 ];
 
-const UNKNOWN_TOOL_MODES = ["gate", "allow"];
-
 export interface ReviewTabProps {
   policy: Policy | null;
   privacyMode: string;
@@ -44,9 +42,6 @@ export interface ReviewTabProps {
   llmVerifierModel: string;
   verifierModelSaving: boolean;
   onChangeVerifierModel: (model: string) => void;
-  unknownTools: string;
-  unknownToolsSaving: boolean;
-  onChangeUnknownTools: (mode: string) => void;
   performance: Performance | null;
 }
 
@@ -69,9 +64,6 @@ export function ReviewTab(props: ReviewTabProps) {
     llmVerifierModel,
     verifierModelSaving,
     onChangeVerifierModel,
-    unknownTools,
-    unknownToolsSaving,
-    onChangeUnknownTools,
     performance,
   } = props;
 
@@ -171,29 +163,6 @@ export function ReviewTab(props: ReviewTabProps) {
           </div>
         </div>
       ) : null}
-
-      <div className="hermes-guardian-card">
-        <div className="hermes-guardian-card-title">Unknown tools</div>
-        <div className="hermes-guardian-muted">
-          What happens when Guardian doesn't recognize a tool. Unrecognized tools are gated
-          under taint by default; 'allow' restores the legacy permissive behavior and is not
-          recommended.
-        </div>
-        <div className="hermes-guardian-review-control">
-          <select
-            className="hermes-guardian-select"
-            value={unknownTools}
-            disabled={unknownToolsSaving}
-            onChange={(event) => onChangeUnknownTools(event.target.value)}
-          >
-            {UNKNOWN_TOOL_MODES.map((mode) => (
-              <option key={mode} value={mode}>
-                {mode}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
 
       <div className="hermes-guardian-card">
         <div className="hermes-guardian-card-title">Verifier scoreboard</div>

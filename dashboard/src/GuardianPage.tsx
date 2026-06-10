@@ -197,9 +197,6 @@ export function GuardianPage() {
           llmVerifierModel={llmVerifierModel}
           verifierModelSaving={actions.verifierModelSaving}
           onChangeVerifierModel={actions.saveVerifierModel}
-          unknownTools={unknownTools}
-          unknownToolsSaving={actions.unknownToolsSaving}
-          onChangeUnknownTools={actions.saveUnknownTools}
           performance={performance.performance}
         />
       ) : null}
@@ -212,6 +209,9 @@ export function GuardianPage() {
           onEditOverride={actions.openEditOverride}
           onToggleOverride={actions.toggleOverride}
           onDeleteOverride={actions.deleteOverride}
+          unknownTools={unknownTools}
+          unknownToolsSaving={actions.unknownToolsSaving}
+          onChangeUnknownTools={actions.saveUnknownTools}
           languagePacksSaving={actions.languagePacksSaving}
           onPatchLanguagePack={actions.patchLanguagePack}
           onSetAllLanguagePacks={actions.setAllLanguagePacks}
