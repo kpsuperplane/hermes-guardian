@@ -322,6 +322,9 @@ def _web_content_taint_classes(value: Any, session_id: str | None) -> set[str]:
     signals only taint when the host carries private context — the operator typed
     credentials there, or the page shows logged-in/account markers. Structurally
     unambiguous signals (an SSN, an email-record header block) taint regardless.
+    Even behind the private-context gate, the phone check is the same real-personal
+    libphonenumber filter used on doc reads, so a fake/business number embedded in a
+    logged-in page is not mistaken for a personal contact.
 
     Tradeoff (intentional): a genuinely private page that never trips a login
     marker and where nothing was typed reads as public, so a personal address on
@@ -337,7 +340,7 @@ def _web_content_taint_classes(value: Any, session_id: str | None) -> set[str]:
         classes.add("documents")
     if not (_browser_has_private_input(session_id) or _browser_result_has_private_context(value)):
         return classes
-    if _PHONE_RE.search(text) or _PRIVATE_FIELD_RE.search(text):
+    if _has_real_personal_phone(text) or _PRIVATE_FIELD_RE.search(text):
         classes.add("contacts")
     if any(not _email_is_ambient_business(addr) for addr in _EMAIL_ADDRESS_RE.findall(text)):
         classes.add("contacts")
