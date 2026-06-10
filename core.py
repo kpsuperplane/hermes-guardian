@@ -613,6 +613,7 @@ _CORE_LOGIC_MODULES = (
     "runtime/activity_store",
     "runtime/activity_rows",
     "privacy/taint",
+    "privacy/destinations",
     "privacy/tool_policy",
     "privacy/provenance",
     "privacy/action_details",

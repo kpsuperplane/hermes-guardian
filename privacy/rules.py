@@ -35,6 +35,39 @@ _TOOL_OVERRIDE_EGRESS_FAMILIES = {
     "homeassistant_write",
 }
 _TOOL_OVERRIDE_EGRESS_VALUES = {"ignore", "gate"} | _TOOL_OVERRIDE_EGRESS_FAMILIES
+# --- Destination-trust config defaults (doc 01 §4; Phase 1 plumbing) ---------
+# These seed the `self` / `trusted_recipients` / `outward_sharing` blocks of the
+# privacy config. The destination-trust resolver (privacy/destinations.py) reads
+# them. Phase 1 is additive: these blocks are parsed/normalized/defaulted, but no
+# decision path consumes them yet.
+#
+# Conservative-but-useful defaults (doc 01 §4):
+#  - destinations: the seven single-operator-owned stores + draft:* (writes here
+#    reach no new party because the operator authenticated as themselves).
+#  - identities / hosts: EMPTY — send-to-self and own-infra are powerful `self`
+#    grants the operator must opt into; an unfilled list fails closed to external.
+#  - outward_sharing.builtin: the six subtypes that reach other parties even on a
+#    self store. NOT narrowable — parsing ignores attempts to remove a builtin;
+#    `extra` may only add.
+_DEFAULT_SELF_DESTINATIONS = (
+    "store:files",
+    "store:memory",
+    "store:todo",
+    "store:calendar",
+    "store:notion",
+    "store:drive",
+    "draft:*",
+)
+_OUTWARD_SHARING_BUILTIN_SUBTYPES = (
+    "share",
+    "invite",
+    "publish",
+    "add_collaborator",
+    "make_public",
+    "set_permissions",
+)
+# Class labels a trusted-recipient entry may scope itself to (doc 01 §4 example).
+# Reuses the existing privacy data-class vocabulary; unknown classes are dropped.
 _SECURITY_RULE_DEFINITIONS = {
     "account_security_content": {
         "label": "Account security content",
@@ -93,10 +126,32 @@ def _default_privacy_config() -> dict[str, Any]:
             "rules": [],
             "tools": [],
         },
+        "self": _default_self_config(),
+        "trusted_recipients": _default_trusted_recipients_config(),
+        "outward_sharing": _default_outward_sharing_config(),
         "security": {
             "rules": _default_security_rules(),
         },
         "language_packs": _default_language_pack_config(),
+    }
+
+
+def _default_self_config() -> dict[str, Any]:
+    return {
+        "destinations": list(_DEFAULT_SELF_DESTINATIONS),
+        "identities": [],
+        "hosts": [],
+    }
+
+
+def _default_trusted_recipients_config() -> dict[str, Any]:
+    return {"entries": []}
+
+
+def _default_outward_sharing_config() -> dict[str, Any]:
+    return {
+        "builtin": list(_OUTWARD_SHARING_BUILTIN_SUBTYPES),
+        "extra": [],
     }
 
 
@@ -247,6 +302,132 @@ def _normalize_security_rules(raw: Any) -> list[dict[str, Any]]:
     return rules
 
 
+def _normalize_destination_token(value: Any) -> str:
+    """Normalize a self-destination allowlist token: ``kind:id`` or ``kind:*``.
+
+    Lowercased; restricted to a conservative charset. A trailing ``*`` (prefix
+    match) is preserved. Returns "" for unusable input so malformed entries are
+    dropped (fail closed) rather than crashing the load.
+    """
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    star = text.endswith("*")
+    base = text[:-1] if star else text
+    base = re.sub(r"[^a-z0-9_.:/-]+", "", base)
+    if not base:
+        return ""
+    return f"{base}*" if star else base
+
+
+def _normalize_identity_token(value: Any) -> str:
+    """Normalize an own-identity / host / recipient identity string.
+
+    Lowercased and length-bounded; emails/handles/hostnames pass through. Empty
+    or whitespace-only input is dropped.
+    """
+    text = re.sub(r"\s+", "", str(value or "")).strip().lower()
+    return text[:200]
+
+
+def _normalize_string_list(raw: Any, normalizer) -> list[str]:
+    """Normalize a list of strings with ``normalizer``, dropping empties/dupes."""
+    items = raw if isinstance(raw, list) else []
+    out: list[str] = []
+    for value in items:
+        token = normalizer(value)
+        if token and token not in out:
+            out.append(token)
+    return out
+
+
+def _normalize_self_config(raw: Any) -> dict[str, Any]:
+    """Normalize the ``self`` block (doc 01 §4), failing closed on malformed input.
+
+    A non-dict (wholly corrupt) block drops to the safe default subset
+    (default destinations + empty identities/hosts). Individual malformed entries
+    inside otherwise-valid lists are dropped, not fatal. ``identities`` and
+    ``hosts`` default EMPTY, so the absence of a valid block never widens `self`.
+    """
+    if not isinstance(raw, dict):
+        return _default_self_config()
+    destinations = _normalize_string_list(
+        raw.get("destinations"), _normalize_destination_token
+    )
+    if not destinations and not isinstance(raw.get("destinations"), list):
+        # No destinations key supplied at all -> seed the safe defaults so the
+        # common FP cases vanish out of the box (doc 01 §4). An explicitly empty
+        # list is honored as-is (operator chose to clear it).
+        destinations = list(_DEFAULT_SELF_DESTINATIONS)
+    return {
+        "destinations": destinations,
+        # CONSERVATIVE: identities/hosts are never defaulted to a non-empty set.
+        "identities": _normalize_string_list(raw.get("identities"), _normalize_identity_token),
+        "hosts": _normalize_string_list(raw.get("hosts"), _normalize_identity_token),
+    }
+
+
+def _normalize_trusted_recipient_entry(entry: Any) -> dict[str, Any] | None:
+    if not isinstance(entry, dict):
+        return None
+    identity = _normalize_identity_token(entry.get("identity") or entry.get("recipient"))
+    if not identity:
+        return None
+    classes = _normalize_rule_classes(entry.get("classes", entry.get("class", ["*"])))
+    return {"identity": identity, "classes": classes or ["*"]}
+
+
+def _normalize_trusted_recipients(raw: Any) -> dict[str, Any]:
+    """Normalize the ``trusted_recipients`` block (doc 01 §4), fail closed.
+
+    A non-dict block, or a non-list ``entries``, drops to the safe empty default.
+    Malformed individual entries are dropped.
+    """
+    if not isinstance(raw, dict):
+        return _default_trusted_recipients_config()
+    entries_raw = raw.get("entries")
+    if not isinstance(entries_raw, list):
+        return _default_trusted_recipients_config()
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in entries_raw:
+        normalized = _normalize_trusted_recipient_entry(entry)
+        if normalized is None or normalized["identity"] in seen:
+            continue
+        seen.add(normalized["identity"])
+        out.append(normalized)
+    return {"entries": out}
+
+
+def _normalize_outward_sharing(raw: Any) -> dict[str, Any]:
+    """Normalize the ``outward_sharing`` block (doc 01 §4), fail closed.
+
+    The builtin set is NOT narrowable: the result's ``builtin`` is always exactly
+    the hard-coded builtin subtypes, regardless of what config supplies (an
+    operator attempt to remove one is ignored). ``extra`` may only ADD subtypes
+    and is normalized; builtin members are never duplicated into ``extra``.
+    """
+    block = raw if isinstance(raw, dict) else {}
+    builtin = set(_OUTWARD_SHARING_BUILTIN_SUBTYPES)
+    extra: list[str] = []
+    for key in ("extra", "builtin"):
+        # Read both lists for `extra` candidates: any config-supplied subtype that
+        # is not already a builtin becomes an `extra` addition. This lets operators
+        # add via either key while making builtin removal impossible.
+        candidates = block.get(key)
+        if not isinstance(candidates, list):
+            continue
+        for value in candidates:
+            token = str(value or "").strip().lower()
+            token = re.sub(r"[^a-z0-9_]+", "", token)
+            if token and token not in builtin and token not in extra:
+                extra.append(token)
+    return {
+        "builtin": list(_OUTWARD_SHARING_BUILTIN_SUBTYPES),
+        "extra": extra,
+    }
+
+
 def _available_language_pack_map() -> dict[str, dict[str, Any]]:
     try:
         packs = _language._available_language_packs()
@@ -379,6 +560,12 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
             "rules": normalized_rules,
             "tools": _normalize_tool_overrides(privacy.get("tools")),
         },
+        # Destination-trust blocks (doc 01 §4). A version<current config that lacks
+        # these keys gets the safe defaults injected here for free (the normalizers
+        # default a missing/non-dict block to its safe subset).
+        "self": _normalize_self_config(parsed.get("self")),
+        "trusted_recipients": _normalize_trusted_recipients(parsed.get("trusted_recipients")),
+        "outward_sharing": _normalize_outward_sharing(parsed.get("outward_sharing")),
         "security": {
             "rules": _normalize_security_rules(security.get("rules")),
         },
