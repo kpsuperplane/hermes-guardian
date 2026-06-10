@@ -716,7 +716,7 @@ mine → is it covered by a grant → who judges the rest → the floor):
 
 - **Activity**: the merged decided stream (blocks + history) **grouped by turn** (one
   user prompt and the actions it drove), plus a pinned *Pending approvals* list with
-  same-screen Approve / Deny, a session **taint strip** with *Clear session taint*,
+  same-screen Approve / Dismiss, a session **taint strip** with *Clear session taint*,
   per-row **trust pills**, and a **deep-linked decision step** whose clauses jump to the
   tab that governs them. Filters: decision, trust, class/tag, tool, destination,
   recipient, date range, and search; rows expand to the full resolved capability (the

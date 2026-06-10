@@ -69,6 +69,7 @@ export function GuardianPage() {
     setPersistPrompts,
     llmVerifierModel,
     setLlmVerifierModel,
+    reloadApprovals: approvals.loadApprovals,
     showToast,
   });
 
@@ -168,6 +169,9 @@ export function GuardianPage() {
           pageSize={history.pageSize}
           setPage={history.setPage}
           setPageSize={history.setPageSize}
+          persistPrompts={persistPrompts}
+          persistPromptsSaving={actions.persistPromptsSaving}
+          onChangePersistPrompts={actions.savePersistPrompts}
           onNavigate={setTab}
         />
       ) : null}
@@ -216,9 +220,6 @@ export function GuardianPage() {
           unknownTools={unknownTools}
           unknownToolsSaving={actions.unknownToolsSaving}
           onChangeUnknownTools={actions.saveUnknownTools}
-          persistPrompts={persistPrompts}
-          persistPromptsSaving={actions.persistPromptsSaving}
-          onChangePersistPrompts={actions.savePersistPrompts}
           languagePacksSaving={actions.languagePacksSaving}
           onPatchLanguagePack={actions.patchLanguagePack}
           onSetAllLanguagePacks={actions.setAllLanguagePacks}

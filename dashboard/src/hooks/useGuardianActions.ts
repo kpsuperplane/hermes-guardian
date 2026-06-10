@@ -29,6 +29,7 @@ export interface GuardianActionDeps {
   setPersistPrompts: (enabled: boolean) => void;
   llmVerifierModel: string;
   setLlmVerifierModel: (model: string) => void;
+  reloadApprovals: () => Promise<void>;
   showToast: (message?: unknown, variant?: ToastVariant) => void;
 }
 
@@ -59,6 +60,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     setPersistPrompts,
     llmVerifierModel,
     setLlmVerifierModel,
+    reloadApprovals,
     showToast,
   } = deps;
 
@@ -511,10 +513,15 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     })
       .then((result) => {
         showToast(result.message || "Updated.");
+        // Refresh the pending-approvals list so the acted-on item disappears without a
+        // manual page refresh; also refresh the policy snapshot (taint/banners).
+        reloadApprovals();
         return load();
       })
       .catch((err) => {
         showToast(errText(err), "error");
+        // Re-sync in case the item already resolved server-side.
+        reloadApprovals();
       });
   }
 

@@ -17,10 +17,6 @@ export interface ProtectionTabProps {
   unknownTools: string;
   unknownToolsSaving: boolean;
   onChangeUnknownTools: (mode: string) => void;
-  // Prompt persistence (debugging)
-  persistPrompts: boolean;
-  persistPromptsSaving: boolean;
-  onChangePersistPrompts: (enabled: boolean) => void;
   // Language packs
   languagePacksSaving: boolean;
   onPatchLanguagePack: (packId: string, enabled: boolean) => void;
@@ -302,41 +298,6 @@ function Retention(props: { policy: Policy | null }) {
   );
 }
 
-// --- Debugging: opt-in prompt persistence ------------------------------------
-function Debugging(props: {
-  persistPrompts: boolean;
-  saving: boolean;
-  onChange: (enabled: boolean) => void;
-}) {
-  return (
-    <div className="hermes-guardian-card">
-      <div className="hermes-guardian-card-title">Debugging</div>
-      <div className="hermes-guardian-muted hermes-guardian-section-description">
-        History is always grouped by turn (one user prompt and the actions it drove). Turn
-        this on to also record the sanitized user/cron prompt on each turn so you can see
-        what was asked. Off by default — it relaxes the metadata-only invariant; turn it off
-        when you're done. The stored prompt is the same redacted excerpt the verifier sees
-        (emails, phone numbers, URLs, quoted strings, and tokens removed) and is pruned with
-        every other row by Retention.
-      </div>
-      <label className="hermes-guardian-check hermes-guardian-security-check">
-        <input
-          type="checkbox"
-          checked={props.persistPrompts}
-          disabled={props.saving}
-          onChange={(event) => props.onChange(event.target.checked)}
-        />
-        <span className="hermes-guardian-security-rule-text">
-          <span>Persist prompts on activity rows</span>
-          <span className="hermes-guardian-muted">
-            Writes the sanitized user/cron prompt to the activity log for debugging.
-          </span>
-        </span>
-      </label>
-    </div>
-  );
-}
-
 // --- Diagnostics (PerformanceTab demoted to a section, doc 02 §Tab5.5) -------
 function Diagnostics(props: {
   performance: Performance | null;
@@ -435,11 +396,6 @@ export function ProtectionTab(props: ProtectionTabProps) {
         onSetAll={props.onSetAllLanguagePacks}
       />
       <Retention policy={props.policy} />
-      <Debugging
-        persistPrompts={props.persistPrompts}
-        saving={props.persistPromptsSaving}
-        onChange={props.onChangePersistPrompts}
-      />
       <Diagnostics
         performance={props.performance}
         loading={props.performanceLoading}

@@ -12,7 +12,7 @@ export interface ActivityTabProps {
   // Session taint strip
   taint: string[];
   onClearTaint: () => void;
-  // Pinned pending approvals (same-screen approve/deny)
+  // Pinned pending approvals (same-screen approve/dismiss)
   approvals: PendingApproval[];
   approvalsLoading: boolean;
   onApprovalAction: (approval: PendingApproval, action: ApprovalAction) => void;
@@ -25,8 +25,47 @@ export interface ActivityTabProps {
   pageSize: number;
   setPage: (page: number) => void;
   setPageSize: (size: number) => void;
+  // Prompt persistence (debugging) — controls whether turn headers show the prompt
+  persistPrompts: boolean;
+  persistPromptsSaving: boolean;
+  onChangePersistPrompts: (enabled: boolean) => void;
   // Deep-link navigation to the governing tab
   onNavigate: (tab: TabId) => void;
+}
+
+// --- Debugging: opt-in prompt persistence (controls the turn-header prompt) ----
+function Debugging(props: {
+  persistPrompts: boolean;
+  saving: boolean;
+  onChange: (enabled: boolean) => void;
+}) {
+  return (
+    <div className="hermes-guardian-card">
+      <div className="hermes-guardian-card-title">Debugging</div>
+      <div className="hermes-guardian-muted hermes-guardian-section-description">
+        History is always grouped by turn (one user prompt and the actions it drove). Turn
+        this on to also record the sanitized user/cron prompt on each turn so the turn
+        header shows what was asked. Off by default — it relaxes the metadata-only invariant;
+        turn it off when you're done. The stored prompt is the same redacted excerpt the
+        verifier sees (emails, phone numbers, URLs, quoted strings, and tokens removed) and
+        is pruned with every other row by Retention.
+      </div>
+      <label className="hermes-guardian-check hermes-guardian-security-check">
+        <input
+          type="checkbox"
+          checked={props.persistPrompts}
+          disabled={props.saving}
+          onChange={(event) => props.onChange(event.target.checked)}
+        />
+        <span className="hermes-guardian-security-rule-text">
+          <span>Persist prompts on activity rows</span>
+          <span className="hermes-guardian-muted">
+            Writes the sanitized user/cron prompt to the activity log for debugging.
+          </span>
+        </span>
+      </label>
+    </div>
+  );
 }
 
 // --- Session taint strip (doc 02 §Tab1.1) ------------------------------------
@@ -80,7 +119,7 @@ function ApprovalCard(props: {
             Approve
           </Button>
           <Button variant="secondary" onClick={() => onAction(approval, "dismiss")}>
-            Deny
+            Dismiss
           </Button>
         </div>
       </div>
@@ -492,6 +531,9 @@ export function ActivityTab(props: ActivityTabProps) {
     pageSize,
     setPage,
     setPageSize,
+    persistPrompts,
+    persistPromptsSaving,
+    onChangePersistPrompts,
     onNavigate,
   } = props;
 
@@ -512,7 +554,7 @@ export function ActivityTab(props: ActivityTabProps) {
       <div className="hermes-guardian-card hermes-guardian-approvals-section">
         <div className="hermes-guardian-card-title">Pending approvals</div>
         <div className="hermes-guardian-muted">
-          Actions paused until you approve or deny them.
+          Actions paused until you approve or dismiss them.
         </div>
         {approvalsLoading && !approvals.length ? (
           <div className="hermes-guardian-muted">Loading approvals...</div>
@@ -531,6 +573,12 @@ export function ActivityTab(props: ActivityTabProps) {
           <div className="hermes-guardian-muted">Nothing needs your approval right now.</div>
         )}
       </div>
+
+      <Debugging
+        persistPrompts={persistPrompts}
+        saving={persistPromptsSaving}
+        onChange={onChangePersistPrompts}
+      />
 
       <div className="hermes-guardian-card-title">History</div>
       <FilterBar filters={filters} setFilters={setFilters} />
