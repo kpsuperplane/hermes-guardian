@@ -53,6 +53,9 @@ function SecurityRules(props: {
   return (
     <div className="hermes-guardian-card">
       <div className="hermes-guardian-card-title">Security policy</div>
+      <div className="hermes-guardian-muted hermes-guardian-section-description">
+        These run before everything else and apply to every destination, including your own.
+      </div>
       {securityRules.length ? (
         <div className="hermes-guardian-grid">
           {securityRules.map((rule) => (
@@ -345,11 +348,6 @@ function Diagnostics(props: {
 export function ProtectionTab(props: ProtectionTabProps) {
   return (
     <div className="hermes-guardian-grid">
-      <div className="hermes-guardian-card hermes-guardian-protection-banner">
-        <div className="hermes-guardian-muted">
-          These run before everything else and apply to every destination, including your own.
-        </div>
-      </div>
       <SecurityRules policy={props.policy} onPatch={props.onPatchSecurityRule} />
       <ToolClassification
         policy={props.policy}

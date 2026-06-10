@@ -1,11 +1,9 @@
+/* Shared bottom-aligned action row: "New override" (Protection) and "New rule"
+   (Sharing) both sit below their list using this. */
 .hermes-guardian-tools-override-actions {
   display: flex;
   margin-top: 1rem;
 }
 
-/* --- Protection tab (doc 02 §Tab5): floor banner. Security checks, language
-   packs, and override cards reuse the shared classes defined in ReviewTab.css. --- */
-.hermes-guardian-protection-banner {
-  border-color: color-mix(in srgb, var(--color-ring) 30%, var(--color-border));
-  background: color-mix(in srgb, var(--color-ring) 6%, var(--color-card));
-}
+/* --- Protection tab (doc 02 §Tab5): security checks, language packs, and
+   override cards reuse the shared classes defined in ReviewTab.css. --- */

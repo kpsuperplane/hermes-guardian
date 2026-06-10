@@ -260,7 +260,6 @@ export function SharingTab(props: SharingTabProps) {
             use Up / Down to reorder.
           </p>
         </div>
-        <Button onClick={onNewRule}>New rule</Button>
       </div>
       {rules.length ? (
         rules.map((rule, index) => (
@@ -278,6 +277,9 @@ export function SharingTab(props: SharingTabProps) {
       ) : (
         <div className="hermes-guardian-card hermes-guardian-muted">No privacy rules.</div>
       )}
+      <div className="hermes-guardian-tools-override-actions">
+        <Button onClick={onNewRule}>New rule</Button>
+      </div>
 
       <OutwardSharing controller={controller} />
 

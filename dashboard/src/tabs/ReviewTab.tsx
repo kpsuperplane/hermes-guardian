@@ -85,27 +85,23 @@ export function ReviewTab(props: ReviewTabProps) {
   return (
     <div className="hermes-guardian-grid">
       <div className="hermes-guardian-card">
-        <div className="hermes-guardian-card-head">
-          <div>
-            <div className="hermes-guardian-card-title">Who reviews outbound actions</div>
-            <div className="hermes-guardian-muted">
-              {currentMode ? currentMode.consequence : "Security filtering runs in every mode."}
-            </div>
-          </div>
-          <div className="hermes-guardian-actions">
-            <select
-              className="hermes-guardian-select"
-              value={privacyMode}
-              disabled={modeSaving}
-              onChange={(event) => onChangePrivacyMode(event.target.value)}
-            >
-              {MODE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label + " — " + option.consequence}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="hermes-guardian-card-title">Who reviews outbound actions</div>
+        <div className="hermes-guardian-muted">
+          {currentMode ? currentMode.consequence : "Security filtering runs in every mode."}
+        </div>
+        <div className="hermes-guardian-review-control">
+          <select
+            className="hermes-guardian-select"
+            value={privacyMode}
+            disabled={modeSaving}
+            onChange={(event) => onChangePrivacyMode(event.target.value)}
+          >
+            {MODE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label + " — " + option.consequence}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -150,59 +146,51 @@ export function ReviewTab(props: ReviewTabProps) {
               </span>
             </label>
           </div>
-          <div className="hermes-guardian-card-head">
-            <div>
-              <div className="hermes-guardian-card-title">Verifier model</div>
-              <div className="hermes-guardian-muted">
-                Run the verifier on a faster model than the agent's. Options come from this
-                plugin's <code>allowed_models</code>; grant{" "}
-                <code>plugins.entries.hermes-guardian.llm.allow_model_override</code> to populate
-                them. Guardian falls back to the default model if an override is rejected.
-              </div>
-            </div>
-            <div className="hermes-guardian-actions">
-              <select
-                className="hermes-guardian-select"
-                value={llmVerifierModel || ""}
-                disabled={verifierModelSaving}
-                onChange={(event) => onChangeVerifierModel(event.target.value)}
-              >
-                <option value="">Default (agent model)</option>
-                {verifierModelOptions.map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className="hermes-guardian-card-title">Verifier model</div>
+          <div className="hermes-guardian-muted">
+            Run the verifier on a faster model than the agent's. Options come from this
+            plugin's <code>allowed_models</code>; grant{" "}
+            <code>plugins.entries.hermes-guardian.llm.allow_model_override</code> to populate
+            them. Guardian falls back to the default model if an override is rejected.
+          </div>
+          <div className="hermes-guardian-review-control">
+            <select
+              className="hermes-guardian-select"
+              value={llmVerifierModel || ""}
+              disabled={verifierModelSaving}
+              onChange={(event) => onChangeVerifierModel(event.target.value)}
+            >
+              <option value="">Default (agent model)</option>
+              {verifierModelOptions.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       ) : null}
 
       <div className="hermes-guardian-card">
-        <div className="hermes-guardian-card-head">
-          <div>
-            <div className="hermes-guardian-card-title">Unknown tools</div>
-            <div className="hermes-guardian-muted">
-              What happens when Guardian doesn't recognize a tool. Unrecognized tools are gated
-              under taint by default; 'allow' restores the legacy permissive behavior and is not
-              recommended.
-            </div>
-          </div>
-          <div className="hermes-guardian-actions">
-            <select
-              className="hermes-guardian-select"
-              value={unknownTools}
-              disabled={unknownToolsSaving}
-              onChange={(event) => onChangeUnknownTools(event.target.value)}
-            >
-              {UNKNOWN_TOOL_MODES.map((mode) => (
-                <option key={mode} value={mode}>
-                  {mode}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="hermes-guardian-card-title">Unknown tools</div>
+        <div className="hermes-guardian-muted">
+          What happens when Guardian doesn't recognize a tool. Unrecognized tools are gated
+          under taint by default; 'allow' restores the legacy permissive behavior and is not
+          recommended.
+        </div>
+        <div className="hermes-guardian-review-control">
+          <select
+            className="hermes-guardian-select"
+            value={unknownTools}
+            disabled={unknownToolsSaving}
+            onChange={(event) => onChangeUnknownTools(event.target.value)}
+          >
+            {UNKNOWN_TOOL_MODES.map((mode) => (
+              <option key={mode} value={mode}>
+                {mode}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 

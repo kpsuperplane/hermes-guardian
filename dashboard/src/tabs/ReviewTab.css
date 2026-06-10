@@ -1,3 +1,16 @@
+/* Select controls sit on their own line below the card title/description,
+   sized to content and aligned left (not pinned to the card's right edge). */
+.hermes-guardian-review-control {
+  margin-top: 0.6rem;
+}
+
+.hermes-guardian-review-control .hermes-guardian-select {
+  display: block;
+  width: auto;
+  min-width: 14rem;
+  max-width: 100%;
+}
+
 /* Advanced (collapsed) section wrapping the less-frequent settings cards. */
 .hermes-guardian-advanced {
   border: 1px solid var(--color-border);
