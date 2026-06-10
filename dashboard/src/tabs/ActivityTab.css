@@ -194,7 +194,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 0.5rem 1rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   padding: 0.7rem 0.9rem;
   background: color-mix(in srgb, var(--color-muted) 30%, transparent);
   border-bottom: 1px solid var(--color-border);
@@ -204,11 +204,13 @@
   display: flex;
   align-items: baseline;
   gap: 0.55rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .hermes-guardian-turn-label {
+  flex: 0 0 auto;
   font-weight: 700;
   font-size: 0.72rem;
   letter-spacing: 0.04em;
@@ -216,12 +218,17 @@
   color: var(--color-muted-foreground);
 }
 
+/* The prompt is constrained to a single line and ellipsized if it overflows. */
 .hermes-guardian-turn-prompt {
   font-weight: 650;
-  overflow-wrap: anywhere;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hermes-guardian-turn-card-meta {
+  flex: 0 0 auto;
   font-size: 0.78rem;
   white-space: nowrap;
 }
