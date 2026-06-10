@@ -51,6 +51,30 @@ def test_pending_approval_id_is_contextual_without_llm():
     assert f"Approval ID: {approval_id}" in blocked["message"]
     assert f"/guardian approve {approval_id} once" in blocked["message"]
 
+
+def test_block_message_carries_metadata_plus_anti_circumvention_directive():
+    """The agent relays the block to the user, so the message keeps the reason and the
+    approval commands. It must ALSO carry an explicit anti-circumvention directive so a
+    blocked egress is not re-routed through a different tool/channel."""
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+
+    blocked = plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hi"}, session_id="s1")
+    assert blocked is not None
+    message = blocked["message"]
+    approval_id = first_pending_id(plugin)
+
+    # Metadata retained for the agent to surface to the user.
+    assert f"/guardian approve {approval_id} once" in message
+    assert "Reason:" in message
+    assert "Data classes:" in message
+    # Explicit anti-circumvention directive present.
+    lowered = message.lower()
+    assert "do not" in lowered
+    assert "circumvention" in lowered
+
+
 def test_pending_approval_id_is_four_digit_even_with_llm_available():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="strict")

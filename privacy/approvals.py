@@ -277,6 +277,16 @@ def _create_pending_approval(shape: dict[str, Any]) -> dict[str, Any]:
 
 
 def _guardian_block_message(approval: dict[str, Any]) -> str:
+    """The block notice returned to the AGENT as the withheld tool's result.
+
+    The agent is the relay to the user, so the message carries the full reason and
+    the approval commands for the agent to surface to the owner (the agent cannot
+    self-approve — approval is owner-gated). It ALSO carries an explicit
+    anti-circumvention directive: a blocked egress must not be re-attempted through a
+    different tool, command, channel, or rephrased arguments. This closes the
+    channel-shopping hole where an agent, told only "this was blocked", re-routes the
+    same export through a softer surface (the terminal->browser incident).
+    """
     classes = ", ".join(approval.get("data_classes") or ["private"])
     action_detail = str(approval.get("action_detail") or "").strip()
     action_detail_line = f"Action detail: {action_detail}\n" if action_detail else ""
@@ -290,7 +300,12 @@ def _guardian_block_message(approval: dict[str, Any]) -> str:
         f"{action_detail_line}"
         f"Data classes: {classes}\n"
         f"{reason_line}\n"
-        "You can approve with:\n"
+        "DO NOT attempt to accomplish the same result another way. Re-trying this "
+        "through a different tool, command, channel, or rephrased arguments to reach "
+        "the same outcome is circumvention and will be blocked too. Stop and surface "
+        "this block, the reason, and the approval options to the user — only they can "
+        "approve it.\n\n"
+        "The user can approve with:\n"
         f"/guardian approve {approval['id']} once\n"
         f"/guardian approve {approval['id']} session\n"
         f"/guardian approve {approval['id']} always\n"
