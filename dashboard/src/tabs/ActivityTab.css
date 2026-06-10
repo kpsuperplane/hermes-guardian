@@ -186,11 +186,38 @@
   background: color-mix(in srgb, var(--color-card) 88%, transparent);
 }
 
-.hermes-guardian-activity-expand {
+/* Expanded detail: a full-width row beneath its activity row, rendered as a
+   two-column key/value table. The open row and its detail share a subtle inset
+   background and drop the divider between them so they read as one block. */
+.hermes-guardian-activity-row-open > td,
+.hermes-guardian-activity-detail-row > td {
+  background: color-mix(in srgb, var(--color-muted) 30%, transparent);
+}
+
+.hermes-guardian-activity-detail-row > td {
+  border-top: 0;
+  padding-top: 0.2rem;
+}
+
+.hermes-guardian-activity-detail {
   display: grid;
-  gap: 0.15rem;
-  margin-top: 0.4rem;
-  font-size: 0.78rem;
+  grid-template-columns: max-content 1fr;
+  gap: 0.3rem 1rem;
+  margin: 0;
+  font-size: 0.8rem;
+  align-items: baseline;
+}
+
+.hermes-guardian-activity-detail dt {
+  color: var(--color-muted-foreground);
+  font-weight: 600;
+}
+
+.hermes-guardian-activity-detail dd {
+  margin: 0;
+  color: var(--color-foreground);
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .hermes-guardian-decision-step {

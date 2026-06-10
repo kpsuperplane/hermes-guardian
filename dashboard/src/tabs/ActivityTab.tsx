@@ -330,51 +330,84 @@ function ActivityRowItem(props: {
   )
     .map((cls) => text(cls).trim())
     .filter(Boolean);
+  // Key/value pairs for the expanded detail, rendered as a full-width table below
+  // the row. Classes render as chips; everything else as text.
+  const detailPairs: Array<{ label: string; value: React.ReactNode }> = [
+    { label: "Direction", value: isRead ? "read" : "write" },
+    {
+      label: "Destination",
+      value: destination + " (" + text(row.destination_trust, "unknown") + ")",
+    },
+    { label: "Purpose", value: text(row.purpose, "unknown") },
+    { label: "Recipient", value: text(row.recipient_identity, "none") },
+    {
+      label: "Classes",
+      value: taints.length ? (
+        <span className="hermes-guardian-chips hermes-guardian-history-taint-chips">
+          {taints.map((cls) => (
+            <span key={cls} className="hermes-guardian-chip">
+              {cls}
+            </span>
+          ))}
+        </span>
+      ) : (
+        "none"
+      ),
+    },
+    { label: "Decision", value: text(row.decision) },
+  ];
+  if (row.reason) detailPairs.push({ label: "Reason", value: text(row.reason) });
+
   return (
-    <tr
-      className="hermes-guardian-activity-row"
-      onClick={() => setOpen(!open)}
-      style={{ cursor: "pointer" }}
-    >
-      <td>{text(row.decision)}</td>
-      <td>{text(row.time, timeText(row.ts))}</td>
-      <td>
-        <div className="hermes-guardian-history-target">
-          <div className="hermes-guardian-history-tool">{tool}</div>
-          <div className="hermes-guardian-history-route">{action + " -> " + destination}</div>
-          {row.decision_step ? (
-            <div className="hermes-guardian-muted">
-              <DecisionStep step={row.decision_step} onNavigate={onNavigate} />
-            </div>
-          ) : null}
-          {open ? (
-            <div className="hermes-guardian-activity-expand hermes-guardian-muted">
-              <div>{"direction " + (isRead ? "read" : "write")}</div>
-              <div>{"destination " + destination + " (" + text(row.destination_trust, "unknown") + ")"}</div>
-              <div>{"purpose " + text(row.purpose, "unknown")}</div>
-              <div>{"recipient " + text(row.recipient_identity, "none")}</div>
-              <div>{"classes " + text(row.data_classes, "none")}</div>
-              <div>{"decision " + text(row.decision)}</div>
-              {row.reason ? <div>{"reason " + text(row.reason)}</div> : null}
-            </div>
-          ) : null}
-        </div>
-      </td>
-      <td className="hermes-guardian-history-trust">
-        {!isRead && row.destination_trust ? trustLabel(row.destination_trust) : ""}
-      </td>
-      <td>
-        {taints.length ? (
-          <div className="hermes-guardian-chips hermes-guardian-history-taint-chips">
-            {taints.map((cls) => (
-              <span key={cls} className="hermes-guardian-chip">
-                {cls}
-              </span>
-            ))}
+    <React.Fragment>
+      <tr
+        className={"hermes-guardian-activity-row" + (open ? " hermes-guardian-activity-row-open" : "")}
+        onClick={() => setOpen(!open)}
+        style={{ cursor: "pointer" }}
+      >
+        <td>{text(row.decision)}</td>
+        <td>{text(row.time, timeText(row.ts))}</td>
+        <td>
+          <div className="hermes-guardian-history-target">
+            <div className="hermes-guardian-history-tool">{tool}</div>
+            <div className="hermes-guardian-history-route">{action + " -> " + destination}</div>
+            {row.decision_step ? (
+              <div className="hermes-guardian-muted">
+                <DecisionStep step={row.decision_step} onNavigate={onNavigate} />
+              </div>
+            ) : null}
           </div>
-        ) : null}
-      </td>
-    </tr>
+        </td>
+        <td className="hermes-guardian-history-trust">
+          {!isRead && row.destination_trust ? trustLabel(row.destination_trust) : ""}
+        </td>
+        <td>
+          {taints.length ? (
+            <div className="hermes-guardian-chips hermes-guardian-history-taint-chips">
+              {taints.map((cls) => (
+                <span key={cls} className="hermes-guardian-chip">
+                  {cls}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </td>
+      </tr>
+      {open ? (
+        <tr className="hermes-guardian-activity-detail-row">
+          <td colSpan={5}>
+            <dl className="hermes-guardian-activity-detail">
+              {detailPairs.map((pair) => (
+                <React.Fragment key={pair.label}>
+                  <dt>{pair.label}</dt>
+                  <dd>{pair.value}</dd>
+                </React.Fragment>
+              ))}
+            </dl>
+          </td>
+        </tr>
+      ) : null}
+    </React.Fragment>
   );
 }
 
