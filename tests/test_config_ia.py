@@ -64,10 +64,10 @@ def _full_v4_document() -> dict:
             "owner_context": True,
             "cron_context": True,
             "verifier_model": "gpt-5.4-mini",
-            "unknown_tools": "gate",
         },
         "protection": {
             "security": {"sensitive_links": False},
+            "unknown_tools": "gate",
             "tools": [
                 {"match": "crm_*", "direction": "read", "taints": ["contacts"],
                  "destination": "store:crm", "egress": "ignore"},
@@ -102,7 +102,7 @@ def test_full_v4_file_parses_to_internal_structure():
     assert "crosspost" in config["outward_sharing"]["extra"]
     assert set(config["outward_sharing"]["builtin"]) == set(plugin._OUTWARD_SHARING_BUILTIN_SUBTYPES)
 
-    # review.* -> internal privacy.{mode,llm_*,unknown_tools}.
+    # review.* -> internal privacy.{mode,llm_*}; protection.unknown_tools -> privacy.unknown_tools.
     assert config["privacy"]["mode"] == "llm"
     assert config["privacy"]["llm_user_context"] is True
     assert config["privacy"]["llm_cron_context"] is True
@@ -319,7 +319,7 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     assert on_disk["review"]["mode"] == "read-only"
     assert "store:crm" in on_disk["whats_yours"]["stores"]
     assert on_disk["protection"]["security"]["sensitive_links"] is False
-    assert on_disk["review"]["unknown_tools"] == "allow"
+    assert on_disk["protection"]["unknown_tools"] == "allow"
     assert "crosspost" in on_disk["sharing"]["outward"]["extra"]
     # builtin subtypes are NOT serialized (code-owned, never written to config).
     assert "builtin" not in on_disk["sharing"]["outward"]

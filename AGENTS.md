@@ -208,8 +208,7 @@ re-authored to the schema below.
     "mode": "strict",
     "owner_context": true,
     "cron_context": false,
-    "verifier_model": "",
-    "unknown_tools": "gate"
+    "verifier_model": ""
   },
   "protection": {
     "security": {
@@ -219,6 +218,7 @@ re-authored to the schema below.
       "intrinsic_exfiltration": true,
       "private_network_reads": true
     },
+    "unknown_tools": "gate",
     "tools": [
       {
         "id": "tool_ab12cd34",
@@ -250,13 +250,14 @@ The conceptual file→internal map (doc 04 §3): `whats_yours.stores/.identities
 `trusted_recipients.entries`; `sharing.rules` → `privacy.rules`;
 `sharing.outward.extra` → `outward_sharing.extra` (builtin subtypes are code-owned and
 never read from / written to config); `review.mode/.owner_context/.cron_context/
-.verifier_model/.unknown_tools` → `privacy.mode/.llm_user_context/.llm_cron_context/
-.llm_verifier_model/.unknown_tools`; `protection.security` (a `{id: bool}` toggle map)
-→ `security.rules`; `protection.tools` → `privacy.tools`; `protection.language_packs`
+.verifier_model` → `privacy.mode/.llm_user_context/.llm_cron_context/
+.llm_verifier_model`; `protection.security` (a `{id: bool}` toggle map)
+→ `security.rules`; `protection.unknown_tools` → `privacy.unknown_tools`;
+`protection.tools` → `privacy.tools`; `protection.language_packs`
 (a `{id: bool}` toggle map) → `language_packs.enabled`; `protection.retention` →
 `retention`; `protection.runtime` → `dashboard`.
 
-`review.unknown_tools` is `gate` (default) or `allow`. In `gate`, an unrecognized
+`protection.unknown_tools` is `gate` (default) or `allow`. In `gate`, an unrecognized
 tool (not a known built-in, not covered by a `privacy.tools` override) is classified
 as `tool_unknown` and gated under taint, mirroring `mcp_unknown`. `allow` restores
 the legacy permissive behavior and raises a runtime risk banner.
@@ -432,11 +433,11 @@ underlying handler under its new group.
 /guardian review owner-context on|off
 /guardian review cron-context on|off
 /guardian review verifier-model <model_id|default>
-/guardian review unknown-tools gate|allow
 /guardian protection security enable|disable <rule_id>
 /guardian protection tool set <match> [taints=a+b] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]
 /guardian protection tool delete <match_or_id>
 /guardian protection tool enable|disable <id_or_match>
+/guardian protection unknown-tools gate|allow
 /guardian protection language-packs enable|disable <pack_id>
 ```
 

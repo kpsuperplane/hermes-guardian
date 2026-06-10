@@ -625,9 +625,10 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
 #   sharing.trusted_recipients            -> trusted_recipients.entries
 #   sharing.rules                         -> privacy.rules
 #   sharing.outward.extra                 -> outward_sharing.extra (builtin code-owned)
-#   review.mode/.owner_context/.cron_context/.verifier_model/.unknown_tools
+#   review.mode/.owner_context/.cron_context/.verifier_model
 #                                         -> privacy.mode/.llm_user_context/...
 #   protection.security                   -> security.rules
+#   protection.unknown_tools              -> privacy.unknown_tools
 #   protection.tools                      -> privacy.tools
 #   protection.language_packs             -> language_packs.enabled
 #   protection.retention                  -> retention
@@ -767,7 +768,8 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
         # 4 — REVIEW: case-by-case judgment (decide step 6).
         "privacy": {
             "mode": _normalize_privacy_mode(review.get("mode")),
-            "unknown_tools": _normalize_unknown_tools_mode(review.get("unknown_tools")),
+            # 5 — PROTECTION: unknown-tools mode lives with tool classification.
+            "unknown_tools": _normalize_unknown_tools_mode(protection.get("unknown_tools")),
             "llm_user_context": _config_bool(
                 review.get("owner_context"), default=_DEFAULT_LLM_USER_CONTEXT
             ),
@@ -821,12 +823,6 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
             raw_mode = str(review.get("mode") or "").strip().lower().replace("_", "-")
             if raw_mode not in _PRIVACY_MODES:
                 raise ValueError("privacy rule file has invalid review.mode")
-        if "unknown_tools" in review:
-            raw_unknown = (
-                str(review.get("unknown_tools") or "").strip().lower().replace("_", "-").replace("-", "")
-            )
-            if raw_unknown not in {"gate", "secure", "block", "allow", "permissive", "off", "legacy"}:
-                raise ValueError("privacy rule file has invalid review.unknown_tools")
         for context_key in ("owner_context", "cron_context"):
             if context_key in review and not isinstance(review.get(context_key), (bool, int, str)):
                 raise ValueError(f"privacy rule file has invalid review.{context_key}")
@@ -836,6 +832,13 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
         block = parsed.get(block_name)
         if block is not None and not isinstance(block, dict):
             raise ValueError(f"privacy rule file {block_name} must be an object")
+    protection = parsed.get("protection")
+    if isinstance(protection, dict) and "unknown_tools" in protection:
+        raw_unknown = (
+            str(protection.get("unknown_tools") or "").strip().lower().replace("_", "-").replace("-", "")
+        )
+        if raw_unknown not in {"gate", "secure", "block", "allow", "permissive", "off", "legacy"}:
+            raise ValueError("privacy rule file has invalid protection.unknown_tools")
 
 
 def _load_privacy_config() -> dict[str, Any]:
@@ -970,7 +973,6 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
                 privacy.get("llm_cron_context"), default=_DEFAULT_LLM_CRON_CONTEXT
             ),
             "verifier_model": _normalize_verifier_model(privacy.get("llm_verifier_model")),
-            "unknown_tools": _normalize_unknown_tools_mode(privacy.get("unknown_tools")),
         },
         "protection": {
             "security": {
@@ -978,6 +980,7 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
                 for rule in security_rules
                 if isinstance(rule, dict) and rule.get("id")
             },
+            "unknown_tools": _normalize_unknown_tools_mode(privacy.get("unknown_tools")),
             "tools": list(privacy.get("tools") or []),
             "language_packs": {pack_id: (pack_id in enabled_packs) for pack_id in ordered_pack_ids},
             "retention": {

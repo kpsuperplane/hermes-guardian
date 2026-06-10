@@ -252,34 +252,38 @@ export function SharingTab(props: SharingTabProps) {
     <div className="hermes-guardian-grid">
       <TrustedRecipients controller={controller} />
 
-      <div className="hermes-guardian-card-head">
-        <div>
-          <div className="hermes-guardian-card-title">Allow / deny rules</div>
-          <p className="hermes-guardian-muted hermes-guardian-rule-description">
-            The ordered, first-match list that decides which tainted private data can leave by
-            matching action, destination, purpose, recipient, and data class. Order is semantics —
-            use Up / Down to reorder.
-          </p>
+      <div className="hermes-guardian-card">
+        <div className="hermes-guardian-card-head">
+          <div>
+            <div className="hermes-guardian-card-title">Allow / deny rules</div>
+            <p className="hermes-guardian-muted hermes-guardian-rule-description">
+              The ordered, first-match list that decides which tainted private data can leave by
+              matching action, destination, purpose, recipient, and data class. Order is semantics —
+              use Up / Down to reorder.
+            </p>
+          </div>
         </div>
-      </div>
-      {rules.length ? (
-        rules.map((rule, index) => (
-          <RuleCard
-            key={rule.rule_id}
-            rule={rule}
-            index={index}
-            total={rules.length}
-            onEditRule={onEditRule}
-            onPatchRule={onPatchRule}
-            onDeleteRule={onDeleteRule}
-            onMoveRule={onMoveRule}
-          />
-        ))
-      ) : (
-        <div className="hermes-guardian-card hermes-guardian-muted">No privacy rules.</div>
-      )}
-      <div className="hermes-guardian-tools-override-actions">
-        <Button onClick={onNewRule}>New rule</Button>
+        {rules.length ? (
+          <div className="hermes-guardian-grid">
+            {rules.map((rule, index) => (
+              <RuleCard
+                key={rule.rule_id}
+                rule={rule}
+                index={index}
+                total={rules.length}
+                onEditRule={onEditRule}
+                onPatchRule={onPatchRule}
+                onDeleteRule={onDeleteRule}
+                onMoveRule={onMoveRule}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="hermes-guardian-muted">No privacy rules.</div>
+        )}
+        <div className="hermes-guardian-tools-override-actions">
+          <Button onClick={onNewRule}>New rule</Button>
+        </div>
       </div>
 
       <OutwardSharing controller={controller} />

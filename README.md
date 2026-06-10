@@ -208,8 +208,7 @@ decision:
     "mode": "llm",
     "owner_context": true,
     "cron_context": false,
-    "verifier_model": "",
-    "unknown_tools": "gate"
+    "verifier_model": ""
   },
   "protection": {
     "security": {
@@ -219,6 +218,7 @@ decision:
       "intrinsic_exfiltration": true,
       "private_network_reads": true
     },
+    "unknown_tools": "gate",
     "tools": [],
     "language_packs": { "en": true },
     "retention": { "max_rows": 100, "max_age_days": 7 },
@@ -574,7 +574,7 @@ taint, exactly like unknown MCP tools. This is the `unknown_tools` mode:
   and the dashboard.
 
 ```text
-/guardian review unknown-tools gate|allow
+/guardian protection unknown-tools gate|allow
 ```
 
 When the default is too strict for a tool you trust, declare it with a **tool
@@ -680,7 +680,6 @@ sit on top as the everyday commands.
 /guardian review owner-context on|off
 /guardian review cron-context on|off
 /guardian review verifier-model <model_id|default>
-/guardian review unknown-tools gate|allow
 
 # PROTECTION — the floor that always holds
 /guardian protection
@@ -688,6 +687,7 @@ sit on top as the everyday commands.
 /guardian protection tool set <match> [taints=class+class] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]
 /guardian protection tool delete <match_or_id>
 /guardian protection tool enable|disable <id_or_match>
+/guardian protection unknown-tools gate|allow
 /guardian protection language-packs enable|disable <pack_id>
 ```
 

@@ -36,17 +36,17 @@ _GUARDIAN_HELP_LINES = [
     "  sharing preview <action> <destination> <class>   which step fires",
     "",
     "REVIEW — who judges everything else",
-    "  review                  show mode, contexts, verifier, unknown-tools",
+    "  review                  show mode, contexts, verifier model",
     "  review mode strict|read-only|llm|off",
     "  review owner-context on|off",
     "  review cron-context on|off",
     "  review verifier-model <model_id|default>",
-    "  review unknown-tools gate|allow",
     "",
     "PROTECTION — the floor that always holds",
     "  protection              show security, tool overrides, language packs",
     "  protection security enable|disable <rule_id>",
     "  protection tool set|delete|enable|disable ...",
+    "  protection unknown-tools gate|allow",
     "  protection language-packs enable|disable <pack_id>",
 ]
 
@@ -493,8 +493,6 @@ def _guardian_review_command(owner_hash: str, tokens: list[str]) -> str:
         "cron_context": "cron-context",
         "verifier-model": "verifier-model",
         "verifier_model": "verifier-model",
-        "unknown-tools": "unknown-tools",
-        "unknown_tools": "unknown-tools",
     }
     if sub not in rename:
         return (
@@ -502,8 +500,7 @@ def _guardian_review_command(owner_hash: str, tokens: list[str]) -> str:
             "/guardian review mode strict|read-only|llm|off | "
             "/guardian review owner-context on|off | "
             "/guardian review cron-context on|off | "
-            "/guardian review verifier-model <model_id|default> | "
-            "/guardian review unknown-tools gate|allow"
+            "/guardian review verifier-model <model_id|default>"
         )
     return _guardian_privacy_command(owner_hash, ["privacy", rename[sub], *tokens[2:]])
 
@@ -520,6 +517,8 @@ def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
         return _guardian_tool_command(owner_hash, ["tool", *tokens[2:]])
     if sub == "tools":
         return _guardian_tools_command()
+    if sub in {"unknown-tools", "unknown_tools"}:
+        return _guardian_privacy_command(owner_hash, ["privacy", "unknown-tools", *tokens[2:]])
     if sub in {"language-packs", "language-pack", "languages"}:
         return _guardian_language_packs_command(owner_hash, ["language-packs", *tokens[2:]])
     if not sub:
@@ -528,6 +527,7 @@ def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
         "Usage: /guardian protection | "
         "/guardian protection security enable|disable <rule_id> | "
         "/guardian protection tool set|delete|enable|disable ... | "
+        "/guardian protection unknown-tools gate|allow | "
         "/guardian protection language-packs enable|disable <pack_id>"
     )
 
@@ -671,10 +671,10 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
         return message
     return (
         "Usage: /guardian review mode strict|read-only|llm|off | "
-        "/guardian review unknown-tools gate|allow | "
         "/guardian review owner-context on|off | "
         "/guardian review cron-context on|off | "
-        "/guardian review verifier-model <model_id|default>"
+        "/guardian review verifier-model <model_id|default> | "
+        "/guardian protection unknown-tools gate|allow"
     )
 
 
@@ -702,7 +702,7 @@ def _guardian_tools_command() -> str:
         lines.append(f"- {override.get('id', '')}: " + " ".join(bits) + suffix)
     lines.append(
         "Use /guardian protection tool set|delete|enable|disable and "
-        "/guardian review unknown-tools gate|allow."
+        "/guardian protection unknown-tools gate|allow."
     )
     return "\n".join(lines)
 

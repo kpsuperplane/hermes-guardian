@@ -38,11 +38,12 @@ def test_settings_persist_and_preserve_other_privacy_config(tmp_path):
     assert plugin._set_privacy_mode("strict")[0]
 
     data = json.loads((tmp_path / "rules.json").read_text())
-    # v4 on-disk: the review block carries mode + context flags + unknown-tools.
+    # v4 on-disk: the review block carries mode + context flags; unknown-tools
+    # lives in the protection block (with tool classification).
     review = data["review"]
     assert review["owner_context"] is False
     assert review["cron_context"] is True
-    assert review["unknown_tools"] == "allow"
+    assert data["protection"]["unknown_tools"] == "allow"
     assert review["mode"] == "strict"
     assert plugin._llm_user_context_enabled() is False
     assert plugin._llm_cron_context_enabled() is True
