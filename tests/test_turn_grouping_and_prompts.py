@@ -264,6 +264,24 @@ def test_slash_activity_groups_by_turn_with_nested_checks(monkeypatch):
     assert "browser_type" in out and "web_read" in out  # both checks nested under the turn
 
 
+def test_slash_activity_robot_prefix_marks_llm_involved_checks(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    bind_owner(plugin)
+    owner = _owner_hash(plugin)
+    plugin._on_pre_gateway_dispatch(gateway_event("go", user_id="owner"))
+    plugin._emit_activity("auto_approved", session_id="s1", owner_hash=owner, tool_name="browser_type", reason="llm low: fine")
+    plugin._emit_activity("blocked", session_id="s1", owner_hash=owner, tool_name="send_message", reason="requires approval (llm high: mismatch)")
+    plugin._emit_activity("blocked", session_id="s1", owner_hash=owner, tool_name="terminal", reason="requires approval")
+
+    out = plugin._handle_guardian_command("activity 3")
+    # Decisions render as emojis; the LLM-involved ones carry a 🤖 prefix, the
+    # deterministic block does not.
+    assert "🤖✅ `browser_type`" in out
+    assert "🤖❌ `send_message`" in out
+    assert "❌ `terminal`" in out and "🤖❌ `terminal`" not in out
+
+
 def _load_plugin_api():
     import importlib.util
 

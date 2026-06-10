@@ -102,6 +102,7 @@ export interface RecentBlock {
 export interface ActivityRow {
   id?: string;
   decision?: string;
+  icon?: string;
   time?: string;
   ts?: number;
   tool_name?: string;

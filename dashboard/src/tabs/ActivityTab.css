@@ -257,8 +257,8 @@
 }
 
 .hermes-guardian-check-decision {
-  font-weight: 650;
-  min-width: 4.5rem;
+  min-width: 2.5rem;
+  white-space: nowrap;
 }
 
 .hermes-guardian-check-time {

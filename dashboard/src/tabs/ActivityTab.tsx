@@ -352,6 +352,18 @@ function FilterBar(props: { filters: Filters; setFilters: (next: Filters) => voi
 }
 
 // --- Turn cards (history grouped by turn) ------------------------------------
+// The decision shows as an emoji (✅/❌/📥/🌐, from the backend `icon`), prefixed with
+// 🤖 when the LLM verifier was involved (an auto-approval, or any verdict whose reason
+// mentions the verifier). The full word is kept as a tooltip.
+function checkInvolvesLlm(row: ActivityRow): boolean {
+  if (text(row.decision) === "auto_approved") return true;
+  return (text(row.reason) + " " + text(row.reason_short)).toLowerCase().indexOf("llm") >= 0;
+}
+
+function decisionEmoji(row: ActivityRow): string {
+  return (checkInvolvesLlm(row) ? "🤖" : "") + (text(row.icon) || "•");
+}
+
 // A "check" line-item: one activity row inside a turn card. Click to expand the full
 // key/value detail (the dashboard twin of /guardian why).
 function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }) {
@@ -400,7 +412,9 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
         onClick={() => setOpen(!open)}
         style={{ cursor: "pointer" }}
       >
-        <span className="hermes-guardian-check-decision">{text(row.decision)}</span>
+        <span className="hermes-guardian-check-decision" title={text(row.decision)}>
+          {decisionEmoji(row)}
+        </span>
         <span className="hermes-guardian-check-time hermes-guardian-muted">
           {text(row.time, timeText(row.ts))}
         </span>
