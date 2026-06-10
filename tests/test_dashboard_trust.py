@@ -160,6 +160,49 @@ def test_pending_block_snapshot_carries_trust_and_decision_step():
     assert block["decision_step"] == "step6_approve_external"
 
 
+# --- Commit 2: the "Seen recently" list + one-click add-to-self suggestion. -----------
+def test_suggest_self_grant_maps_destinations_to_valid_grants():
+    plugin = load_plugin()
+    # Hostnames -> own-infra host grant.
+    assert plugin._suggest_self_grant("docs.google.com") == {"kind": "host", "value": "docs.google.com"}
+    # MCP/store destinations -> store grant.
+    assert plugin._suggest_self_grant("mcp:notion") == {"kind": "destination", "value": "store:notion"}
+    assert plugin._suggest_self_grant("store:crm") == {"kind": "destination", "value": "store:crm"}
+    # Pseudo-destinations, IPs, and empties are NOT one-click addable.
+    for non_addable in ("", "web_search", "cron", "telegram", "127.0.0.1", "messaging"):
+        assert plugin._suggest_self_grant(non_addable) is None
+
+
+def test_destination_trust_summary_includes_seen_with_suggestion():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    # Gate an external send so an external destination is recorded.
+    plugin._on_pre_tool_call(
+        tool_name="send_message",
+        args={"to": "stranger@example.com", "text": "hi"},
+        session_id="s1",
+    )
+    summary = plugin._destination_trust_summary()
+    assert "seen" in summary and isinstance(summary["seen"], list)
+    # Every seen entry is metadata-only and carries trust + count.
+    for entry in summary["seen"]:
+        assert set(entry) >= {"destination", "trust", "count", "suggest"}
+
+
+def test_add_to_self_suggestion_flips_resolution_external_to_self():
+    """The centerpiece interaction: claiming a seen host moves it into the self-allowlist
+    so the same destination resolves self instead of external."""
+    plugin = load_plugin()
+    SELF = plugin._DestinationTrust.SELF
+    before = plugin._resolve_destination_trust("network", "myvps.example.com", "post", "", plugin._load_privacy_config())
+    assert before != SELF
+    ok, _ = plugin._add_self_destination("host", "myvps.example.com")
+    assert ok
+    after = plugin._resolve_destination_trust("network", "myvps.example.com", "post", "", plugin._load_privacy_config())
+    assert after == SELF
+
+
 def test_pending_block_trust_survives_store_reload():
     """A gateway restart reloads pending approvals from SQLite; the trust pill + step must
     survive (Commit 1 persists them as columns, not in-memory only)."""

@@ -3,6 +3,46 @@
 // permissive — fields are optional and the formatting helpers in lib/format.ts
 // coerce loose values defensively, matching the original bundle's behavior.
 
+// --- Destinations & Trust (doc 03 §3.1) ---
+export interface SelfGrantSuggestion {
+  kind: string; // "destination" | "identity" | "host"
+  value: string;
+}
+
+export interface SeenDestination {
+  destination?: string;
+  trust?: string;
+  count?: number;
+  suggest?: SelfGrantSuggestion | null;
+}
+
+export interface SelfAllowlist {
+  destinations?: string[];
+  identities?: string[];
+  hosts?: string[];
+}
+
+export interface TrustedRecipient {
+  identity?: string;
+  classes?: string[];
+  note?: string;
+}
+
+export interface OutwardSharing {
+  builtin?: string[];
+  extra?: string[];
+}
+
+export interface DestinationsSummary {
+  tally?: Record<string, number>;
+  seen?: SeenDestination[];
+  self?: SelfAllowlist;
+  trusted_recipients?: TrustedRecipient[];
+  outward_sharing?: OutwardSharing;
+  self_grants_present?: boolean;
+  env_overrides?: string[];
+}
+
 export interface Rule {
   rule_id?: string;
   id?: string;

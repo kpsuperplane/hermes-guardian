@@ -1,0 +1,74 @@
+/* Destinations & Trust tab (doc 03 §3.1). Lists + add rows reuse the shared card,
+   pill, and form primitives; only layout chrome lives here. */
+.hermes-guardian-dest-tally {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
+  align-items: center;
+}
+
+.hermes-guardian-dest-tally-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.hermes-guardian-dest-group {
+  margin-top: 0.85rem;
+}
+
+.hermes-guardian-dest-group-title {
+  font-weight: 650;
+  font-size: 0.82rem;
+  margin-bottom: 0.4rem;
+}
+
+.hermes-guardian-dest-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.hermes-guardian-dest-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-card) 92%, transparent);
+}
+
+.hermes-guardian-dest-seen-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.hermes-guardian-dest-item code {
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.hermes-guardian-dest-empty {
+  font-size: 0.8rem;
+  padding: 0.3rem 0;
+}
+
+.hermes-guardian-dest-addrow {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.45rem;
+}
+
+.hermes-guardian-dest-addrow .hermes-guardian-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}

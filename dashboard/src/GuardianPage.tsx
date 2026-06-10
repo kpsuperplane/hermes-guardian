@@ -4,12 +4,14 @@ import { OverrideModal } from "@/components/OverrideModal";
 import { RiskBanners } from "@/components/RiskBanners";
 import { RuleModal } from "@/components/RuleModal";
 import { ToastRegion } from "@/components/ToastRegion";
+import { useDestinations } from "@/hooks/useDestinations";
 import { useGuardianActions } from "@/hooks/useGuardianActions";
 import { useHistory } from "@/hooks/useHistory";
 import { usePerformance } from "@/hooks/usePerformance";
 import { usePolicy } from "@/hooks/usePolicy";
 import { useToasts } from "@/hooks/useToasts";
 import { BlocksTab } from "@/tabs/BlocksTab";
+import { DestinationsTab } from "@/tabs/DestinationsTab";
 import { HistoryTab } from "@/tabs/HistoryTab";
 import { PerformanceTab } from "@/tabs/PerformanceTab";
 import { RulesTab } from "@/tabs/RulesTab";
@@ -21,6 +23,7 @@ const TABS: Array<[string, string]> = [
   ["tools", "Tools"],
   ["rules", "Egress Rules"],
   ["blocks", "Recent Blocks"],
+  ["destinations", "Destinations & Trust"],
   ["history", "History"],
   ["performance", "Performance"],
 ];
@@ -45,6 +48,7 @@ export function GuardianPage() {
   const { toasts, showToast, dismissToast } = useToasts();
   const history = useHistory();
   const performance = usePerformance();
+  const destinations = useDestinations(showToast);
   const actions = useGuardianActions({
     policy,
     load,
@@ -107,6 +111,7 @@ export function GuardianPage() {
               load();
               if (tab === "history") history.loadHistory(history.page, history.pageSize);
               if (tab === "performance") performance.loadPerformance();
+              if (tab === "destinations") destinations.refetch();
             }}
           >
             Refresh
@@ -176,6 +181,7 @@ export function GuardianPage() {
       {tab === "blocks" ? (
         <BlocksTab blocks={blocks} onApprovalAction={actions.approvalAction} />
       ) : null}
+      {tab === "destinations" ? <DestinationsTab controller={destinations} /> : null}
       {tab === "history" ? (
         <HistoryTab
           activity={history.activity}

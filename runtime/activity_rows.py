@@ -793,11 +793,83 @@ def _destination_trust_tally(*, limit: int = 500) -> dict[str, int]:
     return tally
 
 
+# Pseudo-destinations that are not ownable infra/stores, so they get no one-click
+# "add to self" suggestion (the operator can still add anything via the explicit form).
+_NON_ADDABLE_DESTINATIONS = frozenset(
+    {"", "messaging", "web_search", "cron", "telegram", "model", "subagent", "browser", "shell", "network", "store"}
+)
+# A bare DNS hostname (browser/network destination) — own-infra host grant candidate.
+_SEEN_HOSTNAME_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$")
+
+
+def _suggest_self_grant(destination: str) -> dict[str, str] | None:
+    """Map an observed destination to a sensible self-grant {kind, value}, or None.
+
+    Presentation-only: turns a display destination into the (kind, value) the existing
+    `_add_self_destination` route accepts, so the dashboard can offer a one-click
+    "this is mine". IPs/localhost and pseudo-destinations get no suggestion on purpose.
+    """
+    dest = str(destination or "").strip()
+    low = dest.lower()
+    if not dest or low in _NON_ADDABLE_DESTINATIONS:
+        return None
+    if low.startswith("mcp:"):
+        rest = low[4:].strip(": ")
+        return {"kind": "destination", "value": f"store:{rest}"} if rest else None
+    if low.startswith("store:") or low.startswith("draft:"):
+        return {"kind": "destination", "value": low}
+    if _SEEN_HOSTNAME_RE.match(low):
+        return {"kind": "host", "value": dest}
+    return None
+
+
+def _destination_trust_seen(*, limit: int = 300, max_entries: int = 40) -> list[dict[str, Any]]:
+    """Distinct recent egress destinations with their trust + a suggested self-grant.
+
+    Powers the dashboard "Seen recently" list and the one-click "this is mine -> add to
+    self" (doc 03 §3.1). Metadata-only: reads the destination + destination_trust columns,
+    never payload. Ordered most-recent-first, deduped by (destination, trust).
+    """
+    _ensure_activity_db()
+    counts: dict[tuple[str, str], int] = {}
+    order: list[tuple[str, str]] = []
+    try:
+        with _activity_connect() as conn:
+            rows = conn.execute(
+                "SELECT destination, destination_trust AS trust FROM activity "
+                "WHERE decision NOT IN ('read', 'tainted') "
+                "ORDER BY ts DESC, id DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+    except Exception:
+        return []
+    for row in rows:
+        trust = _normalize_destination_trust_label(row["trust"])
+        dest = str(row["destination"] or "")
+        key = (dest, trust)
+        if key not in counts:
+            counts[key] = 0
+            order.append(key)
+        counts[key] += 1
+    seen: list[dict[str, Any]] = []
+    for dest, trust in order[:max_entries]:
+        seen.append(
+            {
+                "destination": dest,
+                "trust": trust,
+                "count": counts[(dest, trust)],
+                "suggest": _suggest_self_grant(dest) if trust in ("external", "unknown", "public") else None,
+            }
+        )
+    return seen
+
+
 def _destination_trust_summary() -> dict[str, Any]:
     """The destination-trust summary block for status + dashboard (doc 03 §2, §3.1)."""
     self_snapshot = _self_config_snapshot()
     return {
         "tally": _destination_trust_tally(),
+        "seen": _destination_trust_seen(),
         "self": self_snapshot,
         "trusted_recipients": _trusted_recipients_snapshot(),
         "outward_sharing": _outward_sharing_snapshot(),
