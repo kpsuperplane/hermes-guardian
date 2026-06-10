@@ -1,13 +1,18 @@
 /* Aggregated entry for the Guardian dashboard stylesheet. Built to
    dist/style.css. Co-located component/tab CSS is imported here in cascade
-   order: shared shell + form primitives first, then component and tab chrome. */
+   order: shared shell + form primitives first, then component and tab chrome.
+   The five tabs (Activity · What's Yours · Sharing · Review · Protection)
+   mirror the IA in doc 02; shared classnames (cards, pills, dest lists, the
+   history table) live in whichever tab CSS first defined them and are reused
+   across tabs since the bundle is one global stylesheet. */
 @import "./base.css";
 @import "./forms.css";
 @import "../components/Button.css";
 @import "../components/Modal.css";
 @import "../components/ToastRegion.css";
 @import "../components/RiskBanners.css";
-@import "../tabs/SettingsTab.css";
-@import "../tabs/ToolsTab.css";
-@import "../tabs/HistoryTab.css";
-@import "../tabs/DestinationsTab.css";
+@import "../tabs/ActivityTab.css";
+@import "../tabs/WhatsYoursTab.css";
+@import "../tabs/SharingTab.css";
+@import "../tabs/ReviewTab.css";
+@import "../tabs/ProtectionTab.css";

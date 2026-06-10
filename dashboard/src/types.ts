@@ -183,6 +183,62 @@ export interface HistoryResponse {
   recordsTotal?: number;
 }
 
+// --- Activity pending approvals (doc 02 §Tab1) ---
+export interface PendingApproval {
+  id?: string;
+  tool_name?: string;
+  action_family?: string;
+  destination?: string;
+  destination_trust?: string;
+  decision_step?: string;
+  purpose?: string;
+  recipient_identity?: string;
+  data_classes?: string[];
+  reason?: string;
+  created_at?: number;
+  expires_at?: number;
+  covered_by_rule?: boolean;
+  covered_rule_id?: string;
+  covered_rule_source?: string;
+}
+
+// --- Pure-function widget payloads (doc 02 §Tab2/§Tab3) ---
+export interface DestinationResolution {
+  value?: string;
+  kind?: string;
+  id?: string;
+  trust?: string;
+}
+
+export interface SendPreview {
+  action_family?: string;
+  destination?: string;
+  data_classes?: string[];
+  destination_trust?: string;
+  decision?: string;
+  decision_step?: string;
+}
+
+export interface ImpactRow {
+  id?: string;
+  decision?: string;
+  action_family?: string;
+  destination?: string;
+  destination_trust?: string;
+  data_classes?: string | string[];
+  purpose?: string;
+  recipient_identity?: string;
+  created_at?: number;
+}
+
+export interface ImpactPreview {
+  effect?: string;
+  verb?: string;
+  matched_count?: number;
+  considered?: number;
+  matched?: ImpactRow[];
+}
+
 // Local form state for the rule modal.
 export interface RuleForm {
   id: string;

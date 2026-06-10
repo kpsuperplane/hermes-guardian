@@ -4,7 +4,6 @@ import { api } from "@/api/client";
 import { DEFAULT_FORM, DEFAULT_OVERRIDE_FORM } from "@/constants";
 import { text } from "@/lib/format";
 import { formToPayload, payloadIsWildcardAllow, ruleToForm } from "@/lib/rules";
-import type { ApprovalAction } from "@/tabs/BlocksTab";
 import type {
   OverrideForm,
   Policy,
@@ -30,6 +29,10 @@ export interface GuardianActionDeps {
   setLlmVerifierModel: (model: string) => void;
   showToast: (message?: unknown, variant?: ToastVariant) => void;
 }
+
+// Same-screen approval verbs (Activity tab). Moved here from the retired
+// BlocksTab so the Activity merge owns its own action vocabulary.
+export type ApprovalAction = "approve-once" | "approve-always" | "dismiss";
 
 function errText(err: unknown): string {
   return String((err as Error)?.message || err);
@@ -440,6 +443,24 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     });
   }
 
+  function clearTaintAction() {
+    if (
+      !window.confirm(
+        "Clear session taint and session approvals for your active Guardian sessions?",
+      )
+    ) {
+      return;
+    }
+    api("/privacy/clear-taint", { method: "POST", body: JSON.stringify({}) })
+      .then((result) => {
+        showToast(result.message || "Cleared.");
+        return load();
+      })
+      .catch((err) => {
+        showToast(errText(err), "error");
+      });
+  }
+
   function approvalAction(block: RecentBlock, action: ApprovalAction) {
     const actionId =
       action === "dismiss"
@@ -505,7 +526,8 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     patchRule,
     deleteRule,
     moveRule,
-    // blocks
+    // activity
     approvalAction,
+    clearTaintAction,
   };
 }

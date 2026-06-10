@@ -1,6 +1,7 @@
 import { React } from "@/sdk";
 import { Button } from "@/components/Button";
 import { Field } from "@/components/Field";
+import { ImpactPreview } from "@/components/ImpactPreview";
 import { ACTIONS } from "@/constants";
 import type { CronJob, Policy, RuleForm } from "@/types";
 
@@ -255,6 +256,21 @@ export function RuleModal({
               </select>
             </Field>
           </div>
+          {/* Impact preview before commit (doc 02 §Tab3.5): replays this candidate
+              rule against recent activity so an over-permissive rule is visible. */}
+          <ImpactPreview
+            candidate={{
+              effect: form.effect || "allow",
+              match: {
+                action_family: form.action_family || "*",
+                destination: form.destination || "*",
+                purpose: form.purpose || "*",
+                data_classes:
+                  form.data_classes && form.data_classes.length ? form.data_classes : ["*"],
+              },
+            }}
+            label="Preview impact before saving"
+          />
           {formError ? <div className="hermes-guardian-banner">{formError}</div> : null}
           <div className="hermes-guardian-actions">
             <Button type="submit">{form.id ? "Save changes" : "Create rule"}</Button>

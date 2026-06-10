@@ -1,11 +1,12 @@
 import { React, useState } from "@/sdk";
 import { Button } from "@/components/Button";
+import { CheckDestination } from "@/components/CheckDestination";
 import { TrustPill } from "@/components/TrustPill";
 import { text } from "@/lib/format";
 import type { DestinationsController } from "@/hooks/useDestinations";
 import type { SeenDestination } from "@/types";
 
-export interface DestinationsTabProps {
+export interface WhatsYoursTabProps {
   controller: DestinationsController;
 }
 
@@ -74,11 +75,7 @@ function EditableList(props: {
       {props.items.map((item) => (
         <li key={item} className="hermes-guardian-dest-item">
           <code>{item}</code>
-          <Button
-            variant="secondary"
-            disabled={props.disabled}
-            onClick={() => props.onRemove(item)}
-          >
+          <Button variant="secondary" disabled={props.disabled} onClick={() => props.onRemove(item)}>
             Remove
           </Button>
         </li>
@@ -150,9 +147,8 @@ function SeenSection(props: {
   );
 }
 
-export function DestinationsTab({ controller }: DestinationsTabProps) {
-  const { data, loading, error, busy, addSelf, removeSelf, addTrusted, removeTrusted, addSharing, removeSharing } =
-    controller;
+export function WhatsYoursTab({ controller }: WhatsYoursTabProps) {
+  const { data, loading, error, busy, addSelf, removeSelf } = controller;
 
   if (loading && !data) {
     return <div className="hermes-guardian-muted">Loading destinations...</div>;
@@ -165,10 +161,7 @@ export function DestinationsTab({ controller }: DestinationsTabProps) {
   const stores = self.destinations || [];
   const identities = self.identities || [];
   const hosts = self.hosts || [];
-  const trusted = (data && data.trusted_recipients) || [];
-  const sharing = (data && data.outward_sharing) || {};
-  const sharingBuiltin = sharing.builtin || [];
-  const sharingExtra = sharing.extra || [];
+  const grantActive = identities.length > 0 || hosts.length > 0;
 
   return (
     <div className="hermes-guardian-grid">
@@ -180,6 +173,7 @@ export function DestinationsTab({ controller }: DestinationsTabProps) {
           confirm is yours is treated as someone else.
         </div>
       </div>
+
       <SeenSection
         seen={(data && data.seen) || []}
         tally={(data && data.tally) || {}}
@@ -194,6 +188,15 @@ export function DestinationsTab({ controller }: DestinationsTabProps) {
           )
         }
       />
+
+      {grantActive ? (
+        <div className="hermes-guardian-card hermes-guardian-grant-banner">
+          <div className="hermes-guardian-muted">
+            Send-to-self / own-infrastructure trust is active: outbound actions to your declared
+            identities and hosts resolve as yours and are not gated.
+          </div>
+        </div>
+      ) : null}
 
       <div className="hermes-guardian-card">
         <div className="hermes-guardian-card-head">
@@ -255,85 +258,7 @@ export function DestinationsTab({ controller }: DestinationsTabProps) {
         </div>
       </div>
 
-      <div className="hermes-guardian-card">
-        <div className="hermes-guardian-card-head">
-          <div>
-            <div className="hermes-guardian-card-title">Trusted recipients</div>
-            <div className="hermes-guardian-muted">
-              Correspondents you have explicitly declared trusted. Private data may be shared with
-              them without a prompt.
-            </div>
-          </div>
-        </div>
-        {trusted.length ? (
-          <ul className="hermes-guardian-dest-list">
-            {trusted.map((entry) => {
-              const identity = text(entry.identity);
-              return (
-                <li key={identity} className="hermes-guardian-dest-item">
-                  <span className="hermes-guardian-dest-seen-label">
-                    <code>{identity}</code>
-                    {entry.classes && entry.classes.length ? (
-                      <span className="hermes-guardian-muted">{entry.classes.join(", ")}</span>
-                    ) : null}
-                    {entry.note ? <span className="hermes-guardian-muted">{entry.note}</span> : null}
-                  </span>
-                  <Button variant="secondary" disabled={busy} onClick={() => removeTrusted(identity)}>
-                    Remove
-                  </Button>
-                </li>
-              );
-            })}
-          </ul>
-        ) : (
-          <div className="hermes-guardian-muted hermes-guardian-dest-empty">
-            No trusted recipients — every recipient is treated as external until you add them.
-          </div>
-        )}
-        <AddRow
-          placeholder="teammate@example.com"
-          buttonLabel="Add trusted"
-          disabled={busy}
-          onAdd={(value) => addTrusted(value)}
-        />
-      </div>
-
-      <div className="hermes-guardian-card">
-        <div className="hermes-guardian-card-head">
-          <div>
-            <div className="hermes-guardian-card-title">Sharing actions</div>
-            <div className="hermes-guardian-muted">
-              Actions that reach other people even on a store that is yours (sharing, inviting,
-              publishing). These are always treated as external.
-            </div>
-          </div>
-        </div>
-        <div className="hermes-guardian-dest-group">
-          <div className="hermes-guardian-dest-group-title">Built-in (cannot be disabled)</div>
-          <div className="hermes-guardian-chips">
-            {sharingBuiltin.map((subtype) => (
-              <span key={subtype} className="hermes-guardian-pill hermes-guardian-trust-external">
-                {subtype}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="hermes-guardian-dest-group">
-          <div className="hermes-guardian-dest-group-title">Extra</div>
-          <EditableList
-            items={sharingExtra}
-            disabled={busy}
-            emptyHint="No extra sharing actions."
-            onRemove={(value) => removeSharing(value)}
-          />
-          <AddRow
-            placeholder="export_link"
-            buttonLabel="Add sharing action"
-            disabled={busy}
-            onAdd={(value) => addSharing(value)}
-          />
-        </div>
-      </div>
+      <CheckDestination />
     </div>
   );
 }

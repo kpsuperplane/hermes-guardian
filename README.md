@@ -663,27 +663,33 @@ Helpful commands:
 Guardian appears in the main Hermes dashboard at `/guardian` via
 `dashboard/manifest.json`.
 
-Dashboard tabs:
+Dashboard tabs follow the five-concept IA, in `decide` order — reading the nav
+left-to-right is reading the decision pipeline top-to-bottom (what happened → is it
+mine → is it covered by a grant → who judges the rest → the floor):
 
-- **Settings**: leads with *What's yours* (a summary of the self-allowlist, linking
-  into Destinations & Trust) and *What happens when data leaves you* (the privacy
-  mode, each option labelled with its consequence); the rest — LLM approval context
-  channels, verifier model, unknown-tools mode, Security Module rules, and language
-  packs — is under a collapsed *Advanced* section.
-- **Connectors** (formerly Tools): manage tool overrides and the unknown-tools mode.
-- **Allow rules** (formerly Egress Rules): create, edit, delete, enable/disable, and
-  reorder privacy rules.
-- **Activity** (formerly Recent Blocks): inspect privacy/security blocks — each row
-  shows a **destination-trust pill** and a plain-language **decision step** — approve
-  pending actions, and dismiss approvals.
-- **Destinations & Trust**: the destination-trust model made visible and editable —
-  a *Seen recently* list bucketed by trust with a one-click "this is mine → add to
-  self", the self-allowlist (stores / identities / hosts), trusted recipients, and the
-  outward-sharing subtypes (builtin shown read-only, extra editable). Edits are
-  admin-token + confirmation gated.
-- **History**: browse paginated sanitized activity rows (with trust + decision step).
-- **Performance**: per-check overhead Guardian adds — overall, LLM-verifier vs
-  deterministic, per-hook-type (avg/p50/p95/max), and recent samples.
+- **Activity**: the merged decided stream (blocks + history) plus a pinned
+  *Pending approvals* list with same-screen Approve / Deny, a session **taint strip**
+  with *Clear session taint*, per-row **trust pills**, and a **deep-linked decision
+  step** whose clauses jump to the tab that governs them. Filters: decision, trust,
+  class/tag, tool, destination, recipient, date range, and search; rows expand to the
+  full resolved capability (the dashboard twin of `/guardian why`).
+- **What's Yours**: the self side of the boundary — a *Seen recently* list bucketed by
+  trust with a one-click "this is mine → add to self", the self-allowlist (stores /
+  identities / hosts), a grant banner when identities/hosts are set, and a *Check a
+  destination* widget (resolves a hypothetical destination/recipient to its trust,
+  read-only).
+- **Sharing**: the standing authorization you've granted — trusted recipients, the
+  ordered allow/deny rules (add/edit/delete/enable/disable/**reorder**), the
+  outward-sharing subtypes (builtin read-only, extra editable), a *Preview a send*
+  widget, and an *Impact preview* that replays a candidate rule against recent activity
+  before you commit it. Trust/sharing edits are admin-token + confirmation gated.
+- **Review**: case-by-case judgment — the privacy **mode** (each option written as a
+  who-reviews sentence), the owner/cron authorization context toggles, the verifier
+  model, the unknown-tools mode, and a verifier **scoreboard** (consulted checks +
+  median latency).
+- **Protection**: the floor + machinery + diagnostics — Security Module hard-block
+  rules, tool classification overrides, language packs, retention, and the per-check
+  timing / diagnostics table.
 
 Hermes mounts the dashboard API under `/api/plugins/hermes-guardian/`:
 
@@ -692,8 +698,13 @@ GET /api/plugins/hermes-guardian/policy
 GET /api/plugins/hermes-guardian/performance
 GET /api/plugins/hermes-guardian/activity
 GET /api/plugins/hermes-guardian/activity/datatables
+GET /api/plugins/hermes-guardian/approvals
 GET /api/plugins/hermes-guardian/destinations
+GET /api/plugins/hermes-guardian/destinations/resolve
+GET /api/plugins/hermes-guardian/sharing/preview
+POST /api/plugins/hermes-guardian/sharing/impact
 POST /api/plugins/hermes-guardian/privacy/mode
+POST /api/plugins/hermes-guardian/privacy/clear-taint
 POST /api/plugins/hermes-guardian/privacy/unknown-tools
 POST /api/plugins/hermes-guardian/privacy/user-context
 POST /api/plugins/hermes-guardian/privacy/cron-context

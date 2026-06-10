@@ -4,29 +4,30 @@ import { OverrideModal } from "@/components/OverrideModal";
 import { RiskBanners } from "@/components/RiskBanners";
 import { RuleModal } from "@/components/RuleModal";
 import { ToastRegion } from "@/components/ToastRegion";
+import { useApprovals } from "@/hooks/useApprovals";
 import { useDestinations } from "@/hooks/useDestinations";
 import { useGuardianActions } from "@/hooks/useGuardianActions";
 import { useHistory } from "@/hooks/useHistory";
 import { usePerformance } from "@/hooks/usePerformance";
 import { usePolicy } from "@/hooks/usePolicy";
 import { useToasts } from "@/hooks/useToasts";
-import { BlocksTab } from "@/tabs/BlocksTab";
-import { DestinationsTab } from "@/tabs/DestinationsTab";
-import { HistoryTab } from "@/tabs/HistoryTab";
-import { PerformanceTab } from "@/tabs/PerformanceTab";
-import { RulesTab } from "@/tabs/RulesTab";
-import { SettingsTab } from "@/tabs/SettingsTab";
-import { ToolsTab } from "@/tabs/ToolsTab";
+import type { TabId } from "@/lib/deepLinks";
+import { ActivityTab } from "@/tabs/ActivityTab";
+import { ProtectionTab } from "@/tabs/ProtectionTab";
+import { ReviewTab } from "@/tabs/ReviewTab";
+import { SharingTab } from "@/tabs/SharingTab";
+import { WhatsYoursTab } from "@/tabs/WhatsYoursTab";
+import type { PendingApproval, RecentBlock } from "@/types";
 
-// Display labels are plain-language; internal ids are unchanged to avoid churn.
-const TABS: Array<[string, string]> = [
-  ["settings", "Settings"],
-  ["tools", "Connectors"],
-  ["rules", "Allow rules"],
-  ["blocks", "Activity"],
-  ["destinations", "Destinations & Trust"],
-  ["history", "History"],
-  ["performance", "Performance"],
+// The five-tab IA (charter §1, doc 02). Order is fixed: it mirrors decide().
+// Reading left-to-right is reading decide() top-to-bottom: what happened ->
+// is it mine -> is it covered by a grant -> who judges the rest -> the floor.
+const TABS: Array<[TabId, string]> = [
+  ["activity", "Activity"],
+  ["whats-yours", "What's Yours"],
+  ["sharing", "Sharing"],
+  ["review", "Review"],
+  ["protection", "Protection"],
 ];
 
 export function GuardianPage() {
@@ -49,6 +50,7 @@ export function GuardianPage() {
   const { toasts, showToast, dismissToast } = useToasts();
   const history = useHistory();
   const performance = usePerformance();
+  const approvals = useApprovals();
   const destinations = useDestinations(showToast);
   const actions = useGuardianActions({
     policy,
@@ -66,31 +68,47 @@ export function GuardianPage() {
     showToast,
   });
 
-  const [tab, setTab] = useState("settings");
+  const [tab, setTab] = useState<TabId>("activity");
 
-  // Warm the lazily-fetched tabs once on mount. The first plugin-API call to a
-  // given endpoint per page session pays a one-time multi-second cost on the
-  // host side (the handlers themselves are ~milliseconds: see _activity_*
-  // /_performance_summary). Only tabs that fetch their own data on open are
-  // affected — History (/activity/datatables) and Performance (/performance);
-  // the others render from the /policy snapshot already loaded on mount.
-  // Prefetching here lets that cost overlap the initial dashboard load instead
-  // of stalling the user's first click; subsequent opens hit the warmed paths.
+  // Warm the lazily-fetched data once on mount so the first tab switch is instant
+  // (the first plugin-API call per endpoint pays a one-time host-side cost).
   useEffect(() => {
     history.loadHistory(history.page, history.pageSize);
     performance.loadPerformance();
+    approvals.loadApprovals();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (tab === "history") history.loadHistory(history.page, history.pageSize);
-    if (tab === "performance") performance.loadPerformance();
+    if (tab === "activity") {
+      history.loadHistory(history.page, history.pageSize);
+      approvals.loadApprovals();
+    }
+    if (tab === "review" || tab === "protection") performance.loadPerformance();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, history.page, history.pageSize]);
 
   const rules = (policy && policy.rules) || [];
-  const blocks = (policy && policy.recent_blocks) || [];
   const riskBanners = (policy && policy.risk_banners) || [];
+
+  // Session taint shown in the Activity strip: the union of taint across the
+  // owner's live sessions, from the policy snapshot.
+  const sessions = (policy && (policy as any).sessions) || [];
+  const taint = Array.from(
+    new Set(
+      sessions.flatMap((session: any) => (Array.isArray(session.taint) ? session.taint : [])),
+    ),
+  ) as string[];
+
+  function refreshActive() {
+    load();
+    if (tab === "activity") {
+      history.loadHistory(history.page, history.pageSize);
+      approvals.loadApprovals();
+    }
+    if (tab === "review" || tab === "protection") performance.loadPerformance();
+    if (tab === "whats-yours" || tab === "sharing") destinations.refetch();
+  }
 
   if (loading && !policy) {
     return <div className="hermes-guardian hermes-guardian-muted">Loading Guardian...</div>;
@@ -106,15 +124,7 @@ export function GuardianPage() {
           </div>
         </div>
         <div className="hermes-guardian-actions">
-          <Button
-            variant="secondary"
-            onClick={() => {
-              load();
-              if (tab === "history") history.loadHistory(history.page, history.pageSize);
-              if (tab === "performance") performance.loadPerformance();
-              if (tab === "destinations") destinations.refetch();
-            }}
-          >
+          <Button variant="secondary" onClick={refreshActive}>
             Refresh
           </Button>
         </div>
@@ -136,13 +146,48 @@ export function GuardianPage() {
           </button>
         ))}
       </div>
-      {tab === "settings" ? (
-        <SettingsTab
+
+      {tab === "activity" ? (
+        <ActivityTab
+          taint={taint}
+          onClearTaint={actions.clearTaintAction}
+          approvals={approvals.approvals}
+          approvalsLoading={approvals.loading}
+          onApprovalAction={(approval: PendingApproval, action) =>
+            actions.approvalAction(approval as RecentBlock, action)
+          }
+          activity={history.activity}
+          loading={history.loading}
+          error={history.error}
+          total={history.total}
+          page={history.page}
+          pageSize={history.pageSize}
+          setPage={history.setPage}
+          setPageSize={history.setPageSize}
+          onNavigate={setTab}
+        />
+      ) : null}
+
+      {tab === "whats-yours" ? <WhatsYoursTab controller={destinations} /> : null}
+
+      {tab === "sharing" ? (
+        <SharingTab
+          controller={destinations}
+          rules={rules}
+          onNewRule={actions.openCreate}
+          onEditRule={actions.openEdit}
+          onPatchRule={actions.patchRule}
+          onDeleteRule={actions.deleteRule}
+          onMoveRule={actions.moveRule}
+        />
+      ) : null}
+
+      {tab === "review" ? (
+        <ReviewTab
           policy={policy}
           privacyMode={privacyMode}
           modeSaving={actions.modeSaving}
           onChangePrivacyMode={actions.saveMode}
-          onGoToDestinations={() => setTab("destinations")}
           llmUserContext={llmUserContext}
           llmCronContext={llmCronContext}
           userContextSaving={actions.userContextSaving}
@@ -152,57 +197,30 @@ export function GuardianPage() {
           llmVerifierModel={llmVerifierModel}
           verifierModelSaving={actions.verifierModelSaving}
           onChangeVerifierModel={actions.saveVerifierModel}
-          onPatchSecurityRule={actions.patchSecurityRule}
-          languagePacksSaving={actions.languagePacksSaving}
-          onPatchLanguagePack={actions.patchLanguagePack}
-          onSetAllLanguagePacks={actions.setAllLanguagePacks}
-        />
-      ) : null}
-      {tab === "tools" ? (
-        <ToolsTab
-          policy={policy}
           unknownTools={unknownTools}
           unknownToolsSaving={actions.unknownToolsSaving}
           onChangeUnknownTools={actions.saveUnknownTools}
+          performance={performance.performance}
+        />
+      ) : null}
+
+      {tab === "protection" ? (
+        <ProtectionTab
+          policy={policy}
+          onPatchSecurityRule={actions.patchSecurityRule}
           onNewOverride={actions.openCreateOverride}
           onEditOverride={actions.openEditOverride}
           onToggleOverride={actions.toggleOverride}
           onDeleteOverride={actions.deleteOverride}
-        />
-      ) : null}
-      {tab === "rules" ? (
-        <RulesTab
-          rules={rules}
-          onNewRule={actions.openCreate}
-          onEditRule={actions.openEdit}
-          onPatchRule={actions.patchRule}
-          onDeleteRule={actions.deleteRule}
-          onMoveRule={actions.moveRule}
-        />
-      ) : null}
-      {tab === "blocks" ? (
-        <BlocksTab blocks={blocks} onApprovalAction={actions.approvalAction} />
-      ) : null}
-      {tab === "destinations" ? <DestinationsTab controller={destinations} /> : null}
-      {tab === "history" ? (
-        <HistoryTab
-          activity={history.activity}
-          loading={history.loading}
-          error={history.error}
-          total={history.total}
-          page={history.page}
-          pageSize={history.pageSize}
-          setPage={history.setPage}
-          setPageSize={history.setPageSize}
-        />
-      ) : null}
-      {tab === "performance" ? (
-        <PerformanceTab
+          languagePacksSaving={actions.languagePacksSaving}
+          onPatchLanguagePack={actions.patchLanguagePack}
+          onSetAllLanguagePacks={actions.setAllLanguagePacks}
           performance={performance.performance}
-          loading={performance.loading}
-          error={performance.error}
+          performanceLoading={performance.loading}
+          performanceError={performance.error}
         />
       ) : null}
+
       {actions.showModal ? (
         <RuleModal
           policy={policy || {}}

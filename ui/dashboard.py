@@ -261,6 +261,197 @@ def _dashboard_sharing_remove_action(payload: dict[str, Any]) -> tuple[dict[str,
     return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
 
 
+# --- Activity tab: clear session taint (doc 02 §Tab1) ------------------------
+# Thin dashboard wrapper over the same _guardian_clear_taint handler the slash
+# command (/guardian clear-taint) uses; it stays admin-token guarded in
+# dashboard/plugin_api.py like every other mutator.
+def _dashboard_clear_taint_action() -> tuple[dict[str, Any], int]:
+    message = _guardian_clear_taint(_CLI_OWNER_HASH)
+    return {"ok": True, "message": message, "policy": _policy_snapshot()}, 200
+
+
+# --- Activity tab: pending-approvals read list (doc 02 §Tab1) ----------------
+# The activity store already surfaces pending approvals inside _policy_snapshot()
+# (the "pending" list, with trust pill + decision step). The dashboard's GET
+# /approvals reads exactly that slice — no new decision logic, no mutation.
+def _dashboard_pending_approvals() -> list[dict[str, Any]]:
+    return list(_policy_snapshot().get("pending") or [])
+
+
+# --- Pure-function widgets (charter §5; doc 02 §Tab2/§Tab3) ------------------
+# All three widgets call the existing pure engine functions with hypothetical
+# inputs. They compute and return; they never mutate state and add no decision
+# logic (charter §4 invariant #1).
+def _parse_destination_value(value: str) -> tuple[str, str]:
+    """Split a "kind:id" destination string into (kind, id).
+
+    A bare token with no colon is treated as an id with an inferred kind: an
+    address-like token (contains "@") is a messaging recipient; anything with a
+    dot is a host; otherwise it is a store id. This only shapes the resolver's
+    inputs — the resolver itself is unchanged and conservative.
+    """
+    raw = str(value or "").strip()
+    if ":" in raw:
+        kind, _, dest_id = raw.partition(":")
+        return kind.strip().lower(), dest_id.strip()
+    if "@" in raw:
+        return "messaging", raw
+    if "." in raw:
+        return "host", raw
+    return "store", raw
+
+
+def _dashboard_resolve_destination(value: str) -> dict[str, Any]:
+    """"Check a destination" widget (What's Yours). Read-only.
+
+    Resolves a hypothetical destination/recipient to its trust level via the
+    engine's pure resolve_destination_trust. For messaging kinds the id doubles
+    as the recipient identity.
+    """
+    raw = str(value or "").strip()
+    kind, dest_id = _parse_destination_value(raw)
+    recipient = dest_id if kind in {"messaging", "message", "send"} else ""
+    subtype = "send" if kind in {"messaging", "message", "send"} else "write"
+    trust = _resolve_destination_trust(kind, dest_id, subtype, recipient, _load_privacy_config())
+    return {
+        "value": raw,
+        "kind": kind,
+        "id": dest_id,
+        "trust": _normalize_destination_trust_label(getattr(trust, "value", trust)),
+    }
+
+
+def _build_preview_capability(action_family: str, destination: str, classes: list[str]) -> Any:
+    """Construct a hypothetical Capability for the preview/impact widgets.
+
+    Mirrors classify()'s mapping from an egress action_family to the resolver's
+    destination kind/subtype, then resolves trust with the live config. The
+    data_classes are the caller's hypothetical taint (collapsed to policy classes
+    by decide downstream). No tool call is made; nothing is stored.
+    """
+    family = str(action_family or "").strip()
+    kind, dest_id = _parse_destination_value(destination)
+    # Messaging families resolve the recipient from the destination id.
+    is_messaging = family in {"message_send", "message_list", "final_response"} or kind in {
+        "messaging",
+        "message",
+        "send",
+    }
+    if is_messaging:
+        kind = "messaging"
+        recipient = dest_id
+        subtype = "send"
+    else:
+        recipient = ""
+        subtype = "write"
+    trust = _resolve_destination_trust(kind, dest_id, subtype, recipient, _load_privacy_config())
+    dest = _Destination(kind=kind, id=dest_id, trust=trust)
+    return _Capability(
+        direction="write",
+        destination=dest,
+        data_classes=frozenset(str(c) for c in (classes or []) if str(c).strip()),
+        data_tags=frozenset(),
+        action_subtype=subtype,
+    )
+
+
+def _dashboard_preview_send(action_family: str, destination: str, classes: list[str]) -> dict[str, Any]:
+    """"Preview a send" widget (Sharing). Read-only.
+
+    Builds a hypothetical Capability and runs the pure decide_with_step to report
+    which decide() step fires and the outcome.
+    """
+    cap = _build_preview_capability(action_family, destination, classes)
+    outcome, step = _decide_with_step(
+        cap, classes or [], "unknown", _privacy_policy()
+    )
+    dest = getattr(cap, "destination", None)
+    return {
+        "action_family": str(action_family or ""),
+        "destination": str(destination or ""),
+        "data_classes": sorted(str(c) for c in (classes or []) if str(c).strip()),
+        "destination_trust": _normalize_destination_trust_label(
+            getattr(getattr(dest, "trust", None), "value", getattr(dest, "trust", None))
+        ),
+        "decision": str(outcome),
+        "decision_step": _normalize_decision_step_label(step),
+    }
+
+
+def _candidate_rule_matches(candidate: dict[str, Any], row: dict[str, Any]) -> bool:
+    """Does a hypothetical allow/deny rule cover a historical activity row?
+
+    Uses the SAME first-match semantics as match_declassification_rule (purpose /
+    destination token / data-class with "*" wildcard), applied to the candidate
+    rule only. Read-only: it inspects stored, already-sanitized metadata rows and
+    mutates nothing.
+    """
+    match = candidate.get("match") if isinstance(candidate.get("match"), dict) else {}
+    rule_purpose = str(match.get("purpose", "*") or "*").strip().lower()
+    row_purpose = str(row.get("purpose") or "unknown").strip().lower() or "unknown"
+    if rule_purpose not in {"*", row_purpose}:
+        return False
+
+    rule_dest = str(match.get("destination", "*") or "*").strip().lower()
+    dest_id = str(row.get("destination") or "")
+    if rule_dest != "*" and rule_dest != dest_id.strip().lower():
+        return False
+
+    rule_classes = {str(c).strip().lower() for c in (match.get("data_classes") or ["*"])}
+    if "*" not in rule_classes:
+        row_classes = row.get("data_classes")
+        if isinstance(row_classes, str):
+            row_classes = [tok for tok in re.split(r"[\s,]+", row_classes) if tok]
+        row_class_set = {str(c).strip().lower() for c in (row_classes or [])}
+        if not (rule_classes & row_class_set):
+            return False
+
+    rule_action = str(match.get("action_family", "*") or "*").strip().lower()
+    if rule_action != "*" and rule_action != str(row.get("action_family") or "").strip().lower():
+        return False
+    return True
+
+
+def _dashboard_sharing_impact(candidate: dict[str, Any], *, limit: int = 200) -> dict[str, Any]:
+    """"Impact preview" (Sharing). Read-only over-permissiveness guardrail.
+
+    Replays recent gated activity against a candidate allow/deny rule and lists the
+    rows whose outcome the rule would have changed. Computes only — no mutation,
+    no decision-engine change. This is the prioritized guardrail from doc 02 §Tab3.
+    """
+    effect = str(candidate.get("effect") or "allow").strip().lower()
+    rows = _grouped_activity_rows({"decisions": "approve,blocked,denied,gated"}, limit=limit)
+    matched: list[dict[str, Any]] = []
+    for row in rows:
+        decision = str(row.get("decision") or "").strip().lower()
+        # Only rows that were gated/blocked are candidates for an allow flip; only
+        # currently-allowed-by-gate rows are candidates for a deny flip. We report
+        # the rows the candidate rule would newly cover.
+        if not _candidate_rule_matches(candidate, row):
+            continue
+        matched.append(
+            {
+                "id": str(row.get("id") or row.get("activity_id") or ""),
+                "decision": decision,
+                "action_family": str(row.get("action_family") or ""),
+                "destination": str(row.get("destination") or ""),
+                "destination_trust": _normalize_destination_trust_label(row.get("destination_trust")),
+                "data_classes": row.get("data_classes"),
+                "purpose": str(row.get("purpose") or "unknown"),
+                "recipient_identity": str(row.get("recipient_identity") or "none"),
+                "created_at": int(float(row.get("ts") or row.get("created_at") or 0)),
+            }
+        )
+    verb = "auto-allowed" if effect == "allow" else "blocked"
+    return {
+        "effect": effect,
+        "verb": verb,
+        "matched_count": len(matched),
+        "considered": len(rows),
+        "matched": matched,
+    }
+
+
 def _dashboard_rule_create_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     rule = _normalize_privacy_rule(payload)
     if rule is None:

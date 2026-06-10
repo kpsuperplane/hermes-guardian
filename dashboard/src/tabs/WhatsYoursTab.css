@@ -72,3 +72,26 @@
   flex: 1 1 auto;
   min-width: 0;
 }
+
+/* --- What's Yours / shared widgets (doc 02 §Tab2): grant banner + widget results. --- */
+.hermes-guardian-grant-banner {
+  border-color: color-mix(in srgb, var(--color-ring) 30%, var(--color-border));
+  background: color-mix(in srgb, var(--color-ring) 6%, var(--color-card));
+}
+
+.hermes-guardian-widget-result {
+  margin-top: 0.6rem;
+  align-items: center;
+}
+
+.hermes-guardian-widget-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.hermes-guardian-widget-form .hermes-guardian-input {
+  flex: 1 1 14rem;
+  min-width: 0;
+}

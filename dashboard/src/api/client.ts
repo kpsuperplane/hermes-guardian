@@ -57,3 +57,38 @@ export function addSharingSubtype(subtype: string): Promise<any> {
 export function removeSharingSubtype(subtype: string): Promise<any> {
   return postTrust("/destinations/sharing/remove", { subtype });
 }
+
+// --- Activity tab (doc 02 §Tab1) -------------------------------------------
+export function getApprovals(): Promise<any> {
+  return api("/approvals");
+}
+
+export function clearTaint(): Promise<any> {
+  return api("/privacy/clear-taint", { method: "POST", body: JSON.stringify({}) });
+}
+
+// --- Pure-function widgets (charter §5; doc 02 §Tab2/§Tab3) ----------------
+// All read-only: they call the engine's pure decide / resolve functions with
+// hypothetical inputs and mutate nothing, so no confirmation token is sent.
+export function resolveDestination(value: string): Promise<any> {
+  return api("/destinations/resolve?value=" + encodeURIComponent(value));
+}
+
+export function previewSend(
+  action: string,
+  destination: string,
+  classes: string[],
+): Promise<any> {
+  const query =
+    "/sharing/preview?action=" +
+    encodeURIComponent(action) +
+    "&destination=" +
+    encodeURIComponent(destination) +
+    "&classes=" +
+    encodeURIComponent((classes || []).join(","));
+  return api(query);
+}
+
+export function sharingImpact(candidate: Record<string, unknown>): Promise<any> {
+  return api("/sharing/impact", { method: "POST", body: JSON.stringify(candidate) });
+}

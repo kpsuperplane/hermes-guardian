@@ -192,6 +192,47 @@ async def activity(limit: int = 200) -> dict[str, Any]:
     return {"activity": _guardian()._grouped_activity_rows({}, limit=safe_limit)}
 
 
+@router.get("/approvals")
+async def approvals() -> dict[str, Any]:
+    """Pending-approvals read list for the Activity tab (doc 02 §Tab1).
+
+    Reads the already-computed "pending" slice of the policy snapshot — no new
+    decision logic, no mutation.
+    """
+    return {"approvals": _guardian()._dashboard_pending_approvals()}
+
+
+@router.get("/destinations/resolve")
+async def resolve_destination(value: str = "") -> dict[str, Any]:
+    """"Check a destination" widget (What's Yours, doc 02 §Tab2). Read-only.
+
+    Calls the engine's pure resolve_destination_trust with a hypothetical
+    destination/recipient; computes only, changes nothing (no guard needed).
+    """
+    return _guardian()._dashboard_resolve_destination(str(value or ""))
+
+
+@router.get("/sharing/preview")
+async def sharing_preview(action: str = "", destination: str = "", classes: str = "") -> dict[str, Any]:
+    """"Preview a send" widget (Sharing, doc 02 §Tab3). Read-only.
+
+    Runs the pure decide_with_step on a hypothetical capability; no mutation.
+    """
+    class_list = [tok for tok in str(classes or "").split(",") if tok.strip()]
+    return _guardian()._dashboard_preview_send(str(action or ""), str(destination or ""), class_list)
+
+
+@router.post("/sharing/impact")
+async def sharing_impact(body: dict[str, Any]) -> dict[str, Any]:
+    """"Impact preview" (Sharing, doc 02 §Tab3). Read-only over-permissiveness guard.
+
+    Replays recent stored activity against a candidate rule and reports the rows
+    whose outcome it would change. Computes only — no mutation, so no admin guard.
+    """
+    candidate = body if isinstance(body, dict) else {}
+    return _guardian()._dashboard_sharing_impact(candidate)
+
+
 @router.get("/activity/datatables")
 async def activity_datatables(request: Request) -> dict[str, Any]:
     return _guardian()._activity_datatables_payload(dict(request.query_params))
@@ -254,6 +295,17 @@ async def approve(request: Request, approval_id: str, body: dict[str, Any]) -> J
 async def dismiss(request: Request, approval_id: str) -> JSONResponse:
     _require_dashboard_admin(request)
     return _json_mutation_result(request, "dismiss", _guardian()._dashboard_approval_action(approval_id, "dismiss", ""))
+
+
+@router.post("/privacy/clear-taint")
+async def clear_taint(request: Request) -> JSONResponse:
+    """Clear session taint for the dashboard owner (doc 02 §Tab1).
+
+    Guarded like every other mutator (admin token); routes through the same
+    _guardian_clear_taint handler the /guardian clear-taint slash command uses.
+    """
+    _require_dashboard_admin(request)
+    return _json_mutation_result(request, "clear_taint", _guardian()._dashboard_clear_taint_action())
 
 
 @router.post("/privacy/unknown-tools")
