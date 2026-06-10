@@ -1,7 +1,7 @@
 import { React, useMemo, useState } from "@/sdk";
 import { Button } from "@/components/Button";
 import { DecisionStep } from "@/components/DecisionStep";
-import { TrustPill } from "@/components/TrustPill";
+import { TrustPill, trustLabel } from "@/components/TrustPill";
 import { HISTORY_PAGE_SIZES } from "@/constants";
 import { classesText, text, timeText } from "@/lib/format";
 import type { TabId } from "@/lib/deepLinks";
@@ -323,6 +323,11 @@ function ActivityRowItem(props: {
   const destination = text(row.destination, "n/a");
   const action = text(row.action_family, "n/a");
   const isRead = text(row.decision) === "read" || text(row.decision) === "tainted";
+  const taints = Array.isArray(row.data_classes)
+    ? row.data_classes
+    : row.data_classes
+      ? [String(row.data_classes)]
+      : [];
   return (
     <tr
       className="hermes-guardian-activity-row"
@@ -334,10 +339,7 @@ function ActivityRowItem(props: {
       <td>
         <div className="hermes-guardian-history-target">
           <div className="hermes-guardian-history-tool">{tool}</div>
-          <div className="hermes-guardian-history-route">
-            {action + " -> " + destination}
-            {!isRead && row.destination_trust ? <TrustPill trust={row.destination_trust} /> : null}
-          </div>
+          <div className="hermes-guardian-history-route">{action + " -> " + destination}</div>
           {row.decision_step ? (
             <div className="hermes-guardian-muted">
               <DecisionStep step={row.decision_step} onNavigate={onNavigate} />
@@ -356,7 +358,20 @@ function ActivityRowItem(props: {
           ) : null}
         </div>
       </td>
-      <td>{text(row.data_classes)}</td>
+      <td className="hermes-guardian-history-trust">
+        {!isRead && row.destination_trust ? trustLabel(row.destination_trust) : ""}
+      </td>
+      <td>
+        {taints.length ? (
+          <div className="hermes-guardian-chips hermes-guardian-history-taint-chips">
+            {taints.map((cls) => (
+              <span key={cls} className="hermes-guardian-chip">
+                {cls}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </td>
     </tr>
   );
 }
@@ -396,7 +411,7 @@ export function ActivityTab(props: ActivityTabProps) {
       <div className="hermes-guardian-card hermes-guardian-approvals-section">
         <div className="hermes-guardian-card-title">Pending approvals</div>
         <div className="hermes-guardian-muted">
-          Actions awaiting your decision. This is the only place with same-screen actions.
+          Actions paused until you approve or deny them.
         </div>
         {approvalsLoading && !approvals.length ? (
           <div className="hermes-guardian-muted">Loading approvals...</div>
@@ -412,11 +427,11 @@ export function ActivityTab(props: ActivityTabProps) {
             ))}
           </div>
         ) : (
-          <div className="hermes-guardian-muted">Nothing is waiting on you.</div>
+          <div className="hermes-guardian-muted">Nothing needs your approval right now.</div>
         )}
       </div>
 
-      <div className="hermes-guardian-card-title">Decided</div>
+      <div className="hermes-guardian-card-title">History</div>
       <FilterBar filters={filters} setFilters={setFilters} />
       <div className="hermes-guardian-history-toolbar">
         <div className="hermes-guardian-muted">
@@ -464,11 +479,12 @@ export function ActivityTab(props: ActivityTabProps) {
             <col className="hermes-guardian-history-status-col" />
             <col className="hermes-guardian-history-time-col" />
             <col className="hermes-guardian-history-target-col" />
+            <col className="hermes-guardian-history-trust-col" />
             <col className="hermes-guardian-history-taints-col" />
           </colgroup>
           <thead>
             <tr>
-              {["Status", "Time", "Tool / route / why", "Taints"].map((label) => (
+              {["Status", "Time", "Tool / route / why", "Trust", "Taints"].map((label) => (
                 <th key={label}>{label}</th>
               ))}
             </tr>
@@ -485,7 +501,7 @@ export function ActivityTab(props: ActivityTabProps) {
               ))
             ) : (
               <tr>
-                <td colSpan={4} className="hermes-guardian-muted">
+                <td colSpan={5} className="hermes-guardian-muted">
                   {loading ? "Loading activity..." : "No matching activity."}
                 </td>
               </tr>

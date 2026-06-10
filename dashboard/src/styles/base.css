@@ -154,6 +154,14 @@
   margin-top: 0.45rem;
 }
 
+/* Inline monospace literals (see components/Mono.tsx). Intentionally lighter than
+   the host dashboard's <code> styling, which renders a heavy, distracting box. */
+.hermes-guardian-mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+
 .hermes-guardian-chip {
   display: inline-flex;
   border: 1px solid color-mix(in srgb, var(--color-border) 75%, transparent);

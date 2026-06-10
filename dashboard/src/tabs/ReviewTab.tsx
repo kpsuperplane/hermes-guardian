@@ -1,4 +1,5 @@
 import { React } from "@/sdk";
+import { Mono } from "@/components/Mono";
 import { text } from "@/lib/format";
 import type { Performance, Policy } from "@/types";
 
@@ -149,8 +150,8 @@ export function ReviewTab(props: ReviewTabProps) {
           <div className="hermes-guardian-card-title">Verifier model</div>
           <div className="hermes-guardian-muted">
             Run the verifier on a faster model than the agent's. Options come from this
-            plugin's <code>allowed_models</code>; grant{" "}
-            <code>plugins.entries.hermes-guardian.llm.allow_model_override</code> to populate
+            plugin's <Mono>allowed_models</Mono>; grant{" "}
+            <Mono>plugins.entries.hermes-guardian.llm.allow_model_override</Mono> to populate
             them. Guardian falls back to the default model if an override is rejected.
           </div>
           <div className="hermes-guardian-review-control">

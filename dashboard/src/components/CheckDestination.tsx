@@ -1,5 +1,6 @@
 import { React, useState } from "@/sdk";
 import { Button } from "@/components/Button";
+import { Mono } from "@/components/Mono";
 import { TrustPill } from "@/components/TrustPill";
 import { resolveDestination } from "@/api/client";
 import { text } from "@/lib/format";
@@ -32,8 +33,8 @@ export function CheckDestination() {
     <div className="hermes-guardian-card">
       <div className="hermes-guardian-card-title">Check a destination</div>
       <div className="hermes-guardian-muted">
-        Enter a destination (<code>kind:id</code>, e.g. <code>host:myvps.example.com</code>) or a
-        recipient (<code>you@example.com</code>) to see how Guardian resolves its trust. Nothing is
+        Enter a destination (<Mono>kind:id</Mono>, e.g. <Mono>host:myvps.example.com</Mono>) or a
+        recipient (<Mono>you@example.com</Mono>) to see how Guardian resolves its trust. Nothing is
         changed.
       </div>
       <div className="hermes-guardian-dest-addrow">

@@ -1,5 +1,6 @@
 import { React, useState } from "@/sdk";
 import { Button } from "@/components/Button";
+import { Mono } from "@/components/Mono";
 import { ImpactPreview } from "@/components/ImpactPreview";
 import { PreviewSend } from "@/components/PreviewSend";
 import { displayText, remainingPillText, ruleScopeText, text } from "@/lib/format";
@@ -71,7 +72,7 @@ function TrustedRecipients(props: { controller: DestinationsController }) {
             return (
               <li key={identity} className="hermes-guardian-dest-item">
                 <span className="hermes-guardian-dest-seen-label">
-                  <code>{identity}</code>
+                  <Mono>{identity}</Mono>
                   {entry.classes && entry.classes.length ? (
                     <span className="hermes-guardian-muted">{entry.classes.join(", ")}</span>
                   ) : null}
@@ -217,7 +218,7 @@ function OutwardSharing(props: { controller: DestinationsController }) {
           <ul className="hermes-guardian-dest-list">
             {sharingExtra.map((item) => (
               <li key={item} className="hermes-guardian-dest-item">
-                <code>{item}</code>
+                <Mono>{item}</Mono>
                 <Button variant="secondary" disabled={busy} onClick={() => removeSharing(item)}>
                   Remove
                 </Button>

@@ -17,6 +17,11 @@ const TRUST_LABEL: Record<string, string> = {
   unknown: "unknown",
 };
 
+export function trustLabel(trust?: string): string {
+  const t = String(trust || "unknown").toLowerCase();
+  return TRUST_LABEL[t] || t;
+}
+
 export function trustPillClass(trust: string): string {
   const t = String(trust || "unknown").toLowerCase();
   if (OWNED.has(t)) return "hermes-guardian-trust-owned";

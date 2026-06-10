@@ -1,5 +1,6 @@
 import { React, useState } from "@/sdk";
 import { Button } from "@/components/Button";
+import { Mono } from "@/components/Mono";
 import { sharingImpact } from "@/api/client";
 import { classesText, text, timeText } from "@/lib/format";
 import type { ImpactPreview as ImpactPreviewData } from "@/types";
@@ -62,7 +63,7 @@ export function ImpactPreview({ candidate, label }: ImpactPreviewProps) {
             <li key={text(row.id) + ":" + index} className="hermes-guardian-dest-item">
               <span className="hermes-guardian-dest-seen-label">
                 <span className="hermes-guardian-pill">{text(row.decision)}</span>
-                <code>{text(row.action_family) + " -> " + text(row.destination)}</code>
+                <Mono>{text(row.action_family) + " -> " + text(row.destination)}</Mono>
                 <span className="hermes-guardian-muted">{classesText(row.data_classes)}</span>
               </span>
               <span className="hermes-guardian-muted">{timeText(row.created_at)}</span>

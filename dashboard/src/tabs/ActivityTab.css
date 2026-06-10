@@ -14,7 +14,7 @@
 
 .hermes-guardian-table {
   width: 100%;
-  min-width: 820px;
+  min-width: 900px;
   border-collapse: collapse;
   font-size: 0.82rem;
   table-layout: fixed;
@@ -32,8 +32,21 @@
   width: 24%;
 }
 
+.hermes-guardian-history-trust-col {
+  width: 6.5rem;
+}
+
+.hermes-guardian-history-trust {
+  color: var(--color-muted-foreground);
+}
+
 .hermes-guardian-history-taints-col {
   width: 11rem;
+}
+
+/* Taint chips inside a table cell: no top margin, they sit flush in the row. */
+.hermes-guardian-history-taint-chips {
+  margin-top: 0;
 }
 
 .hermes-guardian-history-reason-col {

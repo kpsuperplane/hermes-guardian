@@ -1,6 +1,7 @@
 import { React, useState } from "@/sdk";
 import { Button } from "@/components/Button";
 import { CheckDestination } from "@/components/CheckDestination";
+import { Mono } from "@/components/Mono";
 import { TrustPill } from "@/components/TrustPill";
 import { text } from "@/lib/format";
 import type { DestinationsController } from "@/hooks/useDestinations";
@@ -74,7 +75,7 @@ function EditableList(props: {
     <ul className="hermes-guardian-dest-list">
       {props.items.map((item) => (
         <li key={item} className="hermes-guardian-dest-item">
-          <code>{item}</code>
+          <Mono>{item}</Mono>
           <Button variant="secondary" disabled={props.disabled} onClick={() => props.onRemove(item)}>
             Remove
           </Button>
@@ -121,7 +122,7 @@ function SeenSection(props: {
               <li key={destination + ":" + text(entry.trust) + ":" + index} className="hermes-guardian-dest-item">
                 <span className="hermes-guardian-dest-seen-label">
                   <TrustPill trust={entry.trust} />
-                  <code>{destination}</code>
+                  <Mono>{destination}</Mono>
                   {entry.count ? <span className="hermes-guardian-muted">{"x" + entry.count}</span> : null}
                 </span>
                 {entry.suggest ? (
