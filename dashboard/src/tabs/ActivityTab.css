@@ -262,6 +262,7 @@
 }
 
 .hermes-guardian-check-time {
+  margin-left: auto;
   font-size: 0.76rem;
   white-space: nowrap;
 }
@@ -272,7 +273,7 @@
   gap: 0.4rem;
   flex-wrap: wrap;
   min-width: 0;
-  flex: 1 1 14rem;
+  flex: 0 1 auto;
 }
 
 .hermes-guardian-check-tool {

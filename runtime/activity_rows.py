@@ -429,6 +429,7 @@ def _activity_datatables_row(row: dict[str, Any]) -> dict[str, Any]:
         "DT_RowId": f"activity-{int(row.get('id') or 0)}",
         "ts": int(row.get("ts") or 0),
         "time": _activity_time_text(row),
+        "time_short": _activity_clock_text(row),
         "icon": _activity_status_icon(str(row.get("decision") or "")),
         "decision": str(row.get("decision") or ""),
         "tool": _activity_display_tool(row),

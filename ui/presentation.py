@@ -36,6 +36,17 @@ def friendly_activity_timestamp(ts: Any, tz: ZoneInfo | None) -> str:
     return f"{months[dt.month - 1]} {dt.day}, {dt.year} {hour}:{dt.minute:02d} {am_pm} {zone}"
 
 
+def friendly_activity_clock(ts: Any, tz: ZoneInfo | None) -> str:
+    """Time-only ('11:43 AM') for a row whose date is implied by its turn header."""
+    try:
+        dt = datetime.fromtimestamp(int(ts or 0), tz=tz)
+    except Exception:
+        dt = datetime.fromtimestamp(0, tz=tz)
+    hour = dt.hour % 12 or 12
+    am_pm = "AM" if dt.hour < 12 else "PM"
+    return f"{hour}:{dt.minute:02d} {am_pm}"
+
+
 def activity_time_text(row: dict[str, Any], tz: ZoneInfo | None) -> str:
     count = int(row.get("count") or 1)
     if count <= 1:

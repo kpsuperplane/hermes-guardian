@@ -104,6 +104,7 @@ export interface ActivityRow {
   decision?: string;
   icon?: string;
   time?: string;
+  time_short?: string;
   ts?: number;
   tool_name?: string;
   tool?: string;

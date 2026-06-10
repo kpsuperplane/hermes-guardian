@@ -51,6 +51,10 @@ def _activity_time_text(row: dict[str, Any]) -> str:
     return _presentation.activity_time_text(row, _history_timezone())
 
 
+def _activity_clock_text(row: dict[str, Any]) -> str:
+    return _presentation.friendly_activity_clock(row.get("ts"), _history_timezone())
+
+
 def _activity_display_reason(row: dict[str, Any]) -> str:
     return _presentation.activity_display_reason(
         row,

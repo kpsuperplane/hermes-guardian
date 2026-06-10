@@ -412,17 +412,14 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
         onClick={() => setOpen(!open)}
         style={{ cursor: "pointer" }}
       >
-        <span className="hermes-guardian-check-decision" title={text(row.decision)}>
-          {decisionEmoji(row)}
-        </span>
-        <span className="hermes-guardian-check-time hermes-guardian-muted">
-          {text(row.time, timeText(row.ts))}
-        </span>
         <span className="hermes-guardian-check-target">
           <span className="hermes-guardian-check-tool">{tool}</span>
           <span className="hermes-guardian-check-route hermes-guardian-muted">
             {action + " -> " + destination}
           </span>
+        </span>
+        <span className="hermes-guardian-check-decision" title={text(row.decision)}>
+          {decisionEmoji(row)}
         </span>
         {!isRead && row.destination_trust ? <TrustPill trust={row.destination_trust} /> : null}
         {taints.length ? (
@@ -434,6 +431,9 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
             ))}
           </span>
         ) : null}
+        <span className="hermes-guardian-check-time hermes-guardian-muted">
+          {text(row.time_short, timeText(row.ts))}
+        </span>
       </div>
       {row.decision_step ? (
         <div className="hermes-guardian-check-step hermes-guardian-muted">
