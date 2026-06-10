@@ -666,7 +666,8 @@ def _privacy_observe_tool_result(
     )
     if taint_classes:
         _taint_session(session_id, taint_classes)
-        _record_provenance_from_tool_result(session_id, tool_name, parsed, taint_classes)
+        # Provenance retired (doc 02 §4): the read taints the session ambiently; there is
+        # no read-time fingerprint index. ``decide`` reasons over this ambient taint.
         _emit_activity(
             "tainted",
             session_id=session_id,

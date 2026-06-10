@@ -411,11 +411,12 @@ def _taint_reason_for_tool_result(tool_name: str, classes: set[str]) -> str:
 
 
 def _data_classes_for_egress(session_id: str | None, args: Any) -> set[str]:
-    arg_classes = _classes_from_content(args)
-    matched_classes = _provenance_match_classes(session_id, args)
-    if matched_classes:
-        return arg_classes | matched_classes
-    return arg_classes | _session_taint(session_id)
+    # Provenance retired (doc 02 §4 / charter §2.1): the egress class set is the content
+    # classes intrinsic to this payload UNION the full ambient session taint. There is no
+    # payload-level provenance narrowing — narrowing now happens only in ``llm`` mode via
+    # the verifier reading the real payload (decide step 6). This is strictly more
+    # conservative than the old provenance path on external flows (charter invariant #4).
+    return _classes_from_content(args) | _session_taint(session_id)
 
 
 def _safe_policy_token(value: Any, *, default: str, limit: int = 64) -> str:

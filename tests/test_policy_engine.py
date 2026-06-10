@@ -172,6 +172,16 @@ def test_9_draft_and_self_write_no_longer_gate():
 
 
 # --- Test 10: corpus parity replay — THE FLOOR GATE --------------------------
+# Post-provenance (doc 04 §7.1): the replay buckets EVERY divergence into exactly one of:
+#   (a) expected intra-boundary gate->allow (destination-trust FP win) — fine.
+#   (b) provenance-laundering flips — a previously-flagged ``laundering`` case that, with
+#       provenance retired, now reaches the verifier (decide-ALLOW under its ARTIFICIAL
+#       empty ambient taint) instead of the old deterministic provenance block. This is the
+#       ONE sanctioned, non-floor-neutral carve-out (charter §2.1). It may contain ONLY
+#       records tagged ``laundering:true`` — a real floor breach must never hide here.
+#       The INTENDED post-retirement behavior of these flows (llm verifier still catches;
+#       strict routes to manual review) is asserted in test_provenance_retirement.py.
+#   (c) anything else — MUST be zero (the real floor gate).
 def _replay_old_outcome_bucket(decision: str) -> str:
     """Map a recorded OLD ``decision`` to decide's vocabulary for comparison."""
     if decision in ("blocked",):
@@ -189,9 +199,9 @@ def test_10_corpus_parity_replay_zero_floor_breaches():
 
     intra_boundary_trusts = None
 
-    bucket_a = []  # expected intra-boundary gate->allow (FP wins)
-    bucket_b = []  # floor breach (old block -> new ALLOW, not intra-boundary) — MUST be 0
-    bucket_c = []  # new block (old allow -> new BLOCK/APPROVE)
+    bucket_a = []  # (a) expected intra-boundary gate->allow (FP wins)
+    bucket_b = []  # (b) sanctioned provenance-laundering flips — laundering-tagged ONLY
+    bucket_c = []  # (c) anything else — MUST be empty (the floor gate)
 
     for rec in records:
         plugin = load_plugin()
@@ -211,7 +221,9 @@ def test_10_corpus_parity_replay_zero_floor_breaches():
         old = _replay_old_outcome_bucket(rec["decision"])
 
         # security_blocked records short-circuit BEFORE decide via the security/intrinsic
-        # path; assert they still hard-block there and do NOT reach decide-ALLOW.
+        # path; assert they still hard-block there and do NOT reach decide-ALLOW. This holds
+        # post-provenance: the security layer is unchanged (e.g. the verbatim email-send
+        # laundering record stays security_blocked, NOT a bucket-(b) flip).
         if old == "security_block":
             intrinsic = plugin._intrinsic_risk_for_tool(tool, args)
             assert intrinsic is not None, f"{rid}: security_blocked record lost its hard block"
@@ -222,21 +234,28 @@ def test_10_corpus_parity_replay_zero_floor_breaches():
 
         if old == "block" and new == plugin._DECISION_ALLOW:
             if trust in intra_boundary_trusts or cap.destination.kind == "draft":
-                bucket_a.append(rid)
+                bucket_a.append(rid)                       # (a) intra-boundary FP win
+            elif rec.get("laundering"):
+                bucket_b.append((rid, str(trust)))         # (b) sanctioned carve-out
             else:
-                bucket_b.append((rid, str(trust)))
+                bucket_c.append((rid, "block->ALLOW", str(trust)))  # (c) FLOOR BREACH
         elif old == "allow" and new in (plugin._DECISION_BLOCK, plugin._DECISION_APPROVE):
-            bucket_c.append((rid, new))
+            bucket_c.append((rid, f"allow->{new}"))        # (c) new over-block
         # old == new (incl. block->APPROVE which is still a gate = parity), or
         # block->BLOCK, or allow->ALLOW: parity, nothing to bucket.
 
-        # Laundering records must NOT become decide-ALLOW (provenance carve-out is Phase 5;
-        # here just confirm they stay gated/blocked).
-        if rec.get("laundering"):
-            assert new != plugin._DECISION_ALLOW, f"{rid}: laundering case flipped to ALLOW"
-
-    # THE FLOOR GATE.
-    assert bucket_b == [], f"floor breaches (bucket b): {bucket_b}"
-    # Record buckets a/c for the report (visible on -s / failure).
+    # THE FLOOR GATE: bucket (c) must be empty.
+    assert bucket_c == [], f"unexplained divergences (bucket c): {bucket_c}"
+    # Bucket (b) is the sanctioned provenance carve-out: it may contain ONLY records tagged
+    # laundering:true (don't let a real leak hide here). The corpus built these with an
+    # ARTIFICIAL empty ambient taint to isolate the provenance fingerprint; with provenance
+    # retired, decide's step-4 ambient taint is empty -> ALLOW. The REAL flow (read taints
+    # the session) is defended by ambient taint + the llm verifier / strict review — proven
+    # in test_provenance_retirement.py.
+    laundering_ids = {r["id"] for r in records if r.get("laundering")}
+    for rid, _trust in bucket_b:
+        assert rid in laundering_ids, f"non-laundering record in carve-out bucket: {rid}"
+    # Record buckets for the report (visible on -s / failure).
     print("bucket_a (intra-boundary gate->allow):", bucket_a)
-    print("bucket_c (new block):", bucket_c)
+    print("bucket_b (sanctioned provenance-laundering flips):", bucket_b)
+    print("bucket_c (must be empty):", bucket_c)

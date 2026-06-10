@@ -53,7 +53,6 @@ def test_core_logic_modules_are_single_ordered_contract():
         "privacy/tool_policy",
         "privacy/capability",
         "privacy/policy",
-        "privacy/provenance",
         "privacy/action_details",
         "privacy/llm",
         "privacy/rules",

@@ -160,36 +160,36 @@ def _verdict_input_for_submit(plugin, typed, session_id="s1"):
     return plugin._llm_verdict_input(shape, args)
 
 
-def test_verdict_input_exposes_real_content_and_provenance_of_export():
-    # A calendar event the agent read, then submits into a form, reaches the verifier
-    # as both the real text AND a calendar-sourced provenance label.
+def test_verdict_input_exposes_real_payload_to_verifier():
+    # Provenance retired (doc 02 §4): there is no ``exported_source_classes`` provenance
+    # label. The verifier instead reads the REAL payload (``action_arguments``) and does
+    # the narrowing/anti-laundering itself. A calendar event the agent read, then submits
+    # into a form, reaches the verifier verbatim so it can judge content against intent.
     plugin = load_plugin()
-    plugin._record_provenance_from_tool_result(
-        "s1", "calendar_list_events", {"summary": _CAL_EVENT}, {"calendar"}
-    )
     plugin._taint_session("s1", {"calendar"})
 
     payload = _verdict_input_for_submit(plugin, _CAL_EVENT)
 
     assert payload["action_arguments"]["text"] == _CAL_EVENT
-    assert payload["privacy_context"]["exported_source_classes"] == ["calendar"]
+    # No provenance signal in the verifier input.
+    assert "exported_source_classes" not in payload["privacy_context"]
+    # Ambient scope reflects the calendar read; the verifier reasons over the payload.
+    assert "calendar" in payload["privacy_context"]["classes_in_scope"]
 
 
-def test_verdict_input_distinguishes_email_payload_from_ambient_calendar_scope():
-    # Calendar is ambiently in scope (read earlier), but the agent submits a bare
-    # email address. The payload carries no tracked private source, so the verifier
-    # sees an email export, not the calendar.
+def test_verdict_input_carries_ambient_scope_with_real_payload():
+    # Calendar is ambiently in scope (read earlier), and the agent submits a bare email
+    # address. With provenance retired the verifier sees the full ambient scope AND the
+    # real payload (the bare address), and judges the payload against the intent — there
+    # is no deterministic per-payload class subset anymore (doc 02 §4).
     plugin = load_plugin()
-    plugin._record_provenance_from_tool_result(
-        "s1", "calendar_list_events", {"summary": _CAL_EVENT}, {"calendar"}
-    )
     plugin._taint_session("s1", {"calendar"})
 
     payload = _verdict_input_for_submit(plugin, "reader@example.com")
 
     assert payload["action_arguments"]["text"] == "reader@example.com"
-    assert payload["privacy_context"]["exported_source_classes"] == []
-    # Ambient scope still reflects the calendar read, but it is not being exported.
+    assert "exported_source_classes" not in payload["privacy_context"]
+    # Ambient scope still reflects the calendar read; the verifier judges the payload.
     assert "calendar" in payload["privacy_context"]["classes_in_scope"]
 
 

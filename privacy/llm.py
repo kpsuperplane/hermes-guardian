@@ -260,13 +260,12 @@ def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:
         "action_arguments": _safe_arg_summary_for_llm(args),
         "privacy_context": {
             "session_has_private_data": bool(shape.get("data_classes")),
-            # Ambient classes the session has READ (may be broader than what this
-            # call exports). Do not treat presence here as proof of export.
+            # Ambient classes the session has READ and may be carrying (provenance
+            # retired, doc 02 §4): this is the full ambient taint, not a payload-derived
+            # subset. The verifier reads ``action_arguments`` (the real payload) and is
+            # responsible for narrowing/anti-laundering — judging whether the payload's
+            # content is consistent with the authorized intent (charter §2.1-§2.2).
             "classes_in_scope": sorted(shape.get("data_classes") or []),
-            # Private sources the submitted arguments PROVABLY carry (object-level
-            # provenance over this call's payload). This is what is actually being
-            # exported now. Empty means no tracked private content matched.
-            "exported_source_classes": sorted(_provenance_match_classes(shape.get("session_id"), args)),
             "security_sensitive_content_already_hard_blocked": True,
             "manual_approval_available_if_denied": True,
         },

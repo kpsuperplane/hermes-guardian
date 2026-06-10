@@ -1031,7 +1031,6 @@ def _guardian_clear_taint(owner_hash: str) -> str:
             if state:
                 state["taint"].clear()
                 state["browser_private_hosts"].clear()
-                state.pop("provenance", None)
             _SESSION_APPROVALS.pop(sid, None)
             _ONCE_APPROVALS.pop(sid, None)
     return "Cleared Guardian taint and session approvals for your active Guardian sessions."

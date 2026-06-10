@@ -99,11 +99,17 @@ at `/guardian`.
 
 ## How It Works
 
-Guardian's core policy is intentionally small:
+Guardian's core policy is intentionally small. Every tool call resolves once into a
+**capability** `(direction, destination, data classes)`, and a single pure decision
+function reasons over it:
 
-> For Hermes-mediated actions that Guardian classifies as outbound egress, if
-> the current session has observed private data, the active privacy mode decides
-> whether the action can run, needs approval, or must be blocked.
+> A read taints the session; it never egresses. A write is a confidentiality event
+> only when it crosses **outward** — toward a destination whose trust is something
+> other than the data owner's own boundary. A write that stays inside the owner's
+> boundary (to one of their own stores, a draft, the model provider) is allowed
+> without gating, because it exposes data to no other party. A write that crosses
+> outward while the session holds private data gates for approval (or, with a
+> declassification rule, allows or blocks deterministically).
 
 The flow looks like this:
 
@@ -114,24 +120,50 @@ Private source observed
 Session tainted with data classes
         |
         v
-Outbound tool call or final response classified
+Tool call classified -> capability (direction, destination, data classes)
         |
         v
-Security-sensitive? ---- yes ----> block or suppress
+Security-sensitive? ---- yes ----> block or suppress   (runs first, unchanged)
         |
         no
         |
         v
-Privacy mode engine evaluates action
+decide(): read? -> allow.  Destination inside the owner's boundary? -> allow.
+          Outward + private taint + no rule? -> gate for approval
+          (llm mode: verifier may upgrade by reading the real payload)
         |
-        |  optional user rules can narrow or override known routes
         v
 Auto-allow, hard-block, or request approval
 ```
 
+### Destination trust
+
+Each sink's destination is resolved to a trust level **relative to the data owner**:
+`self`, `trusted_recipient`, `local_system`, `model_provider`, `external`, `public`,
+or `unknown`. This is what lets Guardian tell "save my inbox summary to my own Notion"
+(self, allowed) from "email my inbox summary to a stranger" (external, gated) instead
+of gating both. Resolution is **local** — it calls no vendor service.
+
+The defaults are conservative and fail closed. A destination whose ownership cannot
+be *proven* is `unknown`, and `unknown` is treated exactly as `external`. Mislabeling
+an external destination as `self` is the *only* way this design leaks, so every
+ambiguity resolves toward "not self." Out of the box you get a small, floor-safe set
+of seeded self stores (your own files / memory / todo / calendar / notion / drive,
+plus drafts); **send-to-self for your own messaging identities and own-infrastructure
+hosts is opt-in** — you add them explicitly to the self allowlist. No operator is
+forced to configure anything to retain the prior safety.
+
+### One declarative policy document
+
+The entire risk posture lives in one policy document (the persisted Guardian config):
+privacy mode, the self allowlist (destinations / identities / hosts), declassification
+rules, and tool overrides. Existing configs keep working (older versions load with the
+conservative defaults injected). A wholly corrupt document falls back to `strict`, not
+to anything permissive.
+
 Security checks run before privacy checks. Privacy allow rules and approval
 commands cannot bypass Security Module blocks. Privacy rules are customization
-hooks on top of the mode engine, not a requirement for Guardian to protect a
+hooks on top of the decision engine, not a requirement for Guardian to protect a
 session.
 
 ## Privacy Modes
@@ -199,13 +231,15 @@ This channel is deliberately narrow and fail-closed:
   raise `authorization_level` for actions the user actually asked for, but cannot
   override `risk_level` or the absolute deny rules.
 - Authorization is scoped to the data actually being sent, not just the action.
-  The verifier reads the real `action_arguments` (below) and also gets
-  `exported_source_classes` — the private sources the payload provably carries —
-  separately from the ambient classes the session has merely read. A request
-  authorizes only the data classes intrinsic to it, so "subscribe me to this
-  newsletter" cannot launder a calendar event into the form: a bare email address
-  still auto-approves, but a calendar event in the same field does not, even though
-  both ran with the calendar ambiently in scope.
+  The verifier reads the real `action_arguments` (below) alongside the ambient
+  classes the session has read, and judges the payload's content against the
+  authorized intent. A request authorizes only the data classes intrinsic to it,
+  so "subscribe me to this newsletter" cannot launder a calendar event into the
+  form: a bare email address still auto-approves, but a calendar event in the same
+  field does not, even though both ran with the calendar ambiently in scope. (This
+  content/intent judgment is the verifier's, made from the real payload — there is
+  no separate deterministic `exported_source_classes` provenance signal anymore;
+  see Data Classes.)
 
 The verifier also receives the **real action payload** — with security-sensitive 
 content and credential-shaped tokens stripped — so it can check that content 
@@ -438,20 +472,30 @@ unambiguous signals (an SSN, an email-record header block) still taint regardles
 of context. The legacy `email` class is accepted in persisted rules and maps to
 `communications`.
 
-Guardian also keeps volatile, metadata-only provenance for some copied text
-inside the active session. It indexes non-security-sensitive, medium-length
-phrases from tainting tool results as keyed HMAC fingerprints with source data
-classes. If later tool arguments or a final response structurally contain a
-matching copied phrase, Guardian can narrow the data classes in scope to the
-matched source classes plus any private-looking argument classes. If there is no
-match, if the text is too short, if it is paraphrased, or if provenance is
-missing, Guardian falls back to the full session taint. Raw source text is not
-stored in provenance, activity rows, or approval records, and the provenance
-fingerprints and their source text are never sent to the verifier either — only
-the source-class labels derived from a match are. (The verifier does separately
-receive the real action payload in `llm` mode; see the Privacy Modes section.
-That payload is the live call's arguments, not stored provenance.)
-Security-sensitive strings are not indexed.
+Egress decisions reason over the **ambient session taint**: the union of the data
+classes the session has read so far and any private-looking classes intrinsic to
+the outgoing payload. There is no per-payload narrowing of which classes are
+"provably" leaving — that is deliberately conservative (Guardian never treats
+"we couldn't detect private content in this payload" as grounds to allow an
+outward flow). Narrowing happens only in `llm` mode, where the verifier reads the
+real payload and judges its content against the authorized intent.
+
+> **Provenance was retired.** Earlier versions kept a volatile, metadata-only
+> *provenance* index — keyed HMAC fingerprints of copied phrases from tainting
+> tool results — to deterministically catch a payload that copied private content
+> verbatim out of an authorized action ("laundering"). That layer was retired in
+> favor of the verifier (the destination-trust model in How It Works now handles
+> intra-boundary flows, and the verifier reads the real payload in `llm` mode). The trade is
+> honest and scoped: in `strict` mode the contract is already "a human reviews
+> every tainted egress," so the human is the laundering catch and provenance was an
+> optimization at odds with that contract; in `llm` mode the verifier reads the
+> real payload and catches the laundering case semantically (including paraphrased
+> copies, which exact-fingerprint provenance never caught) — but it loses the
+> deterministic backstop, so an adversary who fools the verifier on a *verbatim*
+> laundering payload that provenance would have caught now succeeds. This is the
+> one place in the design where a protection was intentionally reduced; it is
+> reversible (the mechanism can be reintroduced scoped to external destinations if
+> a deterministic backstop ever becomes a requirement).
 
 ## Egress Surfaces
 
@@ -967,9 +1011,13 @@ systemctl restart hermes-gateway.service
   Data that bypasses Hermes hooks is out of scope.
 - Blocked tool calls are not paused and resumed; the agent must retry after
   approval.
-- Session taint is intentionally coarse. Volatile provenance can narrow copied
-  phrase classes, but it is not a complete dependency proof and never makes
-  missing provenance safe.
+- Session taint is intentionally coarse and conservative: egress decisions reason
+  over the full ambient session taint, never narrowing on the basis that a payload
+  "looks clean." The only narrowing is the `llm`-mode verifier reading the real
+  payload. The verbatim-laundering deterministic catch (provenance) was retired in
+  favor of that verifier (see Data Classes), so a verbatim laundering payload that
+  fools the verifier in `llm` mode is no longer separately caught; `strict` mode
+  still reviews every tainted egress.
 - The persisted verdict rationale is a sanitized, length-capped free-text
   string, not structured metadata. Redaction of emails, phones, and
   credential-shaped tokens is best-effort, so a paraphrased private detail that
