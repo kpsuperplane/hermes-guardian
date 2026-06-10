@@ -221,6 +221,13 @@ _RECENT_COMMAND_OWNERS: dict[str, list[tuple[float, str]]] = {}
 # Never persisted; pruned by _USER_REQUEST_TTL_SECONDS.
 _RECENT_OWNER_REQUESTS: dict[str, tuple[float, str]] = {}
 _USER_REQUEST_TTL_SECONDS = 900
+# Cross-channel turn lockdown (channel-shopping defense). Per session, the set of
+# egress-gating POLICY classes whose export to an EXTERNAL destination was withheld
+# this turn. Once present, the verifier (and read-only) may not auto-allow another
+# export of those classes to external in the same turn — it gates for the human,
+# regardless of which tool/channel is used. Turn-scoped: cleared on the next user
+# input (per owner) and on session reset. Volatile, never persisted.
+_TURN_DENIED_EXTERNAL: dict[str, set[str]] = {}
 _PERSISTENT_RULES_CACHE: dict[str, Any] | None = None
 _PERSISTENT_RULES_ERROR = False
 _ACTIVITY_DB_INITIALIZED = False

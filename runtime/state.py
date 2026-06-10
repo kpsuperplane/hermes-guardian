@@ -10,6 +10,7 @@ def _on_session_reset(session_id: str = "", old_session_id: str = "", **_: Any) 
             _SESSIONS.pop(sid, None)
             _ONCE_APPROVALS.pop(sid, None)
             _SESSION_APPROVALS.pop(sid, None)
+            _TURN_DENIED_EXTERNAL.pop(sid, None)
             _CRON_NOTIFICATIONS_SENT.discard(sid)
         for owner, session_ids in list(_OWNER_SESSIONS.items()):
             session_ids.difference_update({_normalize_session_id(session_id), _normalize_session_id(old_session_id)})

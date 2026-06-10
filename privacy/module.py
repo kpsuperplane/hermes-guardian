@@ -394,7 +394,56 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
     return None, blocked_reason
 
 
+# --- Cross-channel turn lockdown (channel-shopping defense) ------------------
+_LOCKDOWN_BLOCKED_REASON = (
+    "requires approval (cross-channel lockdown: an export of this private data to an "
+    "external destination was already withheld this turn; re-routing the same export "
+    "through another tool or channel is gated for your review)"
+)
+
+# Once a private export to an EXTERNAL destination is withheld this turn, the
+# verifier / read-only may not auto-allow another export of the same policy classes
+# to external in the same turn — regardless of which tool or channel is used. This
+# closes the terminal->browser channel-shop: the deterministic engine already gated
+# the first attempt; this denies the re-route a soft channel. Turn-scoped (cleared
+# on the next user input and on session reset); never persisted.
+def _egress_gating_policy_classes(data_classes: Any) -> set[str]:
+    try:
+        fine = set(data_classes or ())
+    except TypeError:
+        return set()
+    return set(_taint_policy_classes(fine)) & set(_EGRESS_GATING_POLICY_CLASSES)
+
+
+def _record_turn_external_denial(session_id: Any, data_classes: Any) -> None:
+    classes = _egress_gating_policy_classes(data_classes)
+    if not classes:
+        return
+    with _LOCK:
+        _TURN_DENIED_EXTERNAL.setdefault(_normalize_session_id(session_id), set()).update(classes)
+
+
+def _turn_external_denial_hit(session_id: Any, data_classes: Any) -> bool:
+    classes = _egress_gating_policy_classes(data_classes)
+    if not classes:
+        return False
+    with _LOCK:
+        remembered = _TURN_DENIED_EXTERNAL.get(_normalize_session_id(session_id))
+        return bool(remembered and (classes & remembered))
+
+
+def _clear_turn_external_denials_for_owner(owner_hash: str) -> None:
+    if not owner_hash:
+        return
+    with _LOCK:
+        for sid in set(_OWNER_SESSIONS.get(owner_hash, set())):
+            _TURN_DENIED_EXTERNAL.pop(sid, None)
+
+
 def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_reason: str) -> dict[str, str]:
+    # Withholding a private->external egress arms the turn lockdown so a re-route
+    # through another channel this turn cannot be auto-allowed (channel-shop defense).
+    _record_turn_external_denial(shape.get("session_id"), shape.get("data_classes"))
     approval = _create_pending_approval(shape)
     approval["reason"] = blocked_reason
     _save_pending_approval_to_store_unlocked(approval)
@@ -614,13 +663,20 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
         )
 
     # decision == APPROVE: gate for human approval (doc 02 §3 step 6).
-    if privacy_policy == "read-only" and _read_only_auto_approves(shape, args):
+    # Cross-channel turn lockdown (channel-shopping defense): if a private export of
+    # these classes to an external destination was already withheld this turn, an
+    # AUTO-ALLOW (read-only preset OR llm verifier) is downgraded to a manual gate. The
+    # verifier still runs and may DENY; it just may not auto-allow a re-routed export
+    # this turn. Channel-agnostic; turn-scoped (cleared on the next user input).
+    lockdown = _turn_external_denial_hit(session_id, data_classes)
+
+    if privacy_policy == "read-only" and not lockdown and _read_only_auto_approves(shape, args):
         # read-only's metadata-verified low-risk auto-approve preset (doc 02 §6): a
         # read-only auto-approval that happens today must still happen.
         _allow_read_only_tool_call(shape, tool_name, args)
         return None
 
-    blocked_reason = "requires approval"
+    blocked_reason = _LOCKDOWN_BLOCKED_REASON if lockdown else "requires approval"
     if privacy_policy == "llm":
         # llm mode: the verifier may UPGRADE the APPROVE to allow/hold/deny, including the
         # cron high-risk downgrade and _validated_llm_security_verdict — UNCHANGED.
@@ -628,8 +684,12 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
         if llm_result is not None:
             return llm_result
         if llm_blocked_reason is None:
-            return None
-        blocked_reason = llm_blocked_reason
+            # Verifier cleared it. Honor that unless the turn lockdown is armed, in which
+            # case a re-routed external export is gated for the human regardless.
+            if not lockdown:
+                return None
+        elif not lockdown:
+            blocked_reason = llm_blocked_reason
 
     return _block_for_pending_approval(shape, tool_name, blocked_reason)
 
