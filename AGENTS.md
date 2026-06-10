@@ -520,6 +520,14 @@ sharing process-global state across tests.
 
 ## Development Practices
 
+- This project is under active development with no external users or stable
+  release to support, so breaking changes are fine. Do not preserve backward
+  compatibility for its own sake, add migration shims, keep deprecated aliases,
+  or otherwise carry legacy behavior forward unless a task explicitly calls for
+  it. When you change something, just make the change cleanly — do not leave
+  comments, docs, or code that note what was there before, explain that a change
+  occurred, or reference the old behavior. Write the code and docs as if the new
+  shape is the only shape that ever existed.
 - Use `rg`/`rg --files` for repository search.
 - Keep edits tightly scoped. This repository relies on security invariants more
   than broad refactors.
@@ -533,8 +541,13 @@ sharing process-global state across tests.
   rules, dashboard routes, or operational semantics change.
 - Update `theory.md` only when the defense model, assumptions, or limitations
   change.
-- Do not restart the Hermes gateway, run `systemctl`, or modify live
-  `~/.hermes` state unless the user explicitly asks.
+- After making changes, restart the affected service(s) at the end of the turn so
+  the running system matches the committed code: `hermes-gateway.service` for any
+  plugin/Python change (the gateway loads the plugin from this directory by absolute
+  path, so even uncommitted edits go live on restart), and `hermes-dashboard.service`
+  for any dashboard asset change (rebuild `dashboard/dist` first). Restart both when
+  both changed. Never touch the retired `hermes-guardian-dashboard.service`. Do not
+  otherwise modify live `~/.hermes` state unless the user asks.
 
 ## Common Pitfalls
 
