@@ -207,10 +207,10 @@ def _guardian_history_command(
         for check in turn_rows[:_MAX_CHECKS_PER_TURN]:
             decision = str(check.get("decision") or "").strip()
             icon = _activity_status_icon(decision)
-            # 🤖 prefix when the LLM verifier was involved (auto-approval, or a verdict
+            # 🤖 suffix when the LLM verifier was involved (auto-approval, or a verdict
             # whose reason names the verifier).
             if decision == "auto_approved" or "llm" in str(check.get("reason") or "").lower():
-                icon = "🤖" + icon
+                icon = icon + "🤖"
             tool = _clip_text(_activity_display_tool(check), 60, ellipsis="...", fallback="n/a")
             taints = _activity_taints_text(check, code=True)
             lines.append(f"↳ {icon} `{tool}` · {taints}")

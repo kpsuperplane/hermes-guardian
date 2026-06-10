@@ -763,14 +763,6 @@ def _runtime_risk_banners() -> list[dict[str, str]]:
                 "message": "LLM cron context is on; cron jobs supply their own authorization evidence to the verifier (high-risk cron egress still requires manual approval).",
             }
         )
-    if _persist_prompts_enabled():
-        banners.append(
-            {
-                "id": "persist_prompts",
-                "severity": "high",
-                "message": "Prompt persistence is ON; sanitized user/cron prompts are written to the activity log for debugging. This relaxes the metadata-only invariant — turn it off when you're done.",
-            }
-        )
     if _self_grants_present():
         # Doc 03 §3.3: a non-empty self.identities / self.hosts is a real send-to-self /
         # own-infra trust grant. Informational, so the grant is never invisible.

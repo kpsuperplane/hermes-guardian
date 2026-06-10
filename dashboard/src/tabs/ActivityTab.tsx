@@ -42,14 +42,6 @@ function Debugging(props: {
   return (
     <div className="hermes-guardian-card">
       <div className="hermes-guardian-card-title">Debugging</div>
-      <div className="hermes-guardian-muted hermes-guardian-section-description">
-        History is always grouped by turn (one user prompt and the actions it drove). Turn
-        this on to also record the sanitized user/cron prompt on each turn so the turn
-        header shows what was asked. Off by default — it relaxes the metadata-only invariant;
-        turn it off when you're done. The stored prompt is the same redacted excerpt the
-        verifier sees (emails, phone numbers, URLs, quoted strings, and tokens removed) and
-        is pruned with every other row by Retention.
-      </div>
       <label className="hermes-guardian-check hermes-guardian-security-check">
         <input
           type="checkbox"
@@ -352,7 +344,7 @@ function FilterBar(props: { filters: Filters; setFilters: (next: Filters) => voi
 }
 
 // --- Turn cards (history grouped by turn) ------------------------------------
-// The decision shows as an emoji (✅/❌/📥/🌐, from the backend `icon`), prefixed with
+// The decision shows as an emoji (✅/❌/📥/🌐, from the backend `icon`), followed by
 // 🤖 when the LLM verifier was involved (an auto-approval, or any verdict whose reason
 // mentions the verifier). The full word is kept as a tooltip.
 function checkInvolvesLlm(row: ActivityRow): boolean {
@@ -361,7 +353,7 @@ function checkInvolvesLlm(row: ActivityRow): boolean {
 }
 
 function decisionEmoji(row: ActivityRow): string {
-  return (checkInvolvesLlm(row) ? "🤖" : "") + (text(row.icon) || "•");
+  return (text(row.icon) || "•") + (checkInvolvesLlm(row) ? "🤖" : "");
 }
 
 // A "check" line-item: one activity row inside a turn card. Click to expand the full

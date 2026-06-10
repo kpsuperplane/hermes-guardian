@@ -154,14 +154,15 @@ def test_slash_persist_prompts_toggles_and_gates(monkeypatch):
 
 
 # --- Dashboard ---------------------------------------------------------------
-def test_dashboard_snapshot_and_banner_reflect_persist_prompts():
+def test_dashboard_snapshot_reflects_persist_prompts():
     plugin = load_plugin()
     assert plugin._policy_snapshot()["persist_prompts"] is False
     payload, status = plugin._dashboard_persist_prompts_action(True)
     assert status == 200 and payload["ok"] is True
     assert payload["policy"]["persist_prompts"] is True
+    # No risk banner for prompt persistence (it is a debugging toggle, not a weakening).
     banners = plugin._policy_snapshot().get("risk_banners") or plugin._runtime_risk_banners()
-    assert any(b.get("id") == "persist_prompts" and b.get("severity") == "high" for b in banners)
+    assert not any(b.get("id") == "persist_prompts" for b in banners)
 
 
 def test_dashboard_persist_prompts_route_requires_confirmation():
@@ -275,11 +276,11 @@ def test_slash_activity_robot_prefix_marks_llm_involved_checks(monkeypatch):
     plugin._emit_activity("blocked", session_id="s1", owner_hash=owner, tool_name="terminal", reason="requires approval")
 
     out = plugin._handle_guardian_command("activity 3")
-    # Decisions render as emojis; the LLM-involved ones carry a 🤖 prefix, the
+    # Decisions render as emojis; the LLM-involved ones carry a 🤖 suffix, the
     # deterministic block does not.
-    assert "🤖✅ `browser_type`" in out
-    assert "🤖❌ `send_message`" in out
-    assert "❌ `terminal`" in out and "🤖❌ `terminal`" not in out
+    assert "✅🤖 `browser_type`" in out
+    assert "❌🤖 `send_message`" in out
+    assert "❌ `terminal`" in out and "❌🤖 `terminal`" not in out
 
 
 def _load_plugin_api():
