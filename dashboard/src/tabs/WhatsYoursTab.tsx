@@ -152,7 +152,7 @@ function SeenTile(props: {
           title={"Add " + entry.suggest.kind + " " + entry.suggest.value + " to your self-allowlist"}
           onClick={() => props.onAddToSelf(entry.suggest as { kind: string; value: string }, display)}
         >
-          This is mine → add to self
+          I own this
         </Button>
       ) : null}
     </div>
