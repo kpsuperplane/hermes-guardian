@@ -125,6 +125,5 @@ PACK = {
         "onayla",
         "sifre",
         "şifre",
-        "kod",
     ],
 }

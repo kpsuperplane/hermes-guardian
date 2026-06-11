@@ -120,7 +120,6 @@ PACK = {
         "bawiin",
         "kumpirmahin",
         "password",
-        "code",
         "otp",
     ],
 }

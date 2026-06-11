@@ -122,7 +122,6 @@ PACK = {
         "verify",
         "confirm",
         "password",
-        "code",
         "otp",
     ],
 }

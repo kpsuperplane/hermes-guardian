@@ -161,7 +161,5 @@ PACK = {
         "restablecer",
         "contraseña",
         "contrasena",
-        "codigo",
-        "código",
     ],
 }

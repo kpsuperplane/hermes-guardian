@@ -214,3 +214,33 @@ def test_world_language_sensitive_links_block_tool_args(url):
         "action": "block",
         "message": "Blocked by hermes-guardian: sensitive link detected in tool arguments.",
     }
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # OAuth2 authorization-code URLs always carry "response_type=code", and the
+        # OAuth redirect callback carries "?code=...". A bare "code" link-term (merged
+        # from several language packs) used to match these and suppress every consent
+        # URL, silently breaking interactive OAuth setup. Regression guard: a generic
+        # "code" must not, on its own, make a URL a sensitive link.
+        "https://accounts.google.com/o/oauth2/auth?response_type=code"
+        "&client_id=348648891275-x.apps.googleusercontent.com"
+        "&scope=https://www.googleapis.com/auth/gmail.send"
+        "&state=Vz4YX7nTh33dyjTid57WyBg7K2DkSe&access_type=offline&prompt=consent",
+        "http://localhost:1/?state=abc&code=4/0AeanSxyz",
+    ],
+)
+def test_oauth_code_param_is_not_a_sensitive_link(url):
+    plugin = load_plugin()
+
+    # The scanner sees no sensitive-link signal in a bare "code" query parameter.
+    assert plugin._sensitive_reason(url) is None
+
+    # And navigating to the consent / callback URL is not blocked.
+    result = plugin._on_pre_tool_call(
+        "browser_navigate",
+        {"url": url},
+        session_id="s1",
+    )
+    assert result is None

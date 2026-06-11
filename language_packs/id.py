@@ -120,7 +120,6 @@ PACK = {
         "konfirmasi",
         "pulihkan",
         "kata-sandi",
-        "kode",
         "otp",
     ],
 }

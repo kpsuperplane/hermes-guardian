@@ -125,6 +125,5 @@ PACK = {
         "vérifier",
         "confirmer",
         "mot-de-passe",
-        "code",
     ],
 }
