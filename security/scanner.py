@@ -25,6 +25,15 @@ _MESSAGE_KEYS = {
 _SECURITY_SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = []
 _REDACTION_MARKER_PATTERNS: list[tuple[re.Pattern[str], str]] = []
 
+# A variable whose name ends in one of these suffixes denotes a *reference to* a secret
+# — the path/file/dir/URL where it lives, or its name — not the secret value itself. The
+# assigned value is a location, never a credential (e.g.
+# ``secret_path = base/'google_client_secret.json'``), so such assignments are not hard
+# secrets. Anchored immediately after the name (before ``=``) in the assignment patterns
+# below, so ``CLIENT_SECRET = ...`` / ``api_key = ...`` (where the value IS the secret)
+# still match. Under the patterns' ``(?i)`` flag, ``_PATH`` / ``_Path`` are covered too.
+_NAME_NOT_A_HANDLE = r"(?<!_path)(?<!_file)(?<!_dir)(?<!_url)(?<!_uri)(?<!_name)"
+
 _CREDENTIAL_PATTERNS = [
     (re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----", re.I), "private key"),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "aws access key id"),
@@ -38,11 +47,11 @@ _CREDENTIAL_PATTERNS = [
     # Password and private-key assignments are hard secrets: kept suppressed even on the
     # inbound tool-result path. Matched before the token pattern below so a name containing
     # PASSWORD/PRIVATE_KEY always classifies as a hard secret, never as a service token.
-    (re.compile(r"(?im)^\s*[A-Z0-9_]*(?:PASSWORD|PRIVATE_KEY)[A-Z0-9_]*\s*=\s*[^\s#]{8,}"), "password assignment"),
+    (re.compile(r"(?im)^\s*[A-Z0-9_]*(?:PASSWORD|PRIVATE_KEY)[A-Z0-9_]*" + _NAME_NOT_A_HANDLE + r"\s*=\s*[^\s#]{8,}"), "password assignment"),
     # API/service token assignments (e.g. ``FOO_API_KEY=...``, ``CLIENT_SECRET=...``). These are
     # token-style credentials the agent may legitimately need to read — for instance an MCP
     # server's own auth token — so they are allowed inbound but still blocked at every egress.
-    (re.compile(r"(?im)^\s*[A-Z0-9_]*(?:TOKEN|SECRET|API_KEY)[A-Z0-9_]*\s*=\s*[^\s#]{8,}"), "secret assignment"),
+    (re.compile(r"(?im)^\s*[A-Z0-9_]*(?:TOKEN|SECRET|API_KEY)[A-Z0-9_]*" + _NAME_NOT_A_HANDLE + r"\s*=\s*[^\s#]{8,}"), "secret assignment"),
 ]
 
 # Credential reasons representing API/service authentication tokens. On the inbound

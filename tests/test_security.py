@@ -140,6 +140,28 @@ def test_inbound_result_still_suppresses_hard_secrets():
         assert parse_json(transformed)["hermes_guardian"]["suppressed"] is True
 
 
+def test_secret_assignment_ignores_path_and_handle_variables():
+    plugin = load_plugin()
+
+    # A variable whose name ends in a reference/handle suffix (_path/_file/_dir/_url/
+    # _uri/_name) holds the *location* of a secret, not the secret value — so it is not a
+    # hard secret. Regression: ``secret_path = .../google_client_secret.json`` used to
+    # hard-block the agent's OAuth token-exchange script. Each value below is 8+ contiguous
+    # chars, so it would match the old pattern; only the suffix exemption clears it.
+    for line in (
+        "secret_path = base/'google_client_secret.json'",
+        "private_key_file = '/etc/ssl/id_rsa_backup'",
+        "API_KEY_PATH = '/run/secrets/openai.key'",
+        "token_uri = 'https://oauth2.googleapis.com/token'",
+    ):
+        assert plugin._sensitive_reason(line) is None, line
+
+    # The value-is-the-secret case is still caught.
+    assert plugin._sensitive_reason('CLIENT_SECRET = "sk-abc123def456ghi"') == "secret assignment"
+    assert plugin._sensitive_reason("api_key = 'sk-live-9f8e7d6c5b4a'") == "secret assignment"
+    assert plugin._sensitive_reason("DB_PASSWORD = 'hunter2hunter2'") == "password assignment"
+
+
 def test_inbound_result_still_suppresses_account_security_content():
     plugin = load_plugin()
 
