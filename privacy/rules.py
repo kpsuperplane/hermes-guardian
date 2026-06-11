@@ -57,6 +57,12 @@ _TOOL_OVERRIDE_EGRESS_VALUES = {"ignore", "gate"} | _TOOL_OVERRIDE_EGRESS_FAMILI
 # Tool-override direction (doc 03 §1.2): read|write. Empty means "infer from name /
 # MCP annotation" (the existing behavior); a stored value overrides the inference.
 _TOOL_OVERRIDE_DIRECTIONS = {"read", "write"}
+# Source-provenance classification mode for a doc-read tool. `reference` routes reads
+# through the placeholder-tolerant relaxed scan (operator-installed reference material);
+# `private` always taints the read as personal data. Empty means "use the tiered default"
+# (provenance for reference reads, conservative for undeclared MCP doc-reads). For an MCP
+# server, declare the whole server at once with a prefix match (e.g. match = "crm_*").
+_TOOL_OVERRIDE_SOURCES = {"reference", "private"}
 # Env vars that override the named `retention` / `dashboard` config blocks (doc 03
 # §1.2). The document is the source of truth; these env vars remain readable as ops
 # overrides and are surfaced in `/guardian status` so they are never invisible.
@@ -326,6 +332,15 @@ def _normalize_tool_override(entry: Any) -> dict[str, Any] | None:
     egress = egress_raw if egress_raw in _TOOL_OVERRIDE_EGRESS_VALUES else ""
     direction_raw = str(entry.get("direction") or "").strip().lower()
     direction = direction_raw if direction_raw in _TOOL_OVERRIDE_DIRECTIONS else ""
+    source_raw = str(entry.get("source") or "").strip().lower()
+    source = source_raw if source_raw in _TOOL_OVERRIDE_SOURCES else ""
+    if source_raw and not source:
+        # Fail toward the conservative default, never toward `reference`: drop the unknown
+        # value rather than guess. The read then follows the tiered default for its kind.
+        core.logger.warning(
+            "%s: ignoring unknown tool-override source %r (expected one of: %s).",
+            core._PLUGIN_NAME, source_raw, ", ".join(sorted(_TOOL_OVERRIDE_SOURCES)),
+        )
     destination = (
         tool_policy._safe_policy_token(entry.get("destination"), default="", limit=80)
         if entry.get("destination")
@@ -341,6 +356,7 @@ def _normalize_tool_override(entry: Any) -> dict[str, Any] | None:
         "taints": taints,
         "egress": egress,
         "direction": direction,
+        "source": source,
         "destination": destination,
         "enabled": _config_bool(entry.get("enabled"), default=True),
         "note": note,
@@ -1348,6 +1364,7 @@ def _tool_overrides_snapshot() -> list[dict[str, Any]]:
             "taints": sorted(override.get("taints") or []),
             "egress": str(override.get("egress") or ""),
             "direction": str(override.get("direction") or ""),
+            "source": str(override.get("source") or ""),
             "destination": str(override.get("destination") or ""),
             "enabled": bool(override.get("enabled", True)),
             "note": str(override.get("note") or ""),
@@ -1368,6 +1385,7 @@ def _set_tool_override(
     taints: Any = None,
     egress: Any = None,
     direction: Any = None,
+    source: Any = None,
     destination: Any = None,
     note: Any = None,
     enabled: Any = None,
@@ -1375,6 +1393,10 @@ def _set_tool_override(
     normalized_match = _normalize_tool_match(match)
     if not normalized_match:
         return False, "Tool match must be a tool name or a prefix like mcp_acme_*."
+    if source is not None:
+        source_text = str(source).strip().lower()
+        if source_text and source_text not in _TOOL_OVERRIDE_SOURCES:
+            return False, "source must be one of: reference, private."
     if egress is not None:
         egress_text = str(egress).strip().lower()
         if egress_text and egress_text not in _TOOL_OVERRIDE_EGRESS_VALUES:
@@ -1405,6 +1427,8 @@ def _set_tool_override(
         payload["egress"] = egress
     if direction is not None:
         payload["direction"] = direction
+    if source is not None:
+        payload["source"] = source
     if destination is not None:
         payload["destination"] = destination
     if note is not None:

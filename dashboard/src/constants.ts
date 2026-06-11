@@ -71,6 +71,7 @@ export const DEFAULT_OVERRIDE_FORM: OverrideForm = {
   id: "",
   match: "",
   egress: "",
+  source: "",
   destination: "",
   taints: [],
   note: "",

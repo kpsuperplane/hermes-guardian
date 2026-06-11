@@ -101,6 +101,7 @@ _TOOL_SET_KEYS = {
     "taint",
     "egress",
     "direction",
+    "source",
     "destination",
     "dest",
     "note",
@@ -770,7 +771,7 @@ def _guardian_tool_command(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     usage = (
         "Usage: /guardian protection tool set <match> [taints=a+b] [egress=ignore|gate|<family>] "
-        "[direction=read|write] [destination=<dest>] [note=<text>] | "
+        "[direction=read|write] [source=reference|private] [destination=<dest>] [note=<text>] | "
         "/guardian protection tool delete <match_or_id> | "
         "/guardian protection tool enable|disable <id_or_match>"
     )
@@ -789,13 +790,15 @@ def _guardian_tool_command(owner_hash: str, tokens: list[str]) -> str:
             kwargs["egress"] = params["egress"]
         if "direction" in params:
             kwargs["direction"] = params["direction"]
+        if "source" in params:
+            kwargs["source"] = params["source"]
         raw_destination = params.get("destination") or params.get("dest")
         if raw_destination is not None:
             kwargs["destination"] = raw_destination
         if "note" in params:
             kwargs["note"] = params["note"]
         if not kwargs:
-            return "Provide at least one of: taints=, egress=, direction=, destination=, note=.\n" + usage
+            return "Provide at least one of: taints=, egress=, direction=, source=, destination=, note=.\n" + usage
         ok, message = rules_mod._set_tool_override(match, **kwargs)
         return message
     if sub in {"delete", "remove"} and len(tokens) == 3:

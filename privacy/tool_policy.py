@@ -771,6 +771,14 @@ def _taint_classes_for_tool_result(
         policy = local_system_policy if local_system_policy is not None else _consume_local_system_result_policy(session_id, tool_name)
         classes.update(set(policy.get("taint") or []))
         return classes | override_taints
+    # A declared `source` is authoritative for MCP doc-reads — it overrides the name/content
+    # defaults below (e.g. relaxes a `…_read_document` the name rule would otherwise taint).
+    if _is_mcp_doc_read(tool_name):
+        source = _tool_override_source(tool_name)
+        if source == "reference":
+            return _doc_content_taint_classes(result_value) | override_taints
+        if source == "private":
+            return _source_private_taint_classes(tool_name) | override_taints
     classes = _classes_from_tool_name(tool_name)
     if classes:
         return classes | override_taints
@@ -781,10 +789,9 @@ def _taint_classes_for_tool_result(
         # scan, so sample contacts in skill docs don't false-positive (the 0818f09 fix).
         return _doc_content_taint_classes(result_value) | override_taints
     if _is_mcp_doc_read(tool_name):
-        # Generic MCP doc-read of unknown provenance. Phase-1 floor: the pre-0818f09 generic
-        # content scan. Phases 2-3 intercept here for declared sources and the conservative
-        # undeclared default; until then it must NOT use the relaxed reference path, which is
-        # reserved for provably-reference reads.
+        # Undeclared MCP doc-read of unknown provenance. Phase-1 floor: the pre-0818f09 generic
+        # content scan. Phase 3 makes this conservative (taint + classification suggestion); it
+        # must NOT use the relaxed reference path, which is reserved for provably-reference reads.
         return _classes_from_content(result_value) | override_taints
     return _classes_from_content(result_value) | override_taints
 
@@ -1139,6 +1146,21 @@ def _tool_override_taint_classes(tool_name: str) -> set[str]:
     if not override:
         return set()
     return {cls for cls in (override.get("taints") or []) if cls in core._ALL_PRIVACY_CLASSES}
+
+
+def _tool_override_source(tool_name: str) -> str:
+    """Declared source-classification mode ('reference' | 'private') for a doc-read tool,
+    or '' if undeclared. `source` is the classification *mode*; `taints` stays additive."""
+    override = rules_mod._tool_override_for(tool_name)
+    return str(override.get("source") or "") if override else ""
+
+
+def _source_private_taint_classes(tool_name: str) -> set[str]:
+    """Fine taint classes for a declared-`private` source: the override's explicit `taints`
+    if it lists any, else `documents` (the default fine tag for personal_private content)."""
+    override = rules_mod._tool_override_for(tool_name) or {}
+    declared = {cls for cls in (override.get("taints") or []) if cls in core._ALL_PRIVACY_CLASSES}
+    return declared or {"documents"}
 
 
 _KNOWN_BUILTIN_TOOL_NAMES = frozenset({

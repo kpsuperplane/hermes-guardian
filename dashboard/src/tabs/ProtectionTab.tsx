@@ -130,6 +130,9 @@ function ToolClassification(props: {
                           {"egress " + (override.egress === "ignore" ? "none" : override.egress)}
                         </span>
                       ) : null}
+                      {override.source ? (
+                        <span className="hermes-guardian-pill">{"source " + override.source}</span>
+                      ) : null}
                       {override.destination ? (
                         <span className="hermes-guardian-pill">{"dest " + override.destination}</span>
                       ) : null}

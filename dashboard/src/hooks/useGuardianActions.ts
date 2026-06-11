@@ -243,6 +243,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       id: text(override.id),
       match: text(override.match),
       egress: text(override.egress),
+      source: text(override.source),
       destination: text(override.destination),
       taints: Array.isArray(override.taints) ? override.taints.slice() : [],
       note: text(override.note),
@@ -263,6 +264,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     const payload: {
       match: string;
       egress: string;
+      source: string;
       destination: string;
       taints: string[];
       note: string;
@@ -271,6 +273,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     } = {
       match: current.match,
       egress: current.egress || "",
+      source: current.source || "",
       destination: current.destination || "",
       taints: current.taints || [],
       note: current.note || "",

@@ -78,6 +78,7 @@ export interface ToolOverride {
   id?: string;
   match?: string;
   egress?: string;
+  source?: string;
   destination?: string;
   taints?: string[];
   note?: string;
@@ -330,6 +331,7 @@ export interface OverrideForm {
   id: string;
   match: string;
   egress: string;
+  source: string;
   destination: string;
   taints: string[];
   note: string;

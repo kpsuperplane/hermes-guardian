@@ -112,6 +112,17 @@ export function OverrideModal({
                 />
               </Field>
             ) : null}
+            <Field label="Source (doc reads)">
+              <select
+                className="hermes-guardian-select"
+                value={form.source}
+                onChange={(event) => update("source", event.target.value)}
+              >
+                <option value="">Default (tiered)</option>
+                <option value="reference">Reference material</option>
+                <option value="private">Personal data</option>
+              </select>
+            </Field>
           </div>
           <div className="hermes-guardian-field">
             Taints applied when this tool's results are read
