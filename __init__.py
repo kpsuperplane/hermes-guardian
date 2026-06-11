@@ -29,11 +29,51 @@ def _load_sibling_module(name: str) -> Any:
 
 def _load_core_module() -> Any:
     core_name = f"{__name__}.core"
+    # The `state` module is loaded by core via _load_relative_module, which caches it
+    # in sys.modules. Drop it alongside core so a fresh facade load gets fresh mutable
+    # process state (each test's load_plugin() must start from a clean slate), instead
+    # of leaking _SESSIONS/_PENDING_APPROVALS/etc. across loads.
+    sys.modules.pop(f"{core_name}.state", None)
     sys.modules.pop(core_name, None)
     return _load_sibling_module("core")
 
 
 _CORE = _load_core_module()
+_STATE = _CORE.state
+
+# Mutable process state, the state-dir paths, and the clock/env helpers live in the
+# self-contained `state` module bound on core as `core.state`. Tests and Hermes patch
+# these names on the facade, so they are bridged to/from `core.state` rather than core.
+# Limited to the names that moved out of core (not state.py's private load-time copies
+# of _PLUGIN_NAME/_PLUGIN_ROOT/_STATE_FILENAMES/logger).
+_STATE_KEYS = [
+    "_STATE_DIR",
+    "_UNSAFE_DIAGNOSTICS_FLAG",
+    "_PERSISTENT_RULES_PATH",
+    "_ACTIVITY_DB_PATH",
+    "_GUARDIAN_HMAC_KEY_PATH",
+    "_PERSISTENT_RULES_MTIME",
+    "_LOCK",
+    "_SESSIONS",
+    "_OWNER_SESSIONS",
+    "_PENDING_APPROVALS",
+    "_ONCE_APPROVALS",
+    "_SESSION_APPROVALS",
+    "_RECENT_COMMAND_OWNERS",
+    "_RECENT_OWNER_REQUESTS",
+    "_TURN_DENIED_EXTERNAL",
+    "_PERSISTENT_RULES_CACHE",
+    "_PERSISTENT_RULES_ERROR",
+    "_ACTIVITY_DB_INITIALIZED",
+    "_LAST_ACTIVITY_PRUNE",
+    "_PLUGIN_LLM",
+    "_CRON_NOTIFICATIONS_SENT",
+    "_CHECK_TIMING_STATE",
+    "_LLM_DENY_VERDICT_CACHE",
+    "_now",
+    "_env",
+]
+_STATE_VALUE_KEYS = [name for name in _STATE_KEYS if not callable(getattr(_STATE, name))]
 
 _SYNC_STATE_KEYS = [
     name
@@ -42,8 +82,8 @@ _SYNC_STATE_KEYS = [
     and not isinstance(getattr(_CORE, name), (types.ModuleType, type, type(lambda: None)))
 ]
 
-_SYNC_TO_CORE_KEYS = set(_SYNC_STATE_KEYS) | {"_now", "_env"}
-_SYNC_SKIP_FROM_CORE = {"_now", "_env"}
+_SYNC_TO_CORE_KEYS = set(_SYNC_STATE_KEYS)
+_SYNC_SKIP_FROM_CORE: set[str] = set()
 _FACADE_CALLABLE_DENYLIST = {
     "_assert_core_logic_contract",
     "_core_logic_missing_required_symbols",
@@ -61,6 +101,12 @@ def _sync_to_core() -> None:
                 setattr(_CORE, name, globals()[name])
             except Exception:
                 pass
+    for name in _STATE_KEYS:
+        if name in globals():
+            try:
+                setattr(_STATE, name, globals()[name])
+            except Exception:
+                pass
 
 
 def _sync_from_core() -> None:
@@ -69,6 +115,11 @@ def _sync_from_core() -> None:
             continue
         try:
             globals()[name] = getattr(_CORE, name)
+        except Exception:
+            pass
+    for name in _STATE_VALUE_KEYS:
+        try:
+            globals()[name] = getattr(_STATE, name)
         except Exception:
             pass
 
@@ -100,6 +151,16 @@ for _name in dir(_CORE):
         globals()[_name] = _make_bridge(_name)
     else:
         globals()[_name] = _value
+
+# Expose the moved state names on the facade. Values are copied (and re-synced from
+# core.state after every bridged call); the helpers (_now/_env) are exposed as plain
+# attributes so monkeypatching them on the facade reaches core.state via _sync_to_core.
+for _name in _STATE_KEYS:
+    globals()[_name] = getattr(_STATE, _name)
+
+# Expose the state module itself so tests/tools can reach its load-time helpers
+# (_resolve_state_dir, _migrate_legacy_state) and the real moved state directly.
+state = _STATE
 
 
 if hasattr(_CORE, "register") and callable(getattr(_CORE, "register")):

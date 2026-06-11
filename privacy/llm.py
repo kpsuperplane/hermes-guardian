@@ -13,13 +13,13 @@ from urllib.parse import urlparse
 
 def _guardian_hmac_key() -> bytes:
     try:
-        if not _GUARDIAN_HMAC_KEY_PATH.exists():
-            _GUARDIAN_HMAC_KEY_PATH.write_bytes(secrets.token_bytes(32))
+        if not state._GUARDIAN_HMAC_KEY_PATH.exists():
+            state._GUARDIAN_HMAC_KEY_PATH.write_bytes(secrets.token_bytes(32))
             try:
-                _GUARDIAN_HMAC_KEY_PATH.chmod(0o600)
+                state._GUARDIAN_HMAC_KEY_PATH.chmod(0o600)
             except Exception:
                 pass
-        key = _GUARDIAN_HMAC_KEY_PATH.read_bytes()
+        key = state._GUARDIAN_HMAC_KEY_PATH.read_bytes()
         if len(key) >= 32:
             return key
     except Exception as exc:
@@ -110,28 +110,28 @@ def _approval_shape(
 
 
 def _prune_expired() -> None:
-    cutoff = _now() - _RECENT_COMMAND_TTL_SECONDS
-    with _LOCK:
+    cutoff = state._now() - _RECENT_COMMAND_TTL_SECONDS
+    with state._LOCK:
         _load_pending_approvals_from_store_unlocked()
         expired = [
             approval_id
-            for approval_id, approval in _PENDING_APPROVALS.items()
-            if float(approval.get("expires_at", 0)) <= _now()
+            for approval_id, approval in state._PENDING_APPROVALS.items()
+            if float(approval.get("expires_at", 0)) <= state._now()
         ]
         for approval_id in expired:
-            _PENDING_APPROVALS.pop(approval_id, None)
+            state._PENDING_APPROVALS.pop(approval_id, None)
         if expired:
             _delete_pending_approvals_from_store_unlocked(expired)
-        for key, entries in list(_RECENT_COMMAND_OWNERS.items()):
+        for key, entries in list(state._RECENT_COMMAND_OWNERS.items()):
             fresh = [(ts, owner) for ts, owner in entries if ts >= cutoff]
             if fresh:
-                _RECENT_COMMAND_OWNERS[key] = fresh
+                state._RECENT_COMMAND_OWNERS[key] = fresh
             else:
-                _RECENT_COMMAND_OWNERS.pop(key, None)
-        request_cutoff = _now() - _USER_REQUEST_TTL_SECONDS
-        for owner_hash, (timestamp, _text) in list(_RECENT_OWNER_REQUESTS.items()):
+                state._RECENT_COMMAND_OWNERS.pop(key, None)
+        request_cutoff = state._now() - _USER_REQUEST_TTL_SECONDS
+        for owner_hash, (timestamp, _text) in list(state._RECENT_OWNER_REQUESTS.items()):
             if timestamp < request_cutoff:
-                _RECENT_OWNER_REQUESTS.pop(owner_hash, None)
+                state._RECENT_OWNER_REQUESTS.pop(owner_hash, None)
 
 
 def _terminal_command_is_low_risk(args: Any) -> bool:
@@ -341,13 +341,13 @@ def _cached_deny_verdict(shape: dict[str, Any]) -> dict[str, str] | None:
     after the short TTL.
     """
     key = _deny_cache_key(shape)
-    with _LOCK:
-        entry = _LLM_DENY_VERDICT_CACHE.get(key)
+    with state._LOCK:
+        entry = state._LLM_DENY_VERDICT_CACHE.get(key)
         if not entry:
             return None
         timestamp, verdict = entry
-        if _now() - timestamp > _LLM_DENY_VERDICT_TTL_SECONDS:
-            _LLM_DENY_VERDICT_CACHE.pop(key, None)
+        if state._now() - timestamp > _LLM_DENY_VERDICT_TTL_SECONDS:
+            state._LLM_DENY_VERDICT_CACHE.pop(key, None)
             return None
         return dict(verdict)
 
@@ -357,13 +357,13 @@ def _store_deny_verdict(shape: dict[str, Any], verdict: dict[str, str]) -> None:
     # transient fail-closed/unavailable verdict (risk_level "unknown").
     if verdict.get("outcome") == "allow" or verdict.get("risk_level") == "unknown":
         return
-    with _LOCK:
-        if len(_LLM_DENY_VERDICT_CACHE) > 512:
-            cutoff = _now() - _LLM_DENY_VERDICT_TTL_SECONDS
-            for cache_key, (timestamp, _v) in list(_LLM_DENY_VERDICT_CACHE.items()):
+    with state._LOCK:
+        if len(state._LLM_DENY_VERDICT_CACHE) > 512:
+            cutoff = state._now() - _LLM_DENY_VERDICT_TTL_SECONDS
+            for cache_key, (timestamp, _v) in list(state._LLM_DENY_VERDICT_CACHE.items()):
                 if timestamp < cutoff:
-                    _LLM_DENY_VERDICT_CACHE.pop(cache_key, None)
-        _LLM_DENY_VERDICT_CACHE[_deny_cache_key(shape)] = (_now(), dict(verdict))
+                    state._LLM_DENY_VERDICT_CACHE.pop(cache_key, None)
+        state._LLM_DENY_VERDICT_CACHE[_deny_cache_key(shape)] = (state._now(), dict(verdict))
 
 
 def _llm_verifier_unavailable_verdict(rationale: str) -> dict[str, str]:
@@ -376,7 +376,7 @@ def _llm_verifier_unavailable_verdict(rationale: str) -> dict[str, str]:
 
 
 def _llm_security_verdict(shape: dict[str, Any], args: Any) -> dict[str, str]:
-    llm = _PLUGIN_LLM
+    llm = state._PLUGIN_LLM
     if llm is None or not hasattr(llm, "complete_structured"):
         return _llm_verifier_unavailable_verdict("LLM verifier unavailable")
     _perf_mark_llm_invoked()

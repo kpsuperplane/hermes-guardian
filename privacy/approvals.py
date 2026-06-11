@@ -56,7 +56,7 @@ def _load_pending_approvals_from_store_unlocked() -> None:
                 FROM pending_approvals
                 WHERE expires_at > ?
                 """,
-                (int(_now()),),
+                (int(state._now()),),
             ).fetchall()
     except Exception as exc:
         logger.debug("%s: failed to load pending approvals: %s", _PLUGIN_NAME, exc)
@@ -64,7 +64,7 @@ def _load_pending_approvals_from_store_unlocked() -> None:
     for row in rows:
         approval = _pending_approval_from_row(row)
         if approval:
-            _PENDING_APPROVALS.setdefault(approval["id"], approval)
+            state._PENDING_APPROVALS.setdefault(approval["id"], approval)
 
 
 def _pending_approval_from_store_unlocked(approval_id: str) -> dict[str, Any] | None:
@@ -156,7 +156,7 @@ def _approval_id_compact(value: str) -> str:
 
 
 def _recent_approval_ids() -> set[str]:
-    cutoff = int(_now() - _APPROVAL_ID_REUSE_SECONDS)
+    cutoff = int(state._now() - _APPROVAL_ID_REUSE_SECONDS)
     recent: set[str] = set()
     try:
         _ensure_activity_db()
@@ -176,10 +176,10 @@ def _recent_approval_ids() -> set[str]:
 
 
 def _new_approval_id(shape: dict[str, Any] | None = None) -> str:
-    with _LOCK:
+    with state._LOCK:
         _prune_expired()
         _load_pending_approvals_from_store_unlocked()
-        unavailable = set(_PENDING_APPROVALS) | _recent_approval_ids()
+        unavailable = set(state._PENDING_APPROVALS) | _recent_approval_ids()
     start = secrets.randbelow(10_000)
     for offset in range(10_000):
         candidate = f"{(start + offset) % 10_000:04d}"
@@ -193,14 +193,14 @@ def _resolve_pending_approval_id(approval_id: str) -> str | None:
     approval_id = str(approval_id or "").strip().lower()
     if not approval_id:
         return None
-    with _LOCK:
+    with state._LOCK:
         _load_pending_approvals_from_store_unlocked()
-        if approval_id in _PENDING_APPROVALS:
+        if approval_id in state._PENDING_APPROVALS:
             return approval_id
         compact = _approval_id_compact(approval_id)
         matches = [
             stored_id
-            for stored_id in _PENDING_APPROVALS
+            for stored_id in state._PENDING_APPROVALS
             if _approval_id_compact(stored_id) == compact
         ]
     return matches[0] if len(matches) == 1 else None
@@ -218,7 +218,7 @@ def _cron_job_id_from_session(session_id: str | None) -> str:
 def _configured_owner_values_from_env(*names: str) -> set[str]:
     values: set[str] = set()
     for name in names:
-        raw = _env(name, "")
+        raw = state._env(name, "")
         for value in re.split(r"[,;\s]+", str(raw or "")):
             value = value.strip().strip("'\"[]")
             if value and value != "*":
@@ -265,8 +265,8 @@ def _create_pending_approval(shape: dict[str, Any]) -> dict[str, Any]:
         "data_classes": list(shape["data_classes"]),
         "action_detail": shape.get("action_detail") or "",
         "fingerprint": shape["fingerprint"],
-        "created_at": int(_now()),
-        "expires_at": int(_now() + _APPROVAL_TTL_SECONDS),
+        "created_at": int(state._now()),
+        "expires_at": int(state._now() + _APPROVAL_TTL_SECONDS),
         "cron_job_id": cron_job_id,
         "cron_job_name": cron_job_name,
         "reason": "",
@@ -275,9 +275,9 @@ def _create_pending_approval(shape: dict[str, Any]) -> dict[str, Any]:
         "destination_trust": _normalize_destination_trust_label(shape.get("destination_trust")),
         "decision_step": _normalize_decision_step_label(shape.get("decision_step")),
     }
-    with _LOCK:
+    with state._LOCK:
         _load_pending_approvals_from_store_unlocked()
-        _PENDING_APPROVALS[approval["id"]] = approval
+        state._PENDING_APPROVALS[approval["id"]] = approval
         _save_pending_approval_to_store_unlocked(approval)
     return approval
 
@@ -347,7 +347,7 @@ def _rule_from_approval(approval: dict[str, Any], *, persistent: bool = False) -
         },
         "scope": scope,
         "remaining_invocations": -1,
-        "created_at": int(_now()),
+        "created_at": int(state._now()),
     }
     if not persistent:
         rule["fingerprint"] = approval.get("fingerprint") or ""
@@ -411,8 +411,8 @@ def _remember_command_owner(raw_args: str, owner_hash: str) -> None:
     key = raw_args.strip()
     if not key:
         return
-    with _LOCK:
-        _RECENT_COMMAND_OWNERS.setdefault(key, []).append((_now(), owner_hash))
+    with state._LOCK:
+        state._RECENT_COMMAND_OWNERS.setdefault(key, []).append((state._now(), owner_hash))
 
 
 def _owner_is_authenticated(owner_hash: str) -> bool:
@@ -446,21 +446,21 @@ def _remember_user_request(event: Any) -> None:
     sanitized = _redact_command_for_llm(text.strip())
     if not sanitized:
         return
-    with _LOCK:
-        _RECENT_OWNER_REQUESTS[owner_hash] = (_now(), sanitized)
+    with state._LOCK:
+        state._RECENT_OWNER_REQUESTS[owner_hash] = (state._now(), sanitized)
 
 
 def _recent_user_request_for_owner(owner_hash: str) -> str:
     """Most recent fresh sanitized request for an authenticated owner, else ""."""
     if not _owner_is_authenticated(owner_hash):
         return ""
-    with _LOCK:
-        entry = _RECENT_OWNER_REQUESTS.get(owner_hash)
+    with state._LOCK:
+        entry = state._RECENT_OWNER_REQUESTS.get(owner_hash)
         if not entry:
             return ""
         timestamp, sanitized = entry
-        if _now() - timestamp > _USER_REQUEST_TTL_SECONDS:
-            _RECENT_OWNER_REQUESTS.pop(owner_hash, None)
+        if state._now() - timestamp > _USER_REQUEST_TTL_SECONDS:
+            state._RECENT_OWNER_REQUESTS.pop(owner_hash, None)
             return ""
         return sanitized
 
@@ -485,18 +485,18 @@ def _cron_instruction_for_session(session_id: str | None) -> str:
 
 def _pop_command_owner(raw_args: str) -> str:
     key = raw_args.strip()
-    with _LOCK:
+    with state._LOCK:
         _prune_expired()
-        entries = _RECENT_COMMAND_OWNERS.get(key) or []
+        entries = state._RECENT_COMMAND_OWNERS.get(key) or []
         if entries:
-            _RECENT_COMMAND_OWNERS[key] = entries[1:]
-            if not _RECENT_COMMAND_OWNERS[key]:
-                _RECENT_COMMAND_OWNERS.pop(key, None)
+            state._RECENT_COMMAND_OWNERS[key] = entries[1:]
+            if not state._RECENT_COMMAND_OWNERS[key]:
+                state._RECENT_COMMAND_OWNERS.pop(key, None)
             return entries[0][1]
     return _CLI_OWNER_HASH
 
 
 def _owner_session_ids(owner_hash: str) -> set[str]:
     if owner_hash == _CLI_OWNER_HASH:
-        return set(_SESSIONS) or {_GLOBAL_SESSION_ID}
-    return set(_OWNER_SESSIONS.get(owner_hash) or [])
+        return set(state._SESSIONS) or {_GLOBAL_SESSION_ID}
+    return set(state._OWNER_SESSIONS.get(owner_hash) or [])

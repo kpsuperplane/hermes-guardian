@@ -8,8 +8,8 @@ from typing import Any
 
 
 def _activity_connect() -> sqlite3.Connection:
-    _ACTIVITY_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(_ACTIVITY_DB_PATH), timeout=2.0)
+    state._ACTIVITY_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(state._ACTIVITY_DB_PATH), timeout=2.0)
     conn.row_factory = sqlite3.Row
     # WAL lets dashboard reads (e.g. the history page) proceed against a
     # consistent snapshot while activity writes are in flight, instead of
@@ -41,7 +41,7 @@ def _activity_retention_days() -> int:
 
 
 def _activity_group_seconds() -> int:
-    raw = _env(_ACTIVITY_GROUP_SECONDS_ENV, str(_DEFAULT_ACTIVITY_GROUP_SECONDS)).strip()
+    raw = state._env(_ACTIVITY_GROUP_SECONDS_ENV, str(_DEFAULT_ACTIVITY_GROUP_SECONDS)).strip()
     try:
         value = int(raw)
     except ValueError:
@@ -50,11 +50,10 @@ def _activity_group_seconds() -> int:
 
 
 def _ensure_activity_db() -> None:
-    global _ACTIVITY_DB_INITIALIZED
-    if _ACTIVITY_DB_INITIALIZED:
+    if state._ACTIVITY_DB_INITIALIZED:
         return
-    with _LOCK:
-        if _ACTIVITY_DB_INITIALIZED:
+    with state._LOCK:
+        if state._ACTIVITY_DB_INITIALIZED:
             return
         try:
             with _activity_connect() as conn:
@@ -204,7 +203,7 @@ def _ensure_activity_db() -> None:
                     """
                 )
                 conn.execute("CREATE INDEX IF NOT EXISTS command_suggestions_ts_idx ON command_suggestions(last_ts)")
-            _ACTIVITY_DB_INITIALIZED = True
+            state._ACTIVITY_DB_INITIALIZED = True
         except Exception as exc:
             logger.debug("%s: failed to initialize activity db: %s", _PLUGIN_NAME, exc)
 
@@ -249,7 +248,7 @@ def _record_command_suggestion(prefix: str) -> None:
                 INSERT INTO command_suggestions (prefix, last_ts, hits) VALUES (?, ?, 1)
                 ON CONFLICT(prefix) DO UPDATE SET last_ts=excluded.last_ts, hits=hits+1
                 """,
-                (text[:400], int(_now())),
+                (text[:400], int(state._now())),
             )
     except Exception as exc:
         logger.debug("%s: failed to record command suggestion: %s", _PLUGIN_NAME, exc)
@@ -333,7 +332,7 @@ def _emit_activity(
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    int(_now()),
+                    int(state._now()),
                     decision,
                     _privacy_policy(),
                     _safe_session_label(sid),
@@ -366,16 +365,16 @@ def _emit_activity(
 
 def _perf_begin_check() -> None:
     """Reset per-thread timing scratch state at the start of a hook check."""
-    _CHECK_TIMING_STATE.llm_invoked = False
+    state._CHECK_TIMING_STATE.llm_invoked = False
 
 
 def _perf_mark_llm_invoked() -> None:
     """Flag that the current hook check invoked the LLM verifier (its main cost)."""
-    _CHECK_TIMING_STATE.llm_invoked = True
+    state._CHECK_TIMING_STATE.llm_invoked = True
 
 
 def _perf_llm_invoked() -> bool:
-    return bool(getattr(_CHECK_TIMING_STATE, "llm_invoked", False))
+    return bool(getattr(state._CHECK_TIMING_STATE, "llm_invoked", False))
 
 
 def _record_check_timing(
@@ -396,7 +395,7 @@ def _record_check_timing(
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    int(_now()),
+                    int(state._now()),
                     str(hook or "")[:60],
                     str(tool_name or "")[:120],
                     max(0, int(duration_us)),
@@ -413,11 +412,10 @@ def _prune_activity_db(*, force: bool = False) -> dict[str, int]:
 
     A value of 0 disables the corresponding limit.
     """
-    global _LAST_ACTIVITY_PRUNE
-    now = _now()
-    if not force and now - _LAST_ACTIVITY_PRUNE < _ACTIVITY_PRUNE_INTERVAL_SECONDS:
+    now = state._now()
+    if not force and now - state._LAST_ACTIVITY_PRUNE < _ACTIVITY_PRUNE_INTERVAL_SECONDS:
         return {"deleted": 0, "remaining": -1}
-    _LAST_ACTIVITY_PRUNE = now
+    state._LAST_ACTIVITY_PRUNE = now
 
     max_rows = _activity_max_rows()
     retention_days = _activity_retention_days()

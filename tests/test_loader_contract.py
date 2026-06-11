@@ -106,7 +106,7 @@ def test_facade_monkeypatches_sync_to_core_for_bridged_calls(monkeypatch):
 
     plugin._on_pre_llm_call(session_id="s1", platform="telegram", sender_id="owner")
 
-    assert plugin._CORE._now() == 123.0
+    assert plugin._CORE.state._now() == 123.0
 
 
 def test_core_monkeypatches_are_seen_by_facade_hook_bridges(monkeypatch):

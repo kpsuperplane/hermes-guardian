@@ -35,8 +35,8 @@ def _owner_hash_from_event(event: Any) -> str:
 
 def _ensure_session(session_id: str | None, owner_hash: str | None = None) -> dict[str, Any]:
     sid = _normalize_session_id(session_id)
-    with _LOCK:
-        state = _SESSIONS.setdefault(
+    with state._LOCK:
+        session = state._SESSIONS.setdefault(
             sid,
             {
                 "taint": set(),
@@ -48,9 +48,9 @@ def _ensure_session(session_id: str | None, owner_hash: str | None = None) -> di
             },
         )
         if owner_hash:
-            state["owner_hash"] = owner_hash
-            _OWNER_SESSIONS.setdefault(owner_hash, set()).add(sid)
-        return state
+            session["owner_hash"] = owner_hash
+            state._OWNER_SESSIONS.setdefault(owner_hash, set()).add(sid)
+        return session
 
 
 # --- Turn identity (history grouping) ----------------------------------------
@@ -66,33 +66,33 @@ def _rotate_turn_id_for_owner(owner_hash: str) -> None:
     if not owner_hash:
         return
     turn_id = _new_turn_id()
-    with _LOCK:
-        for sid in set(_OWNER_SESSIONS.get(owner_hash, set())):
+    with state._LOCK:
+        for sid in set(state._OWNER_SESSIONS.get(owner_hash, set())):
             _ensure_session(sid)["turn_id"] = turn_id
 
 
 def _current_turn_id(session_id: str | None) -> str:
     """The session's current turn_id, lazily assigned if none exists yet (covers cron,
     unauthenticated, and CLI sessions that never hit the gateway turn boundary)."""
-    with _LOCK:
-        state = _ensure_session(session_id)
-        turn_id = str(state.get("turn_id") or "")
+    with state._LOCK:
+        session = _ensure_session(session_id)
+        turn_id = str(session.get("turn_id") or "")
         if not turn_id:
             turn_id = _new_turn_id()
-            state["turn_id"] = turn_id
+            session["turn_id"] = turn_id
         return turn_id
 
 
 def _taint_session(session_id: str | None, classes: set[str]) -> None:
     if not classes:
         return
-    with _LOCK:
-        state = _ensure_session(session_id)
-        state["taint"].update(classes)
+    with state._LOCK:
+        session = _ensure_session(session_id)
+        session["taint"].update(classes)
 
 
 def _session_taint(session_id: str | None) -> set[str]:
-    with _LOCK:
+    with state._LOCK:
         return set(_ensure_session(session_id)["taint"])
 
 
@@ -159,31 +159,31 @@ def _set_browser_host(session_id: str | None, url: str) -> None:
     host = _safe_host_from_url(url)
     if not host:
         return
-    with _LOCK:
-        state = _ensure_session(session_id)
-        if state.get("browser_host") != host:
-            state["browser_host"] = host
-            state["browser_private_hosts"].discard(host)
+    with state._LOCK:
+        session = _ensure_session(session_id)
+        if session.get("browser_host") != host:
+            session["browser_host"] = host
+            session["browser_private_hosts"].discard(host)
 
 
 def _mark_browser_private_input(session_id: str | None) -> None:
-    with _LOCK:
-        state = _ensure_session(session_id)
-        host = state.get("browser_host") or "unknown"
-        state["taint"].add("browser_private_input")
-        state["browser_private_hosts"].add(host)
+    with state._LOCK:
+        session = _ensure_session(session_id)
+        host = session.get("browser_host") or "unknown"
+        session["taint"].add("browser_private_input")
+        session["browser_private_hosts"].add(host)
 
 
 def _browser_host(session_id: str | None) -> str:
-    with _LOCK:
+    with state._LOCK:
         return str(_ensure_session(session_id).get("browser_host") or "unknown")
 
 
 def _browser_has_private_input(session_id: str | None) -> bool:
-    with _LOCK:
-        state = _ensure_session(session_id)
-        host = state.get("browser_host") or "unknown"
-        return host in state.get("browser_private_hosts", set())
+    with state._LOCK:
+        session = _ensure_session(session_id)
+        host = session.get("browser_host") or "unknown"
+        return host in session.get("browser_private_hosts", set())
 
 
 def _browser_result_has_private_context(value: Any) -> bool:
@@ -645,7 +645,7 @@ def _record_local_system_result_policy(session_id: str | None, tool_name: str, a
         "tool_name": str(tool_name or "").lower(),
         "taint": sorted(_local_system_result_taint_classes(tool_name, args)),
         "remote_read": _terminal_command_is_safe_remote_read(_terminal_command_for_args(args)),
-        "ts": _now(),
+        "ts": state._now(),
     }
     _record_shared_context(
         session_id,
@@ -653,9 +653,9 @@ def _record_local_system_result_policy(session_id: str | None, tool_name: str, a
         public_remote_read=bool(entry["remote_read"]),
         local_system_taint=",".join(entry["taint"]),
     )
-    with _LOCK:
-        state = _ensure_session(session_id)
-        policies = state.setdefault("local_system_result_policies", [])
+    with state._LOCK:
+        session = _ensure_session(session_id)
+        policies = session.setdefault("local_system_result_policies", [])
         policies.append(entry)
         del policies[:-10]
 
@@ -673,18 +673,18 @@ def _consume_local_system_result_policy(session_id: str | None, tool_name: str) 
                 if cls
             ],
             "remote_read": bool(shared.get("public_remote_read")),
-            "ts": float(shared.get("ts") or _now()),
+            "ts": float(shared.get("ts") or state._now()),
         }
     lower = str(tool_name or "").lower()
-    cutoff = _now() - 120
-    with _LOCK:
-        state = _ensure_session(session_id)
+    cutoff = state._now() - 120
+    with state._LOCK:
+        session = _ensure_session(session_id)
         policies = [
             policy
-            for policy in state.get("local_system_result_policies", [])
+            for policy in session.get("local_system_result_policies", [])
             if float(policy.get("ts", 0)) >= cutoff
         ]
-        state["local_system_result_policies"] = policies
+        session["local_system_result_policies"] = policies
         for index, policy in enumerate(policies):
             if policy.get("tool_name") == lower:
                 policies.pop(index)

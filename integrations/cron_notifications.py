@@ -20,7 +20,7 @@ def _cron_job_id_from_session(session_id: str | None) -> str:
 
 
 def _hermes_cli_path() -> str:
-    return _env(_HERMES_CLI_ENV, "/root/.local/bin/hermes").strip() or "hermes"
+    return state._env(_HERMES_CLI_ENV, "/root/.local/bin/hermes").strip() or "hermes"
 
 
 def _cron_job_record(job_id: str) -> dict[str, Any]:
@@ -78,7 +78,7 @@ def _safe_notify_targets(raw_targets: Any) -> list[str]:
 
 
 def _cron_notify_targets(job_id: str) -> list[str]:
-    raw = _env(_CRON_NOTIFY_TO_ENV, _DEFAULT_CRON_NOTIFY_TO).strip()
+    raw = state._env(_CRON_NOTIFY_TO_ENV, _DEFAULT_CRON_NOTIFY_TO).strip()
     if raw.lower() in {"", "0", "false", "no", "off", "none"}:
         return []
     if raw.lower() in {"origin", "deliver", "delivery", "job"}:
@@ -157,11 +157,11 @@ def _telegram_target_parts(target: str) -> tuple[str, str] | None:
     chat_id = parts[1].strip() if len(parts) > 1 else ""
     thread_id = parts[2].strip() if len(parts) > 2 else ""
     if not chat_id:
-        chat_id = _env("TELEGRAM_HOME_CHANNEL", "").strip()
+        chat_id = state._env("TELEGRAM_HOME_CHANNEL", "").strip()
     if not thread_id:
         thread_id = (
-            _env("TELEGRAM_CRON_THREAD_ID", "").strip()
-            or _env("TELEGRAM_HOME_CHANNEL_THREAD_ID", "").strip()
+            state._env("TELEGRAM_CRON_THREAD_ID", "").strip()
+            or state._env("TELEGRAM_HOME_CHANNEL_THREAD_ID", "").strip()
         )
     if not chat_id:
         return None
@@ -236,7 +236,7 @@ async def _send_telegram_cron_notification_async(
 
 
 def _send_telegram_cron_notification_message(message: str, target: str, approval_command: str) -> bool:
-    token = _env("TELEGRAM_BOT_TOKEN", "").strip()
+    token = state._env("TELEGRAM_BOT_TOKEN", "").strip()
     parts = _telegram_target_parts(target)
     if not token or not parts or not approval_command:
         return False
@@ -307,10 +307,10 @@ def _notify_cron_failure_if_needed(
         return
 
     sid = _normalize_session_id(session_id)
-    with _LOCK:
-        if sid in _CRON_NOTIFICATIONS_SENT:
+    with state._LOCK:
+        if sid in state._CRON_NOTIFICATIONS_SENT:
             return
-        _CRON_NOTIFICATIONS_SENT.add(sid)
+        state._CRON_NOTIFICATIONS_SENT.add(sid)
 
     message = _cron_notification_message(
         session_id=session_id,

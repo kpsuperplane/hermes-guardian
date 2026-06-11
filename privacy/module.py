@@ -423,25 +423,25 @@ def _record_turn_external_denial(session_id: Any, data_classes: Any) -> None:
     classes = _egress_gating_policy_classes(data_classes)
     if not classes:
         return
-    with _LOCK:
-        _TURN_DENIED_EXTERNAL.setdefault(_normalize_session_id(session_id), set()).update(classes)
+    with state._LOCK:
+        state._TURN_DENIED_EXTERNAL.setdefault(_normalize_session_id(session_id), set()).update(classes)
 
 
 def _turn_external_denial_hit(session_id: Any, data_classes: Any) -> bool:
     classes = _egress_gating_policy_classes(data_classes)
     if not classes:
         return False
-    with _LOCK:
-        remembered = _TURN_DENIED_EXTERNAL.get(_normalize_session_id(session_id))
+    with state._LOCK:
+        remembered = state._TURN_DENIED_EXTERNAL.get(_normalize_session_id(session_id))
         return bool(remembered and (classes & remembered))
 
 
 def _clear_turn_external_denials_for_owner(owner_hash: str) -> None:
     if not owner_hash:
         return
-    with _LOCK:
-        for sid in set(_OWNER_SESSIONS.get(owner_hash, set())):
-            _TURN_DENIED_EXTERNAL.pop(sid, None)
+    with state._LOCK:
+        for sid in set(state._OWNER_SESSIONS.get(owner_hash, set())):
+            state._TURN_DENIED_EXTERNAL.pop(sid, None)
 
 
 def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_reason: str) -> dict[str, str]:

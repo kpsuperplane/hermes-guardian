@@ -62,61 +62,16 @@ def _load_relative_module(name: str, relative_path: str) -> Any:
 _presentation = _load_relative_module("ui.presentation", "ui/presentation.py")
 _security = _load_relative_module("security.scanner", "security/scanner.py")
 _language = _load_relative_module("language_packs.runtime", "language_packs/runtime.py")
+state = _load_relative_module("state", "state.py")
 
 
 _PLUGIN_NAME = "hermes-guardian"
 _FORMER_PLUGIN_NAME = "privacy-egress-guard"
 _COMMAND_NAME = "guardian"
 
-# Persistent state (activity DB, allow rules, HMAC key, diagnostics flag) lives
-# next to the plugin code by default. Set HERMES_GUARDIAN_STATE_DIR to point every
-# runtime context (gateway, CLI, cron) at one shared directory; legacy co-located
-# files are migrated into it on first use so the dashboard never loses history or
-# the operator's saved allow rules.
-_STATE_FILENAMES = ("guardian-rules.json", "activity.sqlite3", ".guardian-hmac-key", ".unsafe-diagnostics")
-
-
-def _migrate_legacy_state(legacy_dir: Path, state_dir: Path) -> None:
-    if legacy_dir == state_dir:
-        return
-    for name in _STATE_FILENAMES:
-        src = legacy_dir / name
-        dst = state_dir / name
-        if not src.exists() or dst.exists():
-            continue
-        tmp = dst.with_name(dst.name + ".migrating.tmp")
-        tmp.write_bytes(src.read_bytes())
-        if name == ".guardian-hmac-key":
-            try:
-                tmp.chmod(0o600)
-            except OSError:
-                pass
-        os.replace(tmp, dst)
-
-
-def _resolve_state_dir() -> Path:
-    override = os.environ.get("HERMES_GUARDIAN_STATE_DIR", "").strip()
-    if not override:
-        return _PLUGIN_ROOT
-    state_dir = Path(override).expanduser()
-    try:
-        state_dir.mkdir(parents=True, exist_ok=True)
-        _migrate_legacy_state(_PLUGIN_ROOT, state_dir)
-    except Exception as exc:
-        logger.warning(
-            "%s: state dir %s unusable (%s); falling back to plugin dir",
-            _PLUGIN_NAME, state_dir, exc,
-        )
-        return _PLUGIN_ROOT
-    return state_dir
-
-
-_STATE_DIR = _resolve_state_dir()
-_UNSAFE_DIAGNOSTICS_FLAG = _STATE_DIR / ".unsafe-diagnostics"
-_PERSISTENT_RULES_PATH = _STATE_DIR / "guardian-rules.json"
-_PERSISTENT_RULES_MTIME: float | None = None
-_ACTIVITY_DB_PATH = _STATE_DIR / "activity.sqlite3"
-_GUARDIAN_HMAC_KEY_PATH = _STATE_DIR / ".guardian-hmac-key"
+# Persistent state paths, the resolved state dir, all mutable process state, and
+# the clock/env helpers live in the self-contained `state` module (loaded above as
+# `state`). Reference them as `state.<name>`.
 _APPROVAL_TTL_SECONDS = 10 * 60
 _APPROVAL_ID_REUSE_SECONDS = 7 * 24 * 60 * 60
 _RECENT_COMMAND_TTL_SECONDS = 30
@@ -210,38 +165,7 @@ _DEFAULT_ACTIVITY_GROUP_SECONDS = 60
 _DEFAULT_CRON_NOTIFY_TO = "origin"
 _ACTIVITY_PRUNE_INTERVAL_SECONDS = 300
 
-_LOCK = threading.RLock()
-_SESSIONS: dict[str, dict[str, Any]] = {}
-_OWNER_SESSIONS: dict[str, set[str]] = {}
-_PENDING_APPROVALS: dict[str, dict[str, Any]] = {}
-_ONCE_APPROVALS: dict[str, list[dict[str, Any]]] = {}
-_SESSION_APPROVALS: dict[str, list[dict[str, Any]]] = {}
-_RECENT_COMMAND_OWNERS: dict[str, list[tuple[float, str]]] = {}
-# Volatile, owner-keyed cache of the most recent sanitized user request captured
-# at gateway dispatch. Used only as authorization evidence for the LLM verifier.
-# Never persisted; pruned by _USER_REQUEST_TTL_SECONDS.
-_RECENT_OWNER_REQUESTS: dict[str, tuple[float, str]] = {}
 _USER_REQUEST_TTL_SECONDS = 900
-# Cross-channel turn lockdown (channel-shopping defense). Per session, the set of
-# egress-gating POLICY classes whose export to an EXTERNAL destination was withheld
-# this turn. Once present, the verifier (and read-only) may not auto-allow another
-# export of those classes to external in the same turn — it gates for the human,
-# regardless of which tool/channel is used. Turn-scoped: cleared on the next user
-# input (per owner) and on session reset. Volatile, never persisted.
-_TURN_DENIED_EXTERNAL: dict[str, set[str]] = {}
-_PERSISTENT_RULES_CACHE: dict[str, Any] | None = None
-_PERSISTENT_RULES_ERROR = False
-_ACTIVITY_DB_INITIALIZED = False
-_LAST_ACTIVITY_PRUNE = 0.0
-_PLUGIN_LLM: Any | None = None
-_CRON_NOTIFICATIONS_SENT: set[str] = set()
-# Per-thread scratch state for measuring how long each Guardian hook check takes
-# (and whether it invoked the LLM verifier). Reset at the start of each hook.
-_CHECK_TIMING_STATE = threading.local()
-# Short-TTL cache of recent DENY verdicts, keyed by session + owner + exact action
-# fingerprint. Replaying a deny is fail-safe (it can never cause a false allow), so
-# this only spares the verifier latency on retried/looping blocked actions.
-_LLM_DENY_VERDICT_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
 _LLM_DENY_VERDICT_TTL_SECONDS = 60
 _ALL_PRIVACY_CLASSES = {
     "communications",
@@ -733,19 +657,8 @@ def _assert_core_logic_contract() -> None:
         raise RuntimeError(f"{_PLUGIN_NAME}: core loader missing required symbols: {joined}")
 
 
-def _now() -> float:
-    return time.time()
-
-
-def _env(name: str, default: str = "") -> str:
-    value = os.getenv(name)
-    if value is not None:
-        return value
-    return default
-
-
 def _unsafe_diagnostics_enabled() -> bool:
-    return _UNSAFE_DIAGNOSTICS_FLAG.exists() or _env(
+    return state._UNSAFE_DIAGNOSTICS_FLAG.exists() or state._env(
         "HERMES_GUARDIAN_UNSAFE_DIAGNOSTICS", ""
     ).lower() in {"1", "true", "yes", "on"}
 
@@ -784,12 +697,11 @@ except Exception as exc:
 
 
 def register(ctx) -> None:
-    global _PLUGIN_LLM
     try:
-        _PLUGIN_LLM = getattr(ctx, "llm", None)
+        state._PLUGIN_LLM = getattr(ctx, "llm", None)
     except Exception as exc:
         logger.warning("%s: failed to capture plugin LLM facade: %s", _PLUGIN_NAME, exc)
-        _PLUGIN_LLM = None
+        state._PLUGIN_LLM = None
     hook_callbacks = {
         "pre_tool_call": _on_pre_tool_call,
         "transform_tool_result": _on_transform_tool_result,

@@ -1128,7 +1128,7 @@ def _new_privacy_rule_from_params(
             "cron_job_name": params.get("cron_name") or params.get("cron_job_name") or "",
         },
         "remaining_invocations": remaining,
-        "created_at": int(_now()),
+        "created_at": int(state._now()),
     }
     return _normalize_privacy_rule(rule), ""
 
@@ -1186,13 +1186,13 @@ def _guardian_rule_command(owner_hash: str, tokens: list[str]) -> str:
 
 
 def _guardian_status(owner_hash: str) -> str:
-    with _LOCK:
+    with state._LOCK:
         _prune_expired()
         session_ids = _owner_session_ids(owner_hash)
-        taint = sorted({cls for sid in session_ids for cls in _SESSIONS.get(sid, {}).get("taint", set())})
+        taint = sorted({cls for sid in session_ids for cls in state._SESSIONS.get(sid, {}).get("taint", set())})
         pending = [
             approval
-            for approval in _PENDING_APPROVALS.values()
+            for approval in state._PENDING_APPROVALS.values()
             if approval.get("owner_hash") == owner_hash or owner_hash == _CLI_OWNER_HASH
         ]
         rules = _privacy_rules_for_owner(owner_hash)
@@ -1333,15 +1333,15 @@ def _rule_classes_line(classes: list[Any]) -> str:
 
 
 def _guardian_clear_taint(owner_hash: str) -> str:
-    with _LOCK:
+    with state._LOCK:
         session_ids = _owner_session_ids(owner_hash)
         for sid in session_ids:
-            state = _SESSIONS.get(sid)
-            if state:
-                state["taint"].clear()
-                state["browser_private_hosts"].clear()
-            _SESSION_APPROVALS.pop(sid, None)
-            _ONCE_APPROVALS.pop(sid, None)
+            session = state._SESSIONS.get(sid)
+            if session:
+                session["taint"].clear()
+                session["browser_private_hosts"].clear()
+            state._SESSION_APPROVALS.pop(sid, None)
+            state._ONCE_APPROVALS.pop(sid, None)
     return "Cleared Guardian taint and session approvals for your active Guardian sessions."
 
 
@@ -1359,14 +1359,14 @@ def _guardian_delete_rule(owner_hash: str, rule_id: str) -> str:
 
 def _guardian_dismiss(owner_hash: str, approval_id: str) -> str:
     requested_id = approval_id
-    with _LOCK:
+    with state._LOCK:
         approval_id = _resolve_pending_approval_id(approval_id) or ""
-        approval = _PENDING_APPROVALS.get(approval_id)
+        approval = state._PENDING_APPROVALS.get(approval_id)
         if not approval:
             return f"No pending approval found for {requested_id}."
         if not _approval_owner_allowed(owner_hash, approval):
             return "Approval denied: this request belongs to a different user/session."
-        _PENDING_APPROVALS.pop(approval_id, None)
+        state._PENDING_APPROVALS.pop(approval_id, None)
         _delete_pending_approvals_from_store_unlocked([approval_id])
     _emit_activity(
         "denied",
@@ -1393,15 +1393,15 @@ def _guardian_approve(owner_hash: str, approval_id: str, scope: str) -> str:
     if scope not in {"once", "session", "always"}:
         return "Approval scope must be one of: once, session, always."
     requested_id = approval_id
-    with _LOCK:
+    with state._LOCK:
         _prune_expired()
         approval_id = _resolve_pending_approval_id(approval_id) or ""
-        approval = _PENDING_APPROVALS.get(approval_id)
+        approval = state._PENDING_APPROVALS.get(approval_id)
         if not approval:
             return f"No pending approval found for {requested_id}."
         if not _approval_owner_allowed(owner_hash, approval):
             return "Approval denied: this request belongs to a different user/session."
-        _PENDING_APPROVALS.pop(approval_id, None)
+        state._PENDING_APPROVALS.pop(approval_id, None)
         _delete_pending_approvals_from_store_unlocked([approval_id])
         rule = _rule_from_approval(approval, persistent=(scope == "always"))
         sid = approval["session_id"]
@@ -1411,17 +1411,17 @@ def _guardian_approve(owner_hash: str, approval_id: str, scope: str) -> str:
             rules = _persistent_privacy_rules()
             rules.append(rule)
             if not _save_persistent_privacy_rules(rules):
-                _PENDING_APPROVALS[approval_id] = approval
+                state._PENDING_APPROVALS[approval_id] = approval
                 _save_pending_approval_to_store_unlocked(approval)
                 return "Failed to save one-time privacy approval; Hermes Guardian remains blocked."
         elif scope == "session":
-            _SESSION_APPROVALS.setdefault(sid, []).append(rule)
+            state._SESSION_APPROVALS.setdefault(sid, []).append(rule)
         else:
             persistent_rule = rule
             rules = _persistent_privacy_rules()
             rules.append(persistent_rule)
             if not _save_persistent_privacy_rules(rules):
-                _PENDING_APPROVALS[approval_id] = approval
+                state._PENDING_APPROVALS[approval_id] = approval
                 _save_pending_approval_to_store_unlocked(approval)
                 return "Failed to save persistent privacy approval; Hermes Guardian remains blocked."
     _emit_activity(

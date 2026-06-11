@@ -871,36 +871,35 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
 
 
 def _load_privacy_config() -> dict[str, Any]:
-    global _PERSISTENT_RULES_CACHE, _PERSISTENT_RULES_ERROR, _PERSISTENT_RULES_MTIME
-    with _LOCK:
+    with state._LOCK:
         try:
-            current_mtime = _PERSISTENT_RULES_PATH.stat().st_mtime if _PERSISTENT_RULES_PATH.exists() else None
+            current_mtime = state._PERSISTENT_RULES_PATH.stat().st_mtime if state._PERSISTENT_RULES_PATH.exists() else None
         except Exception:
             current_mtime = None
         if (
-            _PERSISTENT_RULES_CACHE is not None
-            and _PERSISTENT_RULES_MTIME == current_mtime
-            and isinstance(_PERSISTENT_RULES_CACHE.get("privacy"), dict)
+            state._PERSISTENT_RULES_CACHE is not None
+            and state._PERSISTENT_RULES_MTIME == current_mtime
+            and isinstance(state._PERSISTENT_RULES_CACHE.get("privacy"), dict)
         ):
-            _apply_language_pack_config(_PERSISTENT_RULES_CACHE)
-            return _PERSISTENT_RULES_CACHE
+            _apply_language_pack_config(state._PERSISTENT_RULES_CACHE)
+            return state._PERSISTENT_RULES_CACHE
         try:
-            if not _PERSISTENT_RULES_PATH.exists():
-                _PERSISTENT_RULES_CACHE = _default_privacy_config()
-                _PERSISTENT_RULES_MTIME = None
+            if not state._PERSISTENT_RULES_PATH.exists():
+                state._PERSISTENT_RULES_CACHE = _default_privacy_config()
+                state._PERSISTENT_RULES_MTIME = None
             else:
-                parsed = json.loads(_PERSISTENT_RULES_PATH.read_text())
+                parsed = json.loads(state._PERSISTENT_RULES_PATH.read_text())
                 _validate_persistent_privacy_config(parsed)
-                _PERSISTENT_RULES_CACHE = _normalize_privacy_config(parsed)
-                _PERSISTENT_RULES_MTIME = current_mtime
-            _PERSISTENT_RULES_ERROR = False
+                state._PERSISTENT_RULES_CACHE = _normalize_privacy_config(parsed)
+                state._PERSISTENT_RULES_MTIME = current_mtime
+            state._PERSISTENT_RULES_ERROR = False
         except Exception as exc:
             logger.warning("%s: failed to load privacy rules: %s", _PLUGIN_NAME, exc)
-            _PERSISTENT_RULES_CACHE = _strict_privacy_config()
-            _PERSISTENT_RULES_MTIME = None
-            _PERSISTENT_RULES_ERROR = True
-        _apply_language_pack_config(_PERSISTENT_RULES_CACHE)
-        return _PERSISTENT_RULES_CACHE
+            state._PERSISTENT_RULES_CACHE = _strict_privacy_config()
+            state._PERSISTENT_RULES_MTIME = None
+            state._PERSISTENT_RULES_ERROR = True
+        _apply_language_pack_config(state._PERSISTENT_RULES_CACHE)
+        return state._PERSISTENT_RULES_CACHE
 
 
 def _normalize_internal_config(data: Any) -> dict[str, Any]:
@@ -1031,25 +1030,24 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
 
 
 def _save_privacy_config(data: dict[str, Any]) -> bool:
-    global _PERSISTENT_RULES_CACHE, _PERSISTENT_RULES_ERROR, _PERSISTENT_RULES_MTIME
     normalized = _normalize_internal_config(data)
     on_disk = _serialize_config_to_v4(normalized)
-    with _LOCK:
+    with state._LOCK:
         try:
-            tmp = _PERSISTENT_RULES_PATH.with_suffix(".json.tmp")
+            tmp = state._PERSISTENT_RULES_PATH.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(on_disk, indent=2, sort_keys=True) + "\n")
-            tmp.replace(_PERSISTENT_RULES_PATH)
-            _PERSISTENT_RULES_CACHE = normalized
-            _apply_language_pack_config(_PERSISTENT_RULES_CACHE)
+            tmp.replace(state._PERSISTENT_RULES_PATH)
+            state._PERSISTENT_RULES_CACHE = normalized
+            _apply_language_pack_config(state._PERSISTENT_RULES_CACHE)
             try:
-                _PERSISTENT_RULES_MTIME = _PERSISTENT_RULES_PATH.stat().st_mtime
+                state._PERSISTENT_RULES_MTIME = state._PERSISTENT_RULES_PATH.stat().st_mtime
             except Exception:
-                _PERSISTENT_RULES_MTIME = None
-            _PERSISTENT_RULES_ERROR = False
+                state._PERSISTENT_RULES_MTIME = None
+            state._PERSISTENT_RULES_ERROR = False
             return True
         except Exception as exc:
             logger.warning("%s: failed to save privacy rules: %s", _PLUGIN_NAME, exc)
-            _PERSISTENT_RULES_ERROR = True
+            state._PERSISTENT_RULES_ERROR = True
             return False
 
 
@@ -1895,17 +1893,17 @@ def _rule_source_payload(rule: dict[str, Any], source: str) -> dict[str, str]:
 
 
 def _approval_source(shape: dict[str, Any], *, consume_once: bool = True) -> dict[str, str] | None:
-    with _LOCK:
+    with state._LOCK:
         _prune_expired()
         sid = shape["session_id"]
-        once_rules = _ONCE_APPROVALS.get(sid, [])
+        once_rules = state._ONCE_APPROVALS.get(sid, [])
         for rule in list(once_rules):
             if rule.get("fingerprint") == shape.get("fingerprint") and _rule_matches(rule, shape):
                 if consume_once:
                     _consume_rule_invocation(rule, once_rules)
                 return _rule_source_payload(rule, "once")
 
-        session_rules = _SESSION_APPROVALS.get(sid, [])
+        session_rules = state._SESSION_APPROVALS.get(sid, [])
         for rule in list(session_rules):
             if _rule_matches(rule, shape):
                 if consume_once:

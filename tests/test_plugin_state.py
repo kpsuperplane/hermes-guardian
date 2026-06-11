@@ -44,7 +44,7 @@ def test_migrate_legacy_state_copies_without_overwriting(tmp_path):
     state = tmp_path / "state"
     state.mkdir()
 
-    plugin._migrate_legacy_state(legacy, state)
+    plugin.state._migrate_legacy_state(legacy, state)
 
     assert (state / "guardian-rules.json").read_text() == '{"version": 1}'
     assert (state / "activity.sqlite3").read_bytes() == b"sqlite-bytes"
@@ -52,20 +52,20 @@ def test_migrate_legacy_state_copies_without_overwriting(tmp_path):
 
     # Existing target files are never clobbered by a later migration.
     (state / "guardian-rules.json").write_text('{"version": 2}')
-    plugin._migrate_legacy_state(legacy, state)
+    plugin.state._migrate_legacy_state(legacy, state)
     assert (state / "guardian-rules.json").read_text() == '{"version": 2}'
 
 
 def test_state_dir_defaults_to_plugin_dir_when_unset(monkeypatch):
     monkeypatch.delenv("HERMES_GUARDIAN_STATE_DIR", raising=False)
     plugin = load_plugin()
-    assert plugin._resolve_state_dir() == plugin._PLUGIN_ROOT
+    assert plugin.state._resolve_state_dir() == plugin.state._PLUGIN_ROOT
 
 
 def test_state_dir_override_is_honored_and_created(monkeypatch, tmp_path):
     state = tmp_path / "shared"
     monkeypatch.setenv("HERMES_GUARDIAN_STATE_DIR", str(state))
     plugin = load_plugin()
-    resolved = plugin._resolve_state_dir()
+    resolved = plugin.state._resolve_state_dir()
     assert resolved == state
     assert state.is_dir()

@@ -17,7 +17,7 @@ def _dashboard_payload(filters: dict[str, str] | None = None, *, limit: int = 20
 
 
 def _configured_history_timezone() -> str:
-    raw = _env(_HISTORY_TIMEZONE_ENV, "").strip()
+    raw = state._env(_HISTORY_TIMEZONE_ENV, "").strip()
     if raw:
         return raw
     try:
@@ -114,11 +114,11 @@ def _dashboard_approval_action(approval_id: str, action: str, scope: str = "") -
 
 
 def _dashboard_dismiss_expired_approval(approval_id: str) -> tuple[bool, str]:
-    with _LOCK:
+    with state._LOCK:
         approval = _pending_approval_from_store_unlocked(approval_id)
         if not approval:
             return False, f"No pending approval found for {approval_id}."
-        if int(float(approval.get("expires_at") or 0)) > int(_now()):
+        if int(float(approval.get("expires_at") or 0)) > int(state._now()):
             return False, f"No pending approval found for {approval_id}."
         if not _approval_owner_allowed(_CLI_OWNER_HASH, approval):
             return False, "Approval denied: this request belongs to a different user/session."

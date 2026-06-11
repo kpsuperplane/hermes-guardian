@@ -14,7 +14,7 @@ def _shared_context_key(session_id: str | None, tool_name: str) -> tuple[str, st
 
 
 def _prune_shared_context_unlocked(now: float | None = None) -> None:
-    cutoff = (now if now is not None else _now()) - _SHARED_CONTEXT_TTL_SECONDS
+    cutoff = (now if now is not None else state._now()) - _SHARED_CONTEXT_TTL_SECONDS
     for key, entries in list(_SHARED_CONTEXT.items()):
         fresh = [entry for entry in entries if float(entry.get("ts") or 0) >= cutoff]
         if fresh:
@@ -33,8 +33,8 @@ def _record_shared_context(
         for key, value in facts.items()
         if key in {"public_remote_read", "local_system_taint", "action_family", "destination"}
     }
-    safe_facts["ts"] = _now()
-    with _LOCK:
+    safe_facts["ts"] = state._now()
+    with state._LOCK:
         _prune_shared_context_unlocked()
         entries = _SHARED_CONTEXT.setdefault(_shared_context_key(session_id, tool_name), [])
         entries.append(safe_facts)
@@ -42,7 +42,7 @@ def _record_shared_context(
 
 
 def _consume_shared_context(session_id: str | None, tool_name: str) -> dict[str, Any]:
-    with _LOCK:
+    with state._LOCK:
         _prune_shared_context_unlocked()
         entries = _SHARED_CONTEXT.get(_shared_context_key(session_id, tool_name)) or []
         if not entries:
@@ -51,7 +51,7 @@ def _consume_shared_context(session_id: str | None, tool_name: str) -> dict[str,
 
 
 def _peek_shared_context(session_id: str | None, tool_name: str) -> dict[str, Any]:
-    with _LOCK:
+    with state._LOCK:
         _prune_shared_context_unlocked()
         entries = _SHARED_CONTEXT.get(_shared_context_key(session_id, tool_name)) or []
         return dict(entries[0]) if entries else {}

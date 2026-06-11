@@ -235,7 +235,7 @@ def _dashboard_recent_blocks(pending: list[dict[str, Any]], *, limit: int = 5) -
             approval_status = "pending"
         elif str(row.get("decision") or "") == "denied":
             approval_status = "dismissed"
-        elif historical_approval_id and expires_at and expires_at <= int(_now()):
+        elif historical_approval_id and expires_at and expires_at <= int(state._now()):
             approval_status = "expired"
         elif historical_approval_id:
             approval_status = "not_pending"
@@ -990,17 +990,17 @@ def _destination_trust_summary() -> dict[str, Any]:
 
 
 def _policy_snapshot() -> dict[str, Any]:
-    with _LOCK:
+    with state._LOCK:
         _prune_expired()
         sessions = [
             {
                 "session_label": _safe_session_label(sid),
                 "session_hash": _short_hash(sid),
-                "taint": sorted(state.get("taint") or []),
-                "browser_host": state.get("browser_host") or "",
-                "private_browser_hosts": sorted(state.get("browser_private_hosts") or []),
+                "taint": sorted(session.get("taint") or []),
+                "browser_host": session.get("browser_host") or "",
+                "private_browser_hosts": sorted(session.get("browser_private_hosts") or []),
             }
-            for sid, state in _SESSIONS.items()
+            for sid, session in state._SESSIONS.items()
         ]
         pending = sorted(
             [
@@ -1034,7 +1034,7 @@ def _policy_snapshot() -> dict[str, Any]:
                     else "",
                     **_pending_approval_rule_coverage(approval),
                 }
-                for approval in list(_PENDING_APPROVALS.values())
+                for approval in list(state._PENDING_APPROVALS.values())
             ],
             key=lambda item: int(item.get("created_at") or 0),
             reverse=True,
@@ -1060,7 +1060,7 @@ def _policy_snapshot() -> dict[str, Any]:
         "risk_banners": risk_banners,
         "security_rules": _security_rules_snapshot(),
         "language_packs": _language_packs_snapshot(),
-        "activity_db": str(_ACTIVITY_DB_PATH),
+        "activity_db": str(state._ACTIVITY_DB_PATH),
         "activity_max_rows": _activity_max_rows(),
         "activity_retention_days": _activity_retention_days(),
         "activity_group_seconds": _activity_group_seconds(),
