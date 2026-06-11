@@ -318,16 +318,52 @@ def _is_web_sourced_tool(tool_name: str) -> bool:
     return lower.startswith("browser") or bool(core._WEB_READ_TOOL_RE.match(lower))
 
 
-# Read-only documentation tools: skill docs and MCP resource/document reads. Kept in sync
-# with the scanner's _DOC_READ_TOOL_NAMES / _DOC_READ_TOOL_RE (security/scanner.py).
+# Read-only documentation reads. *Provenance*, not name shape, decides whether a read is
+# trusted reference material: the builtin skill_view, and any read whose target path
+# resolves under the operator-installed skills tree, are reference (_is_reference_read). A
+# generic MCP resource/document read of unknown provenance is NOT reference on its own
+# (_is_mcp_doc_read) — phases 2-3 let the operator declare it. _is_reference_read is the
+# single source of truth for "reference"; the security inbound path consumes the same
+# verdict (privacy/module.py passes it into the scanner), so there are no mirrored constants.
 _DOC_READ_TOOL_NAMES = frozenset({"skill_view"})
 _DOC_READ_TOOL_RE = re.compile(r"(?:^|_)(?:read_resource|read_document|get_resource)$")
+# Conventional argument fields that name a read's target path.
+_DOC_READ_PATH_ARG_FIELDS = ("path", "file")
 
 
-def _is_doc_read_tool(tool_name: str) -> bool:
-    """True for read-only doc tools whose results are reference material."""
+def _reference_path_from_args(tool_args: Any) -> str:
+    """Resolved local path a doc-read targets, from conventional arg fields
+    (``path``/``file``, or a ``file://`` ``uri``); '' if absent or non-local."""
+    if not isinstance(tool_args, dict):
+        return ""
+    for field in _DOC_READ_PATH_ARG_FIELDS:
+        value = tool_args.get(field)
+        if isinstance(value, str) and value.strip():
+            return _expand_hermes_path(value)
+    uri = tool_args.get("uri")
+    if isinstance(uri, str) and uri.strip().lower().startswith("file://"):
+        return _expand_hermes_path(uri.strip()[len("file://"):])
+    return ""
+
+
+def _is_reference_read(tool_name: str, tool_args: Any = None) -> bool:
+    """True for reads of operator-installed reference material: the builtin skill_view, or
+    any read whose target-path argument resolves under the skills directory. This is
+    *provenance*, not name shape — a tool merely named like a document reader is not
+    reference on its own (that is _is_mcp_doc_read, of unknown provenance)."""
     lower = re.sub(r"[^a-z0-9_]+", "_", str(tool_name or "").strip().lower())
-    return lower in _DOC_READ_TOOL_NAMES or bool(_DOC_READ_TOOL_RE.search(lower))
+    if lower in _DOC_READ_TOOL_NAMES:
+        return True
+    path = _reference_path_from_args(tool_args)
+    return bool(path) and _path_is_under_skills(path)
+
+
+def _is_mcp_doc_read(tool_name: str) -> bool:
+    """True for an MCP resource/document read by name shape
+    (``…read_resource`` / ``…read_document`` / ``…get_resource``). Provenance is unknown
+    from the name alone; provably-reference reads are split out by _is_reference_read."""
+    lower = re.sub(r"[^a-z0-9_]+", "_", str(tool_name or "").strip().lower())
+    return bool(_DOC_READ_TOOL_RE.search(lower))
 
 
 def _web_content_taint_classes(value: Any, session_id: str | None) -> set[str]:
@@ -740,8 +776,16 @@ def _taint_classes_for_tool_result(
         return classes | override_taints
     if _is_web_sourced_tool(tool_name):
         return _web_content_taint_classes(result_value, session_id) | override_taints
-    if _is_doc_read_tool(tool_name):
+    if _is_reference_read(tool_name, tool_args):
+        # Provably operator-installed reference material — the placeholder-tolerant relaxed
+        # scan, so sample contacts in skill docs don't false-positive (the 0818f09 fix).
         return _doc_content_taint_classes(result_value) | override_taints
+    if _is_mcp_doc_read(tool_name):
+        # Generic MCP doc-read of unknown provenance. Phase-1 floor: the pre-0818f09 generic
+        # content scan. Phases 2-3 intercept here for declared sources and the conservative
+        # undeclared default; until then it must NOT use the relaxed reference path, which is
+        # reserved for provably-reference reads.
+        return _classes_from_content(result_value) | override_taints
     return _classes_from_content(result_value) | override_taints
 
 

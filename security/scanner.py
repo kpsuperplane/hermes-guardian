@@ -63,22 +63,17 @@ _INBOUND_ALLOWED_CREDENTIAL_REASONS = frozenset({
     "secret assignment",
 })
 
-# Read-only documentation tools: skill docs and MCP resource/document reads. Their results
-# are reference material by nature and routinely embed benign URLs whose paths contain
-# security terms (``/verify``, ``/confirm``, OAuth 2FA settings pages, ...). A URL in a doc
-# is not a leak — and the ``sensitive_links`` rule suppressing the whole doc breaks the
-# agent's ability to use the skill. So on the inbound read path ONLY, doc-read tools skip
-# the "sensitive link" reason (see _DOC_READ_INBOUND_ALLOWED_REASONS). Account-security
-# content and hard secrets are deliberately NOT skipped and stay suppressed even in docs;
-# every egress surface still scans sensitive links at full strictness.
+# Provably-reference reads (skill docs, skills-tree files) are reference material by nature
+# and routinely embed benign URLs whose paths contain security terms (``/verify``,
+# ``/confirm``, OAuth 2FA settings pages, ...). A URL in such a doc is not a leak — and the
+# ``sensitive_links`` rule suppressing the whole doc breaks the agent's ability to use the
+# skill. So on the inbound read path ONLY, reference reads skip the "sensitive link" reason
+# (see _DOC_READ_INBOUND_ALLOWED_REASONS). The reference verdict is *provenance*-based and is
+# computed by privacy/tool_policy._is_reference_read (the only place with the call's args) and
+# passed into _security_transform_tool_result — a generic MCP doc-read of unknown provenance
+# does NOT qualify. Account-security content and hard secrets are deliberately NOT skipped and
+# stay suppressed even in docs; every egress surface still scans sensitive links at full strictness.
 _DOC_READ_INBOUND_ALLOWED_REASONS = frozenset({"sensitive link"})
-_DOC_READ_TOOL_NAMES = frozenset({"skill_view"})
-_DOC_READ_TOOL_RE = re.compile(r"(?:^|_)(?:read_resource|read_document|get_resource)$")
-
-
-def _doc_read_tool(tool_name: Any) -> bool:
-    lower = re.sub(r"[^a-z0-9_]+", "_", str(tool_name or "").strip().lower())
-    return lower in _DOC_READ_TOOL_NAMES or bool(_DOC_READ_TOOL_RE.search(lower))
 
 
 def _set_security_rule_enabled_callback(callback: Any) -> None:

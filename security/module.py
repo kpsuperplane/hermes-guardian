@@ -84,10 +84,6 @@ def _scrub(
     return core._security._scrub(value, skip_reasons=skip_reasons)
 
 
-def _doc_read_tool(tool_name: Any) -> bool:
-    return core._security._doc_read_tool(tool_name)
-
-
 def _security_pre_tool_call(tool_name: str, args: Any, session_id: str | None) -> dict[str, str] | None:
     reason = _sensitive_reason(args)
     if not reason:
@@ -119,16 +115,19 @@ def _security_transform_tool_result(
     session_id: str | None,
     taint_classes: set[str],
     public_remote_read: bool,
+    is_reference_read: bool = False,
 ) -> str | None:
     # Inbound reads may carry API/service tokens the agent legitimately needs (e.g. an MCP
     # server's own auth token). Suppressing them at read-time breaks the integration without
     # preventing a leak — every egress surface still scans at full strictness. Hard secrets
     # and account-security content stay suppressed here; see _INBOUND_ALLOWED_CREDENTIAL_REASONS.
     inbound_allowed = core._security._INBOUND_ALLOWED_CREDENTIAL_REASONS
-    if _doc_read_tool(tool_name):
-        # Documentation reads (skill docs, MCP resource reads) carry benign URLs whose paths
-        # match security terms; suppressing the whole doc is a false positive. Skip "sensitive
-        # link" here only — egress surfaces still scan it. See _DOC_READ_INBOUND_ALLOWED_REASONS.
+    if is_reference_read:
+        # Provably-reference reads (skill docs, skills-tree files) carry benign URLs whose
+        # paths match security terms; suppressing the whole doc is a false positive. Skip
+        # "sensitive link" here only — egress surfaces still scan it. A generic MCP doc-read of
+        # unknown provenance does NOT get this skip (conservative until declared; see
+        # tool_policy._is_reference_read). See _DOC_READ_INBOUND_ALLOWED_REASONS.
         inbound_allowed = inbound_allowed | core._security._DOC_READ_INBOUND_ALLOWED_REASONS
     if not parsed_ok:
         reason = None if public_remote_read else _sensitive_reason(result, skip_reasons=inbound_allowed)

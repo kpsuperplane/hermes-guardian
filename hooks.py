@@ -174,6 +174,7 @@ def _on_transform_tool_result_impl(
         session_id=session_id,
         taint_classes=set(privacy_context.get("taint_classes") or []),
         public_remote_read=bool(privacy_context.get("public_remote_read")),
+        is_reference_read=bool(privacy_context.get("is_reference_read")),
     )
 
 

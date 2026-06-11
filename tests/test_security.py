@@ -67,19 +67,26 @@ def test_doc_read_tools_do_not_suppress_code_documentation():
 def test_doc_read_tools_do_not_suppress_benign_sensitive_link_urls():
     plugin = load_plugin()
 
-    # Skill docs and MCP resource reads routinely embed benign URLs whose paths contain
-    # security terms (``/verify``, ``/confirm``, OAuth 2FA settings, ...). These are reference
-    # material, not a leak, so doc-read tools skip the "sensitive link" reason on the inbound
-    # read path. (Egress and non-doc reads still suppress them; see the asserts below.)
+    # Skill docs routinely embed benign URLs whose paths contain security terms (``/verify``,
+    # ``/confirm``, OAuth 2FA settings, ...). These are reference material, not a leak, so a
+    # *provably-reference* read skips the "sensitive link" reason on the inbound read path.
+    # (Egress and non-doc reads still suppress them; see the asserts below.)
     skill_doc = (
         "# My Skill\n"
         "To enable, visit https://app.example.com/settings/verify and confirm.\n"
     )
     assert plugin._on_transform_tool_result(tool_name="skill_view", result=skill_doc) is None
-    assert plugin._on_transform_tool_result(
+
+    # A generic MCP resource read of UNKNOWN PROVENANCE no longer inherits the skip by name
+    # shape (source-provenance tiering): it is treated conservatively until declared, so the
+    # sensitive link IS suppressed inbound. Declaring the server as reference (phase 2 / the
+    # phase-3 picker) restores the skip — see test_source_provenance.py.
+    suppressed = plugin._on_transform_tool_result(
         tool_name="mcp_notion_read_resource",
         result=json.dumps({"content": skill_doc}),
-    ) is None
+    )
+    assert suppressed is not None
+    assert parse_json(suppressed)["content"]["security_sensitive_filter"]["reason"] == "sensitive link"
 
     # The carve-out is narrow: account-security content and hard secrets in a doc are STILL
     # suppressed, and a non-doc inbound read (e.g. email) still suppresses sensitive links.

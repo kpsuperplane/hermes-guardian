@@ -835,6 +835,9 @@ def _privacy_observe_tool_result(
     )
     public_remote_read = bool(local_system_policy.get("remote_read"))
     tool_args = tool_policy._consume_pending_tool_args(session_id, tool_name)
+    # Provenance verdict, computed once here (the only place with the call's args) and reused
+    # on the security inbound path so both sides agree on what "reference material" is.
+    is_reference_read = tool_policy._is_reference_read(tool_name, tool_args)
     taint_classes = tool_policy._taint_classes_for_tool_result(
         tool_name,
         parsed,
@@ -874,6 +877,7 @@ def _privacy_observe_tool_result(
         "parsed_ok": parsed_ok,
         "taint_classes": taint_classes,
         "public_remote_read": public_remote_read,
+        "is_reference_read": is_reference_read,
     }
 
 
