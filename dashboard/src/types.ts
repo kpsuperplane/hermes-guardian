@@ -24,9 +24,20 @@ export interface SelfAllowlist {
 }
 
 export interface TrustedRecipient {
-  identity?: string;
+  kind?: string; // "identity" | "command"
+  value?: string;
+  identity?: string; // legacy mirror for identity entries
   classes?: string[];
   note?: string;
+}
+
+export interface TrustedCommandSuggestion {
+  value: string;
+  label?: string;
+  kind?: string;
+  wildcard?: boolean;
+  skill?: string;
+  source?: string; // "recent" | "skills"
 }
 
 export interface OutwardSharing {

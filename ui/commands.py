@@ -29,8 +29,9 @@ _GUARDIAN_HELP_LINES = [
     "  check <destination|recipient>        resolve trust preview",
     "",
     "SHARING — what you've authorized to leave you",
-    "  sharing                 show trusted recipients + rules + outward-sharing",
-    "  sharing trusted add|remove <identity> [classes=<class+class>]",
+    "  sharing                 show trusted destinations + rules + outward-sharing",
+    "  sharing destination add|remove <identity> [classes=<class+class>]",
+    "  sharing destination suggest | trust <n>   pick a trusted command",
     "  sharing rule add|delete|enable|disable|move ...",
     "  sharing outward add|remove <subtype>",
     "  sharing preview <action> <destination> <class>   which step fires",
@@ -474,7 +475,7 @@ def _guardian_sharing_group_command(owner_hash: str, tokens: list[str]) -> str:
     Delegates to the existing trusted/rule/outward handlers; no logic is copied.
     """
     sub = tokens[1].lower() if len(tokens) > 1 else ""
-    if sub == "trusted":
+    if sub in {"trusted", "destination", "destinations"}:
         return _guardian_trusted_command(owner_hash, ["trusted", *tokens[2:]])
     if sub in {"rule", "rules"}:
         return _guardian_rule_command(owner_hash, ["rule", *tokens[2:]])
@@ -830,33 +831,78 @@ def _guardian_self_command(owner_hash: str, tokens: list[str]) -> str:
 def _guardian_trusted_command(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     usage = (
-        "Usage: /guardian sharing trusted add <identity> [classes=<class+class>] [note=<text>] | "
-        "/guardian sharing trusted remove <identity>"
+        "Usage: /guardian sharing destination add <identity> [classes=<class+class>] [note=<text>] | "
+        "/guardian sharing destination suggest | "
+        "/guardian sharing destination trust <n> [classes=<class+class>] | "
+        "/guardian sharing destination remove <identity> | "
+        "/guardian sharing destination remove command <n>"
     )
     if not sub:
         trusted = _trusted_recipients_snapshot()
         if not trusted:
-            return "No trusted recipients configured.\n" + usage
-        lines = ["Hermes Guardian trusted recipients"]
-        for entry in trusted:
-            note = f" - {entry['note']}" if entry.get("note") else ""
-            lines.append(f"- {entry['identity']}: classes={','.join(entry['classes'])}{note}")
+            return "No trusted destinations configured.\n" + usage
+        lines = ["🛡️ **Guardian trusted destinations**"]
+        commands = [e for e in trusted if e.get("kind") == "command"]
+        identities = [e for e in trusted if e.get("kind") != "command"]
+        for entry in identities:
+            note = f" — {entry['note']}" if entry.get("note") else ""
+            lines.append(f"↳ 👤 `{entry['value']}` · classes={','.join(entry['classes'])}{note}")
+        for idx, entry in enumerate(commands):
+            note = f" — {entry['note']}" if entry.get("note") else ""
+            lines.append(f"↳ 🖥️ [{idx}] `{entry['value']}` · classes={','.join(entry['classes'])}{note}")
         lines.append(usage)
         return "\n".join(lines)
+    if sub == "suggest":
+        suggestions = _trusted_destination_suggestions()
+        if not suggestions:
+            return "No command suggestions available yet (none gated recently; no skill scripts found)."
+        lines = ["🛡️ **Trusted-destination suggestions** · `/guardian sharing destination trust <n>`"]
+        for idx, item in enumerate(suggestions):
+            tag = "📁" if item.get("wildcard") else "🖥️"
+            src = " (recent)" if item.get("source") == "recent" else ""
+            lines.append(f"[{idx}] {tag} `{item['value']}`{src}")
+        return "\n".join(lines)
+    if sub == "trust" and len(tokens) >= 3:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        try:
+            index = int(tokens[2])
+        except ValueError:
+            return "Usage: /guardian sharing destination trust <n> [classes=<class+class>]"
+        suggestions = _trusted_destination_suggestions()
+        if index < 0 or index >= len(suggestions):
+            return f"No suggestion #{index}. Run /guardian sharing destination suggest for the list."
+        params, errors = _parse_key_value_args(tokens[3:], allowed_keys={"classes", "class", "data_classes", "note"})
+        if errors:
+            return "Invalid arguments: " + "; ".join(errors)
+        classes = params.get("classes") or params.get("class") or params.get("data_classes")
+        class_list = [cls.strip() for cls in re.split(r"[,+]", classes)] if classes else None
+        _ok, message = _add_trusted_command(suggestions[index]["value"], classes=class_list, note=params.get("note", ""))
+        return message
     if sub == "add" and len(tokens) >= 3:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
         identity = tokens[2]
         params, errors = _parse_key_value_args(tokens[3:], allowed_keys={"classes", "class", "data_classes", "note"})
         if errors:
-            return "Invalid trusted recipient arguments: " + "; ".join(errors) + f"\n{usage}"
+            return "Invalid trusted destination arguments: " + "; ".join(errors) + f"\n{usage}"
         classes = params.get("classes") or params.get("class") or params.get("data_classes")
         class_list = [cls.strip() for cls in re.split(r"[,+]", classes)] if classes else None
         _ok, message = _add_trusted_recipient(identity, classes=class_list, note=params.get("note", ""))
         return message
-    if sub in {"remove", "delete"} and len(tokens) == 3:
+    if sub in {"remove", "delete"} and len(tokens) >= 3:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
+        if tokens[2].lower() == "command" and len(tokens) == 4:
+            commands = [e for e in _trusted_recipients_snapshot() if e.get("kind") == "command"]
+            try:
+                index = int(tokens[3])
+            except ValueError:
+                return "Usage: /guardian sharing destination remove command <n>"
+            if index < 0 or index >= len(commands):
+                return f"No trusted command #{index}."
+            _ok, message = _remove_trusted_command(commands[index]["value"])
+            return message
         _ok, message = _remove_trusted_recipient(tokens[2])
         return message
     return usage

@@ -450,21 +450,33 @@ def _normalize_self_config(raw: Any) -> dict[str, Any]:
 
 
 def _normalize_trusted_recipient_entry(entry: Any) -> dict[str, Any] | None:
+    """Normalize a Trusted-destinations entry to ``{kind, value, classes, note}``.
+
+    ``kind`` is ``identity`` (an address/handle, default) or ``command`` (a terminal
+    command prefix / skills-directory wildcard). Legacy entries carrying only
+    ``identity`` upgrade to ``kind="identity"``. Malformed entries drop to None.
+    """
     if not isinstance(entry, dict):
         return None
-    identity = _normalize_identity_token(entry.get("identity") or entry.get("recipient"))
-    if not identity:
-        return None
-    classes = _normalize_rule_classes(entry.get("classes", entry.get("class", ["*"])))
+    kind = str(entry.get("kind") or "identity").strip().lower()
+    classes = _normalize_rule_classes(entry.get("classes", entry.get("class", ["*"]))) or ["*"]
     note = re.sub(r"\s+", " ", str(entry.get("note") or "")).strip()[:200]
-    return {"identity": identity, "classes": classes or ["*"], "note": note}
+    if kind == "command":
+        value = _normalize_trusted_command(entry.get("value") or entry.get("command"))
+        if not value:
+            return None
+        return {"kind": "command", "value": value, "classes": classes, "note": note}
+    value = _normalize_identity_token(entry.get("value") or entry.get("identity") or entry.get("recipient"))
+    if not value:
+        return None
+    return {"kind": "identity", "value": value, "classes": classes, "note": note}
 
 
 def _normalize_trusted_recipients(raw: Any) -> dict[str, Any]:
-    """Normalize the ``trusted_recipients`` block (doc 01 §4), fail closed.
+    """Normalize the Trusted-destinations block (doc 01 §4), fail closed.
 
     A non-dict block, or a non-list ``entries``, drops to the safe empty default.
-    Malformed individual entries are dropped.
+    Malformed individual entries are dropped; dedup is per ``(kind, value)``.
     """
     if not isinstance(raw, dict):
         return _default_trusted_recipients_config()
@@ -472,12 +484,15 @@ def _normalize_trusted_recipients(raw: Any) -> dict[str, Any]:
     if not isinstance(entries_raw, list):
         return _default_trusted_recipients_config()
     out: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for entry in entries_raw:
         normalized = _normalize_trusted_recipient_entry(entry)
-        if normalized is None or normalized["identity"] in seen:
+        if normalized is None:
             continue
-        seen.add(normalized["identity"])
+        key = (normalized["kind"], normalized["value"])
+        if key in seen:
+            continue
+        seen.add(key)
         out.append(normalized)
     return {"entries": out}
 
@@ -960,7 +975,8 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
         "sharing": {
             "trusted_recipients": [
                 {
-                    "identity": str(entry.get("identity") or ""),
+                    "kind": str(entry.get("kind") or "identity"),
+                    "value": str(entry.get("value") or entry.get("identity") or ""),
                     "classes": list(entry.get("classes") or ["*"]),
                     "note": str(entry.get("note") or ""),
                 }
@@ -1470,15 +1486,21 @@ def _self_config_snapshot() -> dict[str, Any]:
 def _trusted_recipients_snapshot() -> list[dict[str, Any]]:
     block = _load_privacy_config().get("trusted_recipients") or {}
     entries = block.get("entries") if isinstance(block.get("entries"), list) else []
-    return [
-        {
-            "identity": str(entry.get("identity") or ""),
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        kind = str(entry.get("kind") or "identity")
+        value = str(entry.get("value") or entry.get("identity") or "")
+        out.append({
+            "kind": kind,
+            "value": value,
+            # `identity` retained so existing identity-only readers keep working.
+            "identity": value if kind == "identity" else "",
             "classes": sorted(entry.get("classes") or ["*"]),
             "note": str(entry.get("note") or ""),
-        }
-        for entry in entries
-        if isinstance(entry, dict)
-    ]
+        })
+    return out
 
 
 def _outward_sharing_snapshot() -> dict[str, Any]:
@@ -1546,40 +1568,111 @@ def _remove_self_destination(kind: str, value: str) -> tuple[bool, str]:
     return True, f"Removed {normalized_kind} {token} from the self allowlist."
 
 
+def _trusted_destination_entries_for_save() -> list[dict[str, Any]]:
+    """Current entries as ``{kind, value, classes, note}`` for re-normalization."""
+    return [
+        {
+            "kind": entry["kind"],
+            "value": entry["value"],
+            "classes": entry["classes"],
+            "note": entry["note"],
+        }
+        for entry in _trusted_recipients_snapshot()
+    ]
+
+
+def _save_trusted_destinations(entries: list[dict[str, Any]], failure: str) -> bool:
+    next_data = _config_for_save(
+        _load_privacy_config(),
+        trusted_recipients=_normalize_trusted_recipients({"entries": entries}),
+    )
+    return _save_privacy_config(next_data)
+
+
+def _classes_arg_or_star(classes: Any) -> list[str]:
+    if classes is None or (isinstance(classes, str) and not classes.strip()):
+        return ["*"]
+    return _normalize_rule_classes(classes) or ["*"]
+
+
 def _add_trusted_recipient(identity: str, *, classes: Any = None, note: str = "") -> tuple[bool, str]:
     token = _normalize_identity_token(identity)
     if not token:
-        return False, "Trusted recipient identity must be a non-empty address/handle."
-    if classes is None or (isinstance(classes, str) and not classes.strip()):
-        normalized_classes = ["*"]
-    else:
-        normalized_classes = _normalize_rule_classes(classes) or ["*"]
+        return False, "Trusted destination identity must be a non-empty address/handle."
+    normalized_classes = _classes_arg_or_star(classes)
     note_text = re.sub(r"\s+", " ", str(note or "")).strip()[:200]
-    data = _load_privacy_config()
-    block = _trusted_recipients_snapshot()
-    block = [entry for entry in block if entry["identity"] != token]
-    block.append({"identity": token, "classes": normalized_classes, "note": note_text})
-    next_data = _config_for_save(
-        data, trusted_recipients=_normalize_trusted_recipients({"entries": block})
-    )
-    if not _save_privacy_config(next_data):
-        return False, "Failed to save trusted recipient; Guardian remains unchanged."
-    return True, f"Added trusted recipient {token} ({','.join(normalized_classes)})."
+    entries = [e for e in _trusted_destination_entries_for_save() if not (e["kind"] == "identity" and e["value"] == token)]
+    entries.append({"kind": "identity", "value": token, "classes": normalized_classes, "note": note_text})
+    if not _save_trusted_destinations(entries, "recipient"):
+        return False, "Failed to save trusted destination; Guardian remains unchanged."
+    return True, f"Added trusted destination {token} ({','.join(normalized_classes)})."
 
 
 def _remove_trusted_recipient(identity: str) -> tuple[bool, str]:
     token = _normalize_identity_token(identity)
-    block = _trusted_recipients_snapshot()
-    remaining = [entry for entry in block if entry["identity"] != token]
-    if len(remaining) == len(block):
-        return False, f"No trusted recipient found for {identity}."
-    data = _load_privacy_config()
-    next_data = _config_for_save(
-        data, trusted_recipients=_normalize_trusted_recipients({"entries": remaining})
-    )
-    if not _save_privacy_config(next_data):
-        return False, "Failed to save trusted recipient; Guardian remains unchanged."
-    return True, f"Removed trusted recipient {token}."
+    entries = _trusted_destination_entries_for_save()
+    remaining = [e for e in entries if not (e["kind"] == "identity" and e["value"] == token)]
+    if len(remaining) == len(entries):
+        return False, f"No trusted destination found for {identity}."
+    if not _save_trusted_destinations(remaining, "recipient"):
+        return False, "Failed to save trusted destination; Guardian remains unchanged."
+    return True, f"Removed trusted destination {token}."
+
+
+def _trusted_destination_suggestions(limit: int = 60) -> list[dict[str, Any]]:
+    """Pickable trusted-command candidates: recently gated commands first (most
+    contextual), then scripts discovered under the skills tree. Already-trusted
+    commands are excluded."""
+    trusted = {e["value"] for e in _trusted_recipients_snapshot() if e["kind"] == "command"}
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in _recent_command_suggestions(limit=20):
+        value = str(row.get("prefix") or "")
+        if not value or value in trusted or value in seen:
+            continue
+        seen.add(value)
+        out.append({
+            "value": value,
+            "label": value,
+            "kind": "command",
+            "wildcard": _trusted_command_is_wildcard(value),
+            "source": "recent",
+        })
+    for item in _skills_command_suggestions(limit=200):
+        value = str(item.get("value") or "")
+        if not value or value in trusted or value in seen:
+            continue
+        seen.add(value)
+        out.append(item)
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
+def _add_trusted_command(command: str, *, classes: Any = None, note: str = "") -> tuple[bool, str]:
+    token = _normalize_trusted_command(command)
+    if not token:
+        return False, "Trusted command must be non-empty and free of shell metacharacters (; | & > < ` $())."
+    if _trusted_command_is_wildcard(token) and not _trusted_command_wildcard_under_skills(token):
+        return False, "A wildcard trusted command must resolve under the Hermes skills directory."
+    normalized_classes = _classes_arg_or_star(classes)
+    note_text = re.sub(r"\s+", " ", str(note or "")).strip()[:200]
+    entries = [e for e in _trusted_destination_entries_for_save() if not (e["kind"] == "command" and e["value"] == token)]
+    entries.append({"kind": "command", "value": token, "classes": normalized_classes, "note": note_text})
+    if not _save_trusted_destinations(entries, "command"):
+        return False, "Failed to save trusted command; Guardian remains unchanged."
+    return True, f"Added trusted command ({','.join(normalized_classes)})."
+
+
+def _remove_trusted_command(command: str) -> tuple[bool, str]:
+    token = _normalize_trusted_command(command)
+    entries = _trusted_destination_entries_for_save()
+    remaining = [e for e in entries if not (e["kind"] == "command" and e["value"] == token)]
+    if len(remaining) == len(entries):
+        return False, "No trusted command found for that value."
+    if not _save_trusted_destinations(remaining, "command"):
+        return False, "Failed to save trusted command; Guardian remains unchanged."
+    return True, "Removed trusted command."
 
 
 def _add_outward_sharing_subtype(subtype: str) -> tuple[bool, str]:

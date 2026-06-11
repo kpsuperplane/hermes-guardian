@@ -1,0 +1,49 @@
+name: LLM Verifier (live)
+
+# Live, end-to-end tests of the LLM security verifier against a real model. These
+# call an external API, so they do NOT run on every PR (and secrets are not exposed
+# to fork PRs anyway). They run on pushes to main and on manual dispatch. The free,
+# hermetic unit matrix in tests.yml still runs on every PR.
+#
+# Configure in the repository (one backend; Google is preferred when both are set):
+#   - secret   GEMINI_API_KEY           Google AI Studio key (free tier), OR
+#   - secret   OPENROUTER_API_KEY       OpenRouter key
+#   - variable GUARDIAN_LLM_TEST_MODEL  model id for the chosen backend, e.g.
+#                                        gemini-2.5-flash (Google) or openai/gpt-4o-mini.
+#                                        May be a comma-separated list to test several.
+# If no backend key is set the job still succeeds: the tests self-skip.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: llm-verifier-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  llm-verifier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GUARDIAN_LLM_TEST_MODEL: ${{ vars.GUARDIAN_LLM_TEST_MODEL }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run live LLM verifier test
+        run: python -m pytest -m llm --run-llm -q

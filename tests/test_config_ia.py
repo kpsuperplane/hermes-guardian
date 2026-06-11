@@ -92,7 +92,7 @@ def test_full_v4_file_parses_to_internal_structure():
 
     # sharing.trusted_recipients -> internal trusted_recipients.entries.
     entries = config["trusted_recipients"]["entries"]
-    assert [e["identity"] for e in entries] == ["ally@example.com"]
+    assert [(e["kind"], e["value"]) for e in entries] == [("identity", "ally@example.com")]
     assert entries[0]["classes"] == ["communications"]
 
     # sharing.rules -> internal privacy.rules.
@@ -334,7 +334,7 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     assert before == after
     assert after["privacy"]["mode"] == "read-only"
     assert "store:crm" in after["self"]["destinations"]
-    assert [e["identity"] for e in after["trusted_recipients"]["entries"]] == ["ally@example.com"]
+    assert [e["value"] for e in after["trusted_recipients"]["entries"]] == ["ally@example.com"]
     assert {r["id"]: r["enabled"] for r in after["security"]["rules"]}["sensitive_links"] is False
     assert after["privacy"]["unknown_tools"] == "allow"
     assert "crosspost" in after["outward_sharing"]["extra"]

@@ -30,6 +30,28 @@ def test_self_add_remove_round_trip_and_resolution_flip():
     assert plugin._trust_label_for_debug(trust) != "self"
 
 
+def test_trusted_destination_command_suggest_trust_and_remove():
+    plugin = load_plugin()
+    plugin._on_pre_gateway_dispatch(gateway_event("/guardian sharing destination suggest", user_id="owner"))
+
+    suggest = plugin._handle_guardian_command("sharing destination suggest")
+    assert "suggestions" in suggest.lower()
+    # Trust the first suggestion by index, scoped to a class.
+    assert "Added trusted command" in plugin._handle_guardian_command(
+        "sharing destination trust 0 classes=local_system"
+    )
+    commands = [e for e in plugin._trusted_recipients_snapshot() if e["kind"] == "command"]
+    assert len(commands) == 1 and commands[0]["classes"] == ["local_system"]
+
+    listing = plugin._handle_guardian_command("sharing destination")
+    assert "trusted destinations" in listing.lower()
+    assert "[0]" in listing
+
+    # Remove the trusted command by index.
+    assert "Removed trusted command" in plugin._handle_guardian_command("sharing destination remove command 0")
+    assert not [e for e in plugin._trusted_recipients_snapshot() if e["kind"] == "command"]
+
+
 def test_trusted_and_sharing_commands_round_trip():
     plugin = load_plugin()
     plugin._handle_guardian_command("sharing trusted add partner@example.com classes=communications")

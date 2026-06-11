@@ -1,4 +1,4 @@
-import { React, useState } from "@/sdk";
+import { React, useEffect, useState } from "@/sdk";
 import { Button } from "@/components/Button";
 import { Mono } from "@/components/Mono";
 import { ImpactPreview } from "@/components/ImpactPreview";
@@ -50,35 +50,94 @@ function AddRow(props: {
   );
 }
 
-// --- Trusted recipients (moved out of DestinationsTab, doc 02 §Tab3.1) -------
-function TrustedRecipients(props: { controller: DestinationsController }) {
+// --- Command picker: pick a discovered/recently-gated command to trust --------
+function CommandPicker(props: { controller: DestinationsController }) {
+  const { busy, addCommand, suggestions, loadSuggestions } = props.controller;
+  const [selected, setSelected] = useState("");
+  const [classes, setClasses] = useState("");
+
+  useEffect(() => {
+    loadSuggestions();
+  }, [loadSuggestions]);
+
+  const submit = () => {
+    const value = selected.trim();
+    if (!value) return;
+    addCommand(value, classes.trim() || undefined);
+    setSelected("");
+    setClasses("");
+  };
+
+  return (
+    <div className="hermes-guardian-dest-addrow hermes-guardian-command-picker">
+      <select
+        className="hermes-guardian-input"
+        value={selected}
+        disabled={busy}
+        onChange={(event) => setSelected(event.target.value)}
+      >
+        <option value="">Pick a command to trust…</option>
+        {suggestions.map((item) => (
+          <option key={item.value} value={item.value}>
+            {(item.source === "recent" ? "⏱ " : item.wildcard ? "📁 " : "🖥 ") +
+              (item.label || item.value)}
+          </option>
+        ))}
+      </select>
+      <input
+        className="hermes-guardian-input hermes-guardian-command-classes"
+        type="text"
+        value={classes}
+        placeholder="classes (e.g. local_system) — blank = all"
+        disabled={busy}
+        onChange={(event) => setClasses(event.target.value)}
+      />
+      <Button variant="secondary" disabled={busy || !selected} onClick={submit}>
+        Trust command
+      </Button>
+    </div>
+  );
+}
+
+// --- Trusted destinations: identities + commands you've consented to share with --
+function TrustedDestinations(props: { controller: DestinationsController }) {
   const { data, busy, addTrusted, removeTrusted } = props.controller;
   const trusted = (data && data.trusted_recipients) || [];
   return (
     <div className="hermes-guardian-card">
       <div className="hermes-guardian-card-head">
         <div>
-          <div className="hermes-guardian-card-title">Trusted recipients</div>
+          <div className="hermes-guardian-card-title">Trusted destinations</div>
           <div className="hermes-guardian-muted">
-            Correspondents you have explicitly declared trusted. Private data may be shared with
-            them without a prompt.
+            Recipients and commands you've consented to share with. A matching egress is allowed
+            without a prompt, scoped to the data classes you set — and runs with reduced egress
+            checks. The security layer still applies.
           </div>
         </div>
       </div>
       {trusted.length ? (
         <ul className="hermes-guardian-dest-list">
           {trusted.map((entry) => {
-            const identity = text(entry.identity);
+            const kind = text(entry.kind) || "identity";
+            const value = text(entry.value) || text(entry.identity);
+            const isCommand = kind === "command";
             return (
-              <li key={identity} className="hermes-guardian-dest-item">
+              <li key={kind + ":" + value} className="hermes-guardian-dest-item">
                 <span className="hermes-guardian-dest-seen-label">
-                  <Mono>{identity}</Mono>
+                  <span className="hermes-guardian-dest-kind" title={isCommand ? "command" : "recipient"}>
+                    {isCommand ? "🖥" : "👤"}
+                  </span>
+                  <Mono>{value}</Mono>
                   {entry.classes && entry.classes.length ? (
                     <span className="hermes-guardian-muted">{entry.classes.join(", ")}</span>
                   ) : null}
                   {entry.note ? <span className="hermes-guardian-muted">{entry.note}</span> : null}
                 </span>
-                <Button variant="secondary" disabled={busy} onClick={() => removeTrusted(identity)}>
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => removeTrusted(kind, value)}
+                >
                   Remove
                 </Button>
               </li>
@@ -87,15 +146,17 @@ function TrustedRecipients(props: { controller: DestinationsController }) {
         </ul>
       ) : (
         <div className="hermes-guardian-muted hermes-guardian-dest-empty">
-          No trusted recipients — every recipient is treated as external until you add them.
+          No trusted destinations — every recipient and command is treated as external until you add
+          one.
         </div>
       )}
       <AddRow
         placeholder="teammate@example.com"
-        buttonLabel="Add trusted"
+        buttonLabel="Add recipient"
         disabled={busy}
         onAdd={(value) => addTrusted(value)}
       />
+      <CommandPicker controller={props.controller} />
     </div>
   );
 }
@@ -250,7 +311,7 @@ export function SharingTab(props: SharingTabProps) {
 
   return (
     <div className="hermes-guardian-grid">
-      <TrustedRecipients controller={controller} />
+      <TrustedDestinations controller={controller} />
 
       <div className="hermes-guardian-card">
         <div className="hermes-guardian-card-head">

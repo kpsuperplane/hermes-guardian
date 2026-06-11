@@ -158,18 +158,8 @@ def _require_dashboard_confirmation(action: str, body: dict[str, Any]) -> None:
         raise HTTPException(status_code=400, detail="destination-trust edit requires confirmation")
 
 
-def _json_mutation_result(request: Request, action: str, result: tuple[dict[str, Any], int]) -> JSONResponse:
+def _json_mutation_result(result: tuple[dict[str, Any], int]) -> JSONResponse:
     payload, status = result
-    try:
-        _guardian()._emit_activity(
-            "allowed" if bool(payload.get("ok")) else "blocked",
-            tool_name="dashboard",
-            action_family="dashboard_mutation",
-            destination=action,
-            reason=str(payload.get("message") or ""),
-        )
-    except Exception:
-        pass
     return JSONResponse(payload, status_code=status)
 
 
@@ -250,15 +240,13 @@ async def activity_turns(request: Request) -> dict[str, Any]:
 async def set_privacy_mode(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("privacy_mode", body)
-    return _json_mutation_result(request, "privacy_mode", _guardian()._dashboard_privacy_mode_action(str(body.get("mode") or "")))
+    return _json_mutation_result(_guardian()._dashboard_privacy_mode_action(str(body.get("mode") or "")))
 
 
 @router.patch("/security/rules/{rule_id}")
 async def update_security_rule(request: Request, rule_id: str, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     return _json_mutation_result(
-        request,
-        "security_rule",
         _guardian()._dashboard_security_rule_action(rule_id, _body_bool(body, "enabled")),
     )
 
@@ -267,8 +255,6 @@ async def update_security_rule(request: Request, rule_id: str, body: dict[str, A
 async def update_language_pack(request: Request, pack_id: str, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     return _json_mutation_result(
-        request,
-        "language_pack",
         _guardian()._dashboard_language_pack_action(pack_id, _body_bool(body, "enabled")),
     )
 
@@ -277,32 +263,32 @@ async def update_language_pack(request: Request, pack_id: str, body: dict[str, A
 async def create_rule(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("create_rule", body)
-    return _json_mutation_result(request, "create_rule", _guardian()._dashboard_rule_create_action(body))
+    return _json_mutation_result(_guardian()._dashboard_rule_create_action(body))
 
 
 @router.patch("/rules/{rule_id}")
 async def update_rule(request: Request, rule_id: str, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("update_rule", body)
-    return _json_mutation_result(request, "update_rule", _guardian()._dashboard_rule_update_action(rule_id, body))
+    return _json_mutation_result(_guardian()._dashboard_rule_update_action(rule_id, body))
 
 
 @router.delete("/rules/{rule_id}")
 async def delete_rule(request: Request, rule_id: str) -> JSONResponse:
     _require_dashboard_admin(request)
-    return _json_mutation_result(request, "delete_rule", _guardian()._dashboard_rule_delete_action(rule_id))
+    return _json_mutation_result(_guardian()._dashboard_rule_delete_action(rule_id))
 
 
 @router.post("/approvals/{approval_id}/approve")
 async def approve(request: Request, approval_id: str, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
-    return _json_mutation_result(request, "approve", _guardian()._dashboard_approval_action(approval_id, "approve", str(body.get("scope") or "")))
+    return _json_mutation_result(_guardian()._dashboard_approval_action(approval_id, "approve", str(body.get("scope") or "")))
 
 
 @router.post("/approvals/{approval_id}/dismiss")
 async def dismiss(request: Request, approval_id: str) -> JSONResponse:
     _require_dashboard_admin(request)
-    return _json_mutation_result(request, "dismiss", _guardian()._dashboard_approval_action(approval_id, "dismiss", ""))
+    return _json_mutation_result(_guardian()._dashboard_approval_action(approval_id, "dismiss", ""))
 
 
 @router.post("/privacy/clear-taint")
@@ -313,7 +299,7 @@ async def clear_taint(request: Request) -> JSONResponse:
     _guardian_clear_taint handler the /guardian clear-taint slash command uses.
     """
     _require_dashboard_admin(request)
-    return _json_mutation_result(request, "clear_taint", _guardian()._dashboard_clear_taint_action())
+    return _json_mutation_result(_guardian()._dashboard_clear_taint_action())
 
 
 @router.post("/privacy/unknown-tools")
@@ -321,8 +307,6 @@ async def set_unknown_tools(request: Request, body: dict[str, Any]) -> JSONRespo
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("unknown_tools", body)
     return _json_mutation_result(
-        request,
-        "unknown_tools",
         _guardian()._dashboard_unknown_tools_mode_action(str(body.get("mode") or "")),
     )
 
@@ -331,8 +315,6 @@ async def set_unknown_tools(request: Request, body: dict[str, Any]) -> JSONRespo
 async def set_user_context(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     return _json_mutation_result(
-        request,
-        "llm_user_context",
         _guardian()._dashboard_llm_user_context_action(_body_bool(body, "enabled")),
     )
 
@@ -342,8 +324,6 @@ async def set_cron_context(request: Request, body: dict[str, Any]) -> JSONRespon
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("llm_cron_context", body)
     return _json_mutation_result(
-        request,
-        "llm_cron_context",
         _guardian()._dashboard_llm_cron_context_action(_body_bool(body, "enabled")),
     )
 
@@ -352,8 +332,6 @@ async def set_cron_context(request: Request, body: dict[str, Any]) -> JSONRespon
 async def set_verifier_model(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     return _json_mutation_result(
-        request,
-        "llm_verifier_model",
         _guardian()._dashboard_llm_verifier_model_action(str(body.get("model") or "")),
     )
 
@@ -363,8 +341,6 @@ async def set_persist_prompts(request: Request, body: dict[str, Any]) -> JSONRes
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("persist_prompts", body)
     return _json_mutation_result(
-        request,
-        "persist_prompts",
         _guardian()._dashboard_persist_prompts_action(_body_bool(body, "enabled")),
     )
 
@@ -374,8 +350,6 @@ async def create_tool_override(request: Request, body: dict[str, Any]) -> JSONRe
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("tool_override", body)
     return _json_mutation_result(
-        request,
-        "tool_override",
         _guardian()._dashboard_tool_override_create_action(body),
     )
 
@@ -385,8 +359,6 @@ async def update_tool_override(request: Request, override_id: str, body: dict[st
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("tool_override", body)
     return _json_mutation_result(
-        request,
-        "tool_override",
         _guardian()._dashboard_tool_override_update_action(override_id, body),
     )
 
@@ -395,8 +367,6 @@ async def update_tool_override(request: Request, override_id: str, body: dict[st
 async def delete_tool_override(request: Request, override_id: str) -> JSONResponse:
     _require_dashboard_admin(request)
     return _json_mutation_result(
-        request,
-        "delete_tool_override",
         _guardian()._dashboard_tool_override_delete_action(override_id),
     )
 
@@ -408,39 +378,44 @@ async def delete_tool_override(request: Request, override_id: str) -> JSONRespon
 async def add_self_destination(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("destination_trust", body)
-    return _json_mutation_result(request, "self_add", _guardian()._dashboard_self_add_action(body))
+    return _json_mutation_result(_guardian()._dashboard_self_add_action(body))
 
 
 @router.post("/destinations/self/remove")
 async def remove_self_destination(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("destination_trust", body)
-    return _json_mutation_result(request, "self_remove", _guardian()._dashboard_self_remove_action(body))
+    return _json_mutation_result(_guardian()._dashboard_self_remove_action(body))
 
 
 @router.post("/destinations/trusted")
 async def add_trusted_recipient(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("destination_trust", body)
-    return _json_mutation_result(request, "trusted_add", _guardian()._dashboard_trusted_add_action(body))
+    return _json_mutation_result(_guardian()._dashboard_trusted_add_action(body))
 
 
 @router.post("/destinations/trusted/remove")
 async def remove_trusted_recipient(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("destination_trust", body)
-    return _json_mutation_result(request, "trusted_remove", _guardian()._dashboard_trusted_remove_action(body))
+    return _json_mutation_result(_guardian()._dashboard_trusted_remove_action(body))
+
+
+@router.get("/destinations/suggestions")
+async def trusted_command_suggestions() -> dict[str, Any]:
+    return _guardian()._dashboard_trusted_suggestions()
 
 
 @router.post("/destinations/sharing")
 async def add_sharing_subtype(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("destination_trust", body)
-    return _json_mutation_result(request, "sharing_add", _guardian()._dashboard_sharing_add_action(body))
+    return _json_mutation_result(_guardian()._dashboard_sharing_add_action(body))
 
 
 @router.post("/destinations/sharing/remove")
 async def remove_sharing_subtype(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("destination_trust", body)
-    return _json_mutation_result(request, "sharing_remove", _guardian()._dashboard_sharing_remove_action(body))
+    return _json_mutation_result(_guardian()._dashboard_sharing_remove_action(body))

@@ -526,6 +526,77 @@ def _shadow_decision_for(tool_name: str, args: Any, session_id: str | None):
     return cap, decision
 
 
+def _trusted_destination_classes_cover(entry_classes: Any, leaving: Any) -> bool:
+    cls = {str(c).strip().lower() for c in (entry_classes or [])}
+    if "*" in cls:
+        return True
+    return {str(c).strip().lower() for c in (leaving or set())} <= cls
+
+
+def _trusted_destination_match(action_family: str, args: Any, data_classes: set[str]) -> dict[str, Any] | None:
+    """The user-trusted destination entry covering this egress, or None.
+
+    Trusted destinations (Trusted-destinations list) deterministically allow an egress
+    when the matched entry's ``classes`` cover everything leaving — a consented
+    declassification. ``command`` entries match the terminal command; ``identity`` entries
+    match the resolved recipient. Class coverage is mandatory, so an entry trusted for one
+    class can never wave through another.
+    """
+    leaving = set(data_classes or set())
+    entries = _trusted_recipients_snapshot()
+    if action_family == "terminal_exec":
+        command = _terminal_command_for_args(args)
+        if command:
+            for entry in entries:
+                if (
+                    entry.get("kind") == "command"
+                    and _trusted_command_matches(entry.get("value"), command)
+                    and _trusted_destination_classes_cover(entry.get("classes"), leaving)
+                ):
+                    return entry
+    recipient = _normalize_identity(_recipient_raw_from_args(args))
+    if recipient:
+        for entry in entries:
+            if (
+                entry.get("kind") == "identity"
+                and _normalize_identity(entry.get("value")) == recipient
+                and _trusted_destination_classes_cover(entry.get("classes"), leaving)
+            ):
+                return entry
+    return None
+
+
+def _allow_trusted_destination_call(
+    tool_name: str,
+    args: Any,
+    session_id: str | None,
+    *,
+    action_family: str,
+    destination: str,
+    data_classes: set[str],
+    entry: dict[str, Any],
+    purpose: str = "unknown",
+    recipient_identity: str = "none",
+    decision_step: str = "",
+) -> None:
+    kind = str(entry.get("kind") or "identity")
+    _emit_egress_activity(
+        "allowed",
+        session_id=session_id,
+        tool_name=tool_name,
+        action_family=action_family,
+        destination=destination,
+        data_classes=data_classes,
+        reason=f"matched trusted destination ({kind})",
+        action_detail=_activity_action_detail(tool_name, args, action_family, destination),
+        purpose=purpose,
+        recipient_identity=recipient_identity,
+        destination_trust="trusted_recipient",
+        decision_step=decision_step,
+    )
+    _record_allowed_tool_side_effects(session_id, tool_name, args, action_family=action_family)
+
+
 def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: str = "") -> dict[str, str] | None:
     """Authoritative privacy pre-tool-call decision, driven by ``decide`` (doc 02 §3).
 
@@ -661,6 +732,34 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
             tool_name,
             {"source": "persistent", "effect": "deny", "rule_id": ""},
         )
+
+    # A user-trusted destination (recipient or terminal command) whose class scope covers
+    # everything leaving is a consented declassification — allow deterministically before
+    # the gate. decide() stays pure; deny rules above still win; the security layer already
+    # ran. Class-scoped, so an entry trusted only for local_system can't launder other
+    # classes out.
+    trusted_destination = _trusted_destination_match(action_family, args, data_classes)
+    if trusted_destination is not None:
+        _allow_trusted_destination_call(
+            tool_name,
+            args,
+            session_id,
+            action_family=action_family,
+            destination=destination,
+            data_classes=data_classes,
+            entry=trusted_destination,
+            purpose=action.purpose,
+            recipient_identity=action.recipient_identity,
+            decision_step=decision_step,
+        )
+        return None
+
+    if action_family == "terminal_exec":
+        # Remember a safe prefix of this gated command so the Trusted-destinations picker
+        # can offer "trust this" (recent-blocks source). Flags/values are stripped.
+        suggestion = _command_prefix_for_suggestion(_terminal_command_for_args(args))
+        if suggestion:
+            _record_command_suggestion(suggestion)
 
     # decision == APPROVE: gate for human approval (doc 02 §3 step 6).
     # Cross-channel turn lockdown (channel-shopping defense): if a private export of

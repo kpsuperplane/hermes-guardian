@@ -2,13 +2,15 @@ import { useCallback, useEffect, useState } from "@/sdk";
 import {
   addSelfDestination,
   addSharingSubtype,
+  addTrustedCommand,
   addTrustedRecipient,
   getDestinations,
+  getTrustedCommandSuggestions,
   removeSelfDestination,
   removeSharingSubtype,
-  removeTrustedRecipient,
+  removeTrustedDestination,
 } from "@/api/client";
-import type { DestinationsSummary } from "@/types";
+import type { DestinationsSummary, TrustedCommandSuggestion } from "@/types";
 
 type ShowToast = (message?: unknown, variant?: "success" | "error") => void;
 
@@ -21,9 +23,12 @@ export interface DestinationsController {
   addSelf: (kind: string, value: string, confirmText?: string) => void;
   removeSelf: (kind: string, value: string) => void;
   addTrusted: (identity: string, classes?: string, note?: string) => void;
-  removeTrusted: (identity: string) => void;
+  addCommand: (value: string, classes?: string, note?: string) => void;
+  removeTrusted: (kind: string, value: string) => void;
   addSharing: (subtype: string) => void;
   removeSharing: (subtype: string) => void;
+  suggestions: TrustedCommandSuggestion[];
+  loadSuggestions: () => Promise<void>;
 }
 
 function errText(err: unknown): string {
@@ -100,19 +105,42 @@ export function useDestinations(showToast: ShowToast): DestinationsController {
   const addTrusted = useCallback(
     (identity: string, classes?: string, note?: string) => {
       run(
-        'Declare "' + identity + '" a trusted recipient? Private data may be shared with them.',
+        'Declare "' + identity + '" a trusted destination? Private data may be shared with it.',
         () => addTrustedRecipient(identity, classes, note),
       );
     },
     [run],
   );
 
-  const removeTrusted = useCallback(
-    (identity: string) => {
-      run('Remove trusted recipient "' + identity + '"?', () => removeTrustedRecipient(identity));
+  const addCommand = useCallback(
+    (value: string, classes?: string, note?: string) => {
+      run(
+        'Trust the command "' +
+          value +
+          '"? It will run with reduced egress checks (scoped to the classes you set).',
+        () => addTrustedCommand(value, classes, note),
+      );
     },
     [run],
   );
+
+  const removeTrusted = useCallback(
+    (kind: string, value: string) => {
+      run('Remove trusted destination "' + value + '"?', () =>
+        removeTrustedDestination(kind, value),
+      );
+    },
+    [run],
+  );
+
+  const [suggestions, setSuggestions] = useState<TrustedCommandSuggestion[]>([]);
+  const loadSuggestions = useCallback(() => {
+    return getTrustedCommandSuggestions()
+      .then((value: { suggestions?: TrustedCommandSuggestion[] }) => {
+        setSuggestions((value && value.suggestions) || []);
+      })
+      .catch(() => setSuggestions([]));
+  }, []);
 
   const addSharing = useCallback(
     (subtype: string) => {
@@ -141,8 +169,11 @@ export function useDestinations(showToast: ShowToast): DestinationsController {
     addSelf,
     removeSelf,
     addTrusted,
+    addCommand,
     removeTrusted,
     addSharing,
     removeSharing,
+    suggestions,
+    loadSuggestions,
   };
 }

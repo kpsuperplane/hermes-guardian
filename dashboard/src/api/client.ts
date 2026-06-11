@@ -43,11 +43,19 @@ export function addTrustedRecipient(
   classes?: string,
   note?: string,
 ): Promise<any> {
-  return postTrust("/destinations/trusted", { identity, classes, note });
+  return postTrust("/destinations/trusted", { kind: "identity", value: identity, classes, note });
 }
 
-export function removeTrustedRecipient(identity: string): Promise<any> {
-  return postTrust("/destinations/trusted/remove", { identity });
+export function addTrustedCommand(value: string, classes?: string, note?: string): Promise<any> {
+  return postTrust("/destinations/trusted", { kind: "command", value, classes, note });
+}
+
+export function removeTrustedDestination(kind: string, value: string): Promise<any> {
+  return postTrust("/destinations/trusted/remove", { kind, value });
+}
+
+export function getTrustedCommandSuggestions(): Promise<any> {
+  return api("/destinations/suggestions");
 }
 
 export function addSharingSubtype(subtype: string): Promise<any> {

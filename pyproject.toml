@@ -66,11 +66,11 @@ Issues = "https://github.com/kpsuperplane/hermes-guardian/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Live LLM verifier tests (tests/test_llm_verifier_live.py) hit a real model over
-# the network and are deselected by default; the dedicated CI job re-selects them
-# with `-m llm`. They self-skip unless OPENROUTER_API_KEY + GUARDIAN_LLM_TEST_MODEL
-# are set, so `-m llm` is green (skipped) without credentials.
-addopts = "-q -m 'not llm'"
+addopts = "-q"
+# The live LLM verifier test (tests/test_llm_verifier_live.py) calls a real model
+# over the network. It is marked `llm` and SKIPPED by default via a conftest hook;
+# it runs only on explicit opt-in — `pytest --run-llm` (or GUARDIAN_RUN_LLM=1) —
+# which is what the dedicated CI job passes.
 markers = [
-    "llm: live tests that call a real model on OpenRouter (deselected by default)",
+    "llm: live test that calls a real model; skipped unless --run-llm / GUARDIAN_RUN_LLM",
 ]

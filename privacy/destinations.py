@@ -221,7 +221,9 @@ def _recipient_trusted_class(recipient_identity: str, config: dict[str, Any]) ->
     if not target:
         return False
     for entry in _trusted_recipient_entries(config):
-        if target == _normalize_identity(entry.get("identity")):
+        if str(entry.get("kind") or "identity") != "identity":
+            continue
+        if target == _normalize_identity(entry.get("value") or entry.get("identity")):
             return True
     return False
 

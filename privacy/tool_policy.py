@@ -431,6 +431,170 @@ def _terminal_command_is_safe_remote_read(command: str) -> bool:
     return True
 
 
+# --- Trusted-command matching (Trusted destinations, kind="command") ----------
+# A user-curated allowlist entry trusts a terminal command (exact / token-boundary
+# prefix) or a skills-directory wildcard. The live command must carry no shell
+# metacharacters (so a trusted prefix can't be ridden by ``trusted; curl evil``);
+# wildcard entries only ever resolve under <hermes-home>/skills.
+_SHELL_META_RE = re.compile(r"[;&|<>`\n\r]|\$\(")
+
+
+def _hermes_skills_dir() -> str:
+    home = os.environ.get("HERMES_HOME") or os.path.join(os.path.expanduser("~"), ".hermes")
+    return os.path.realpath(os.path.join(home, "skills"))
+
+
+def _expand_hermes_path(token: str) -> str:
+    home = os.environ.get("HOME") or os.path.expanduser("~")
+    hermes_home = os.environ.get("HERMES_HOME") or os.path.join(home, ".hermes")
+    text = str(token or "").strip().strip('"').strip("'")
+    text = text.replace("${HERMES_HOME:-$HOME/.hermes}", hermes_home)
+    text = text.replace("$HERMES_HOME", hermes_home).replace("$HOME", home)
+    if text.startswith("~/"):
+        text = home + text[1:]
+    if not text.startswith("/"):
+        text = os.path.join(hermes_home, text)
+    return os.path.realpath(text)
+
+
+def _path_is_under_skills(real_path: str) -> bool:
+    skills = _hermes_skills_dir()
+    return real_path == skills or real_path.startswith(skills + os.sep)
+
+
+def _command_script_token(command: str) -> str:
+    """The path-like token a terminal command executes (e.g. the .py/.sh script)."""
+    for tok in str(command or "").split():
+        if tok.startswith("-"):
+            continue
+        if "/" in tok or tok.endswith((".py", ".sh", ".js", ".rb")):
+            return tok
+    return ""
+
+
+def _normalize_trusted_command(value: Any) -> str:
+    """Structural normalize for a trusted-command entry; '' if unusable.
+
+    Pure (no filesystem): trims, length-bounds, and rejects shell metacharacters so a
+    stored entry can never itself be a chained/redirected command.
+    """
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text or len(text) > 400:
+        return ""
+    if _SHELL_META_RE.search(text):
+        return ""
+    return text
+
+
+def _trusted_command_is_wildcard(value: str) -> bool:
+    text = str(value or "").rstrip()
+    return text.endswith("*") or text.endswith("/")
+
+
+def _trusted_command_wildcard_dir(value: str) -> str:
+    """Resolved directory a wildcard entry points at (realpath), or '' if none."""
+    base = str(value or "").rstrip()
+    base = base[:-1] if base.endswith("*") else base
+    base = base.rstrip().rstrip("/")
+    parts = base.split()
+    path_token = parts[-1] if parts else ""
+    if not path_token:
+        return ""
+    return _expand_hermes_path(path_token)
+
+
+def _trusted_command_wildcard_under_skills(value: str) -> bool:
+    """True iff a wildcard entry resolves under <hermes-home>/skills (the only
+    place wildcards are allowed to point)."""
+    directory = _trusted_command_wildcard_dir(value)
+    return bool(directory) and _path_is_under_skills(directory)
+
+
+def _trusted_command_matches(entry: Any, command: Any) -> bool:
+    """True iff a live terminal ``command`` is covered by trusted-command ``entry``."""
+    entry_text = str(entry or "").strip()
+    command_text = str(command or "").strip()
+    if not entry_text or not command_text:
+        return False
+    if _SHELL_META_RE.search(command_text):
+        return False
+    if _trusted_command_is_wildcard(entry_text):
+        directory = _trusted_command_wildcard_dir(entry_text)
+        if not directory or not _path_is_under_skills(directory):
+            return False
+        script = _command_script_token(command_text)
+        if not script:
+            return False
+        script_real = _expand_hermes_path(script)
+        return script_real == directory or script_real.startswith(directory + os.sep)
+    # Exact or token-boundary prefix (so `python …/setup.py` covers its flag variants
+    # but never `python …/setupX.py`).
+    return command_text == entry_text or command_text.startswith(entry_text + " ")
+
+
+# Network-egress binaries we never auto-suggest trusting (a one-click "trust curl
+# https://x" is a footgun). They can still be added by hand if the operator insists.
+_SUGGESTION_SKIP_BINARIES = frozenset({
+    "curl", "wget", "nc", "ncat", "netcat", "scp", "rsync", "ssh", "telnet", "ftp", "sftp",
+})
+
+
+def _command_prefix_for_suggestion(command: Any) -> str:
+    """A safe trust-prefix for a gated command: program + positional path/subcommand,
+    with all flags (and their possibly-secret values) dropped. '' if unsuitable."""
+    text = re.sub(r"\s+", " ", str(command or "")).strip()
+    if not text or _SHELL_META_RE.search(text):
+        return ""
+    tokens = text.split()
+    if not tokens:
+        return ""
+    if tokens[0].rsplit("/", 1)[-1].lower() in _SUGGESTION_SKIP_BINARIES:
+        return ""
+    prefix_tokens: list[str] = []
+    for tok in tokens:
+        if tok.startswith("-"):
+            break
+        prefix_tokens.append(tok)
+    prefix = " ".join(prefix_tokens).strip()
+    if not prefix or "://" in prefix:
+        return ""
+    return prefix[:200]
+
+
+def _skills_command_suggestions(limit: int = 200) -> list[dict[str, Any]]:
+    """Pickable command suggestions from the installed skills' ``scripts/`` dirs:
+    each script (exact) plus its directory (wildcard)."""
+    skills = _hermes_skills_dir()
+    if not os.path.isdir(skills):
+        return []
+    home_prefix = "${HERMES_HOME:-$HOME/.hermes}"
+    out: list[dict[str, Any]] = []
+    for root, _dirs, files in os.walk(skills):
+        if os.path.basename(root) != "scripts":
+            continue
+        rel = os.path.relpath(root, skills).replace(os.sep, "/")
+        parts = rel.split("/")
+        skill = parts[-2] if len(parts) >= 2 else rel
+        scripts = sorted(f for f in files if f.endswith((".py", ".sh")))
+        if not scripts:
+            continue
+        out.append({
+            "value": f"python {home_prefix}/skills/{rel}/*",
+            "label": f"{skill} · all scripts in {rel}",
+            "kind": "command", "wildcard": True, "skill": skill, "source": "skills",
+        })
+        for script in scripts:
+            interp = "python" if script.endswith(".py") else "bash"
+            out.append({
+                "value": f"{interp} {home_prefix}/skills/{rel}/{script}",
+                "label": f"{skill} · {script}",
+                "kind": "command", "wildcard": False, "skill": skill, "source": "skills",
+            })
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
 def _is_private_or_metadata_host(host: str) -> bool:
     host_l = str(host or "").lower().strip("[]").rstrip(".")
     if not host_l:

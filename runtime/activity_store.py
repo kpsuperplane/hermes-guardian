@@ -186,6 +186,19 @@ def _ensure_activity_db() -> None:
                 )
                 conn.execute("CREATE INDEX IF NOT EXISTS check_timings_ts_idx ON check_timings(ts)")
                 conn.execute("CREATE INDEX IF NOT EXISTS check_timings_hook_idx ON check_timings(hook)")
+                # Trusted-destinations picker (recent-blocks source): safe command prefixes
+                # (program + script/subcommand only, never flag values) for terminal commands
+                # that gated. Shared across the gateway/dashboard processes via this DB.
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS command_suggestions (
+                        prefix TEXT PRIMARY KEY,
+                        last_ts INTEGER NOT NULL,
+                        hits INTEGER NOT NULL DEFAULT 1
+                    )
+                    """
+                )
+                conn.execute("CREATE INDEX IF NOT EXISTS command_suggestions_ts_idx ON command_suggestions(last_ts)")
             _ACTIVITY_DB_INITIALIZED = True
         except Exception as exc:
             logger.debug("%s: failed to initialize activity db: %s", _PLUGIN_NAME, exc)
@@ -216,6 +229,43 @@ def _normalize_decision_step_label(value: Any) -> str:
     # A short, charset-bounded step label (e.g. "step3_intra_boundary"); never payload.
     text = re.sub(r"[^a-z0-9_:.\- ]+", "", str(value or "").strip().lower())
     return text[:60]
+
+
+def _record_command_suggestion(prefix: str) -> None:
+    """Remember a safe command prefix that just gated (Trusted-destinations picker)."""
+    text = str(prefix or "").strip()
+    if not text:
+        return
+    _ensure_activity_db()
+    try:
+        with _activity_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO command_suggestions (prefix, last_ts, hits) VALUES (?, ?, 1)
+                ON CONFLICT(prefix) DO UPDATE SET last_ts=excluded.last_ts, hits=hits+1
+                """,
+                (text[:400], int(_now())),
+            )
+    except Exception as exc:
+        logger.debug("%s: failed to record command suggestion: %s", _PLUGIN_NAME, exc)
+
+
+def _recent_command_suggestions(limit: int = 20) -> list[dict[str, Any]]:
+    """Recently gated command prefixes, newest first (Trusted-destinations picker)."""
+    _ensure_activity_db()
+    try:
+        with _activity_connect() as conn:
+            rows = conn.execute(
+                "SELECT prefix, last_ts, hits FROM command_suggestions ORDER BY last_ts DESC LIMIT ?",
+                (max(1, min(int(limit or 20), 100)),),
+            ).fetchall()
+        return [
+            {"prefix": str(row["prefix"]), "last_ts": int(row["last_ts"]), "hits": int(row["hits"])}
+            for row in rows
+        ]
+    except Exception as exc:
+        logger.debug("%s: failed to read command suggestions: %s", _PLUGIN_NAME, exc)
+        return []
 
 
 def _emit_activity(

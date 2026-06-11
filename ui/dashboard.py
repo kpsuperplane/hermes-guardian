@@ -245,18 +245,32 @@ def _dashboard_self_remove_action(payload: dict[str, Any]) -> tuple[dict[str, An
 
 
 def _dashboard_trusted_add_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    ok, message = _add_trusted_recipient(
-        str(payload.get("identity") or ""),
-        classes=payload.get("classes"),
-        note=str(payload.get("note") or ""),
-    )
+    kind = str(payload.get("kind") or "identity").strip().lower()
+    classes = payload.get("classes")
+    note = str(payload.get("note") or "")
+    if kind == "command":
+        value = str(payload.get("value") or payload.get("command") or "")
+        ok, message = _add_trusted_command(value, classes=classes, note=note)
+    else:
+        value = str(payload.get("value") or payload.get("identity") or "")
+        ok, message = _add_trusted_recipient(value, classes=classes, note=note)
     return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
 
 
 def _dashboard_trusted_remove_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    ok, message = _remove_trusted_recipient(str(payload.get("identity") or ""))
+    kind = str(payload.get("kind") or "identity").strip().lower()
+    value = str(payload.get("value") or payload.get("identity") or payload.get("command") or "")
+    if kind == "command":
+        ok, message = _remove_trusted_command(value)
+    else:
+        ok, message = _remove_trusted_recipient(value)
     status = 200 if ok else (404 if message.startswith("No ") else 400)
     return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
+
+
+def _dashboard_trusted_suggestions() -> dict[str, Any]:
+    """Pickable trusted-command candidates for the Trusted-destinations picker."""
+    return {"suggestions": _trusted_destination_suggestions()}
 
 
 def _dashboard_sharing_add_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:

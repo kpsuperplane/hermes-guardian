@@ -6,6 +6,7 @@ __pycache__/
 agentdojo_metrics.json
 .unsafe-diagnostics
 .guardian-hmac-key
+.env
 privacy-rules.json
 privacy-rules.json.tmp
 guardian-rules.json

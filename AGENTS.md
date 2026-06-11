@@ -41,6 +41,41 @@ runtime integrations may import FastAPI or Telegram libraries, but
 `dashboard/plugin_api.py` includes import-only fallbacks for tests without
 FastAPI installed.
 
+A second workflow (`.github/workflows/llm-verifier.yml`) runs the live LLM verifier
+judgment test in `tests/test_llm_verifier_live.py` against a real model. It is marked
+`@pytest.mark.llm` and **deselected by default** (`addopts = -m 'not llm'`), so the
+unit matrix above never hits the network. The live job re-selects it with `-m llm`
+and runs only on pushes to `main` and manual dispatch (not per-PR, since each run
+calls an external API and secrets are unavailable to fork PRs).
+
+The test feeds the verifier's REAL policy prompt (`_LLM_POLICY_INSTRUCTIONS`) and
+verdict schema over a batch of labeled allow/deny scenarios in a *single* API call,
+validates each verdict with the real `_validated_llm_security_verdict`, and asserts
+the outcome. It is a judgment test, not end-to-end (the hook/policy/sanitization path
+is covered by the unit suite); batching keeps it to ~2 calls (preflight + batch) and
+minimizes exposure to flaky free-tier endpoints. There is **no retry** — any API
+error (including upstream 5xx) fails the run by design.
+
+The facade adapter (`tests/live_llm.py`, standard-library `urllib` only) supports two
+backends, chosen from the environment (Google preferred when both are set):
+
+- **Google AI Studio** — `GEMINI_API_KEY` (free tier), via the *native*
+  `generateContent` + `responseSchema` API (e.g. `gemini-2.5-flash`, `gemma-4-31b-it`).
+  Thinking is auto-disabled for Gemini 2.5+ (`thinkingConfig.thinkingBudget=0`) so the
+  verdict fits the verifier's small output budget. Note many `gemini-2.0-*` models have
+  no free-tier quota (`limit: 0`); `gemini-2.5-flash` and `gemma-4-31b-it` do.
+- **OpenRouter** — `OPENROUTER_API_KEY`, via OpenAI-compatible chat-completions with
+  `provider.require_parameters` (e.g. `openai/gpt-4o-mini`).
+
+`GUARDIAN_LLM_TEST_MODEL` (repo variable) names the model — or a comma-separated list,
+which parametrizes the test per model to check the prompt across models. A preflight
+probe fails the run with an actionable message if a model can't return
+schema-conformant verdicts. Optional knobs: `GUARDIAN_LLM_TEST_TIMEOUT` (read-timeout
+floor, default 60s) and `GUARDIAN_LLM_TEST_SPACING` (min seconds between calls,
+default 3). If no backend key is set the test self-skips, so the job stays green. Run
+locally with a gitignored `.env` (auto-loaded by `tests/conftest.py`) or inline:
+`GEMINI_API_KEY=... GUARDIAN_LLM_TEST_MODEL=gemma-4-31b-it python -m pytest -m llm`.
+
 Important local/runtime files are intentionally ignored by git:
 
 - `guardian-rules.json`: local privacy/security rule configuration.
