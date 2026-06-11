@@ -1,6 +1,7 @@
 import { React, useMemo, useState } from "@/sdk";
 import { Button } from "@/components/Button";
 import { DecisionStep } from "@/components/DecisionStep";
+import { Mono } from "@/components/Mono";
 import { TrustPill } from "@/components/TrustPill";
 import { HISTORY_PAGE_SIZES } from "@/constants";
 import { classesText, text, timeText } from "@/lib/format";
@@ -103,14 +104,32 @@ function ApprovalCard(props: {
           </div>
         </div>
         <div className="hermes-guardian-actions">
-          <Button
-            disabled={covered}
-            title={coveredTitle || undefined}
-            onClick={() => onAction(approval, "approve-once")}
-          >
-            Approve
-          </Button>
-          <Button variant="secondary" onClick={() => onAction(approval, "dismiss")}>
+          {(approval.permit_options || []).map((option) => (
+            <Button
+              key={option.method}
+              variant={option.structural ? "secondary" : undefined}
+              // A rule already covering this retry makes the rule scopes unnecessary, but a
+              // structural "this is mine / trusted" choice is still a meaningful config edit.
+              disabled={!option.structural && covered}
+              title={(!option.structural && coveredTitle) || option.detail || undefined}
+              onClick={() =>
+                onAction(approval, {
+                  kind: "permit",
+                  method: option.method,
+                  structural: option.structural,
+                })
+              }
+            >
+              {option.label}
+              {option.structural && option.value ? (
+                <>
+                  {" "}
+                  <Mono>{option.value}</Mono>
+                </>
+              ) : null}
+            </Button>
+          ))}
+          <Button variant="secondary" onClick={() => onAction(approval, { kind: "dismiss" })}>
             Dismiss
           </Button>
         </div>

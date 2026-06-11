@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 
 from . import action_details
 from . import approvals
+from . import capability
+from . import destinations
 from . import rules
 from . import tool_policy
 from .. import core
@@ -73,6 +75,34 @@ def _approval_fingerprint(
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _permit_targets(action_family: str, args: Any) -> dict[str, str]:
+    """Raw permit candidates captured at block time (doc 06 §4.1).
+
+    These are the concrete values a structural permit would add to ``self.*`` /
+    ``trusted_recipients`` — which the engine matches RAW. Unlike the pseudonymized
+    ``recipient_identity``, they are kept verbatim, but ONLY in the short-lived
+    pending-approval row (deleted on approve/dismiss/expiry), so the operator can later
+    say "this recipient is me" / "trust this host" / "trust this command" without the
+    raw target having to be re-typed or re-derived (doc 06 §4 decision).
+    """
+    family = str(action_family or "")
+    recipient = host = command = ""
+    if family in capability._MESSAGING_FAMILIES:
+        recipient = tool_policy._recipient_raw_from_args(args)
+    elif family == "terminal_exec":
+        command = tool_policy._command_prefix_for_suggestion(
+            tool_policy._terminal_command_for_args(args)
+        )
+        host = destinations._normalize_host(tool_policy._extract_url(args) or "")
+    elif family in {"web_api", "web_read", "browser_read"}:
+        host = destinations._normalize_host(tool_policy._extract_url(args) or "")
+    return {
+        "permit_recipient": str(recipient or "")[:200],
+        "permit_host": str(host or "")[:200],
+        "permit_command": str(command or "")[:200],
+    }
+
+
 def _approval_shape(
     *,
     session_id: str | None,
@@ -90,6 +120,7 @@ def _approval_shape(
     state = tool_policy._ensure_session(session_id)
     safe_purpose = tool_policy._normalize_rule_purpose(purpose, allow_star=False)
     safe_recipient_identity = tool_policy._normalize_rule_recipient_identity(recipient_identity, allow_star=False)
+    permit_targets = _permit_targets(action_family, args)
     return {
         "session_id": tool_policy._normalize_session_id(session_id),
         "owner_hash": state.get("owner_hash") or "",
@@ -105,6 +136,10 @@ def _approval_shape(
         # same trust + decide() step that produced the outcome. Enum/label only.
         "destination_trust": str(destination_trust or "unknown"),
         "decision_step": str(decision_step or ""),
+        # Raw permit candidates (doc 06 §4.1), short-lived (pending-approval row only).
+        "permit_recipient": permit_targets["permit_recipient"],
+        "permit_host": permit_targets["permit_host"],
+        "permit_command": permit_targets["permit_command"],
         "action_detail": action_details._activity_action_detail(tool_name, args, action_family, destination),
         "fingerprint": _approval_fingerprint(
             tool_name=tool_name,

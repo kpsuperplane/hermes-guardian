@@ -7,6 +7,8 @@ import secrets
 import sqlite3
 from typing import Any
 
+from . import capability
+from . import destinations
 from . import llm
 from . import module as privacy_module
 from . import rules as rules_mod
@@ -48,6 +50,9 @@ def _pending_approval_from_row(row: sqlite3.Row) -> dict[str, Any] | None:
         "destination_trust": str(row["destination_trust"] or "unknown")
         if "destination_trust" in row.keys() else "unknown",
         "decision_step": str(row["decision_step"] or "") if "decision_step" in row.keys() else "",
+        "permit_recipient": str(row["permit_recipient"] or "") if "permit_recipient" in row.keys() else "",
+        "permit_host": str(row["permit_host"] or "") if "permit_host" in row.keys() else "",
+        "permit_command": str(row["permit_command"] or "") if "permit_command" in row.keys() else "",
     }
 
 
@@ -61,7 +66,8 @@ def _load_pending_approvals_from_store_unlocked() -> None:
                        destination, purpose, recipient_identity, legacy_destination,
                        data_classes, action_detail, fingerprint,
                        created_at, expires_at, cron_job_id, cron_job_name, reason,
-                       destination_trust, decision_step
+                       destination_trust, decision_step,
+                       permit_recipient, permit_host, permit_command
                 FROM pending_approvals
                 WHERE expires_at > ?
                 """,
@@ -89,7 +95,8 @@ def _pending_approval_from_store_unlocked(approval_id: str) -> dict[str, Any] | 
                        destination, purpose, recipient_identity, legacy_destination,
                        data_classes, action_detail, fingerprint,
                        created_at, expires_at, cron_job_id, cron_job_name, reason,
-                       destination_trust, decision_step
+                       destination_trust, decision_step,
+                       permit_recipient, permit_host, permit_command
                 FROM pending_approvals
                 WHERE id = ?
                 """,
@@ -112,9 +119,10 @@ def _save_pending_approval_to_store_unlocked(approval: dict[str, Any]) -> None:
                     destination, purpose, recipient_identity, legacy_destination,
                     data_classes, action_detail, fingerprint,
                     created_at, expires_at, cron_job_id, cron_job_name, reason,
-                    destination_trust, decision_step
+                    destination_trust, decision_step,
+                    permit_recipient, permit_host, permit_command
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(approval.get("id") or ""),
@@ -142,6 +150,9 @@ def _save_pending_approval_to_store_unlocked(approval: dict[str, Any]) -> None:
                     str(approval.get("reason") or "")[:1000],
                     activity_store._normalize_destination_trust_label(approval.get("destination_trust")),
                     activity_store._normalize_decision_step_label(approval.get("decision_step")),
+                    str(approval.get("permit_recipient") or "")[:200],
+                    str(approval.get("permit_host") or "")[:200],
+                    str(approval.get("permit_command") or "")[:200],
                 ),
             )
     except Exception as exc:
@@ -283,6 +294,11 @@ def _create_pending_approval(shape: dict[str, Any]) -> dict[str, Any]:
         # pill + decide() step into the dashboard. Metadata-only (enum label + step name).
         "destination_trust": activity_store._normalize_destination_trust_label(shape.get("destination_trust")),
         "decision_step": activity_store._normalize_decision_step_label(shape.get("decision_step")),
+        # Raw permit candidates (doc 06 §4.1), short-lived: used to materialize a structural
+        # permit (self.* / trusted_recipients), which the engine matches RAW.
+        "permit_recipient": str(shape.get("permit_recipient") or ""),
+        "permit_host": str(shape.get("permit_host") or ""),
+        "permit_command": str(shape.get("permit_command") or ""),
     }
     with state._LOCK:
         _load_pending_approvals_from_store_unlocked()
@@ -307,6 +323,14 @@ def _guardian_block_message(approval: dict[str, Any]) -> str:
     action_detail_line = f"Action detail: {action_detail}\n" if action_detail else ""
     reason = str(approval.get("reason") or "").strip()
     reason_line = f"Reason: {reason}\n" if reason else ""
+    # The ways to permit are context-filtered (doc 06): the three rule scopes, plus any
+    # structural option this action supports (this recipient is me, trust this host, …).
+    approve_lines = []
+    for option in _approval_permit_options(approval):
+        command = _permit_command_line(approval["id"], option["method"])
+        admin = " [admin]" if option.get("structural") else ""
+        approve_lines.append(f"{command}{admin}  — {option['label']}")
+    approve_block = "\n".join(approve_lines)
     return (
         "Hermes Guardian blocked this egress.\n\n"
         f"Approval ID: {approval['id']}\n"
@@ -320,10 +344,8 @@ def _guardian_block_message(approval: dict[str, Any]) -> str:
         "the same outcome is circumvention and will be blocked too. Stop and surface "
         "this block, the reason, and the approval options to the user — only they can "
         "approve it.\n\n"
-        "The user can approve with:\n"
-        f"/guardian approve {approval['id']} once\n"
-        f"/guardian approve {approval['id']} session\n"
-        f"/guardian approve {approval['id']} always\n"
+        "The user can permit it with one of:\n"
+        f"{approve_block}\n"
         "or dismiss with:\n"
         f"/guardian dismiss {approval['id']}"
     )
@@ -361,6 +383,281 @@ def _rule_from_approval(approval: dict[str, Any], *, persistent: bool = False) -
     if not persistent:
         rule["fingerprint"] = approval.get("fingerprint") or ""
     return rule
+
+
+# --- Context-aware permit options (doc 06) -----------------------------------
+# A block is not only resolvable by an allow rule: the engine already honors several
+# other allow paths (self identities/destinations/hosts, trusted recipients/commands).
+# `_approval_permit_options` derives, FROM the approval's context, exactly the set of
+# those mechanisms that would actually flip THIS block's decision to allow — no more
+# (a dead-end permit that would re-block is never offered: doc 06 §3.1, invariant #2),
+# no less. `_apply_permit_option` is the single consumer that applies one of them.
+
+# Rule methods (doc 06 §2 rows 1-3): an allow rule, gated by the approval-owner check.
+_RULE_PERMIT_METHODS = frozenset({"rule_once", "rule_session", "rule_keep"})
+# Structural methods (rows 4-5): widen what counts as yours/trusted. They are admin-gated
+# because they change the trust boundary permanently (doc 06 §6), exactly as the
+# /destinations/* surfaces are.
+_STRUCTURAL_PERMIT_METHODS = frozenset(
+    {"self_identity", "self_destination", "self_host", "trusted_identity", "trusted_command"}
+)
+_PERMIT_METHODS = _RULE_PERMIT_METHODS | _STRUCTURAL_PERMIT_METHODS
+
+# The slash keyword each method is granted under (doc 06 §7). `mine`/`trust` are
+# unambiguous within a single approval — a context offers at most one self_* and one
+# trusted_* — so the keyword alone resolves the method.
+_PERMIT_METHOD_KEYWORDS = {
+    "rule_once": "once",
+    "rule_session": "session",
+    "rule_keep": "keep",
+    "self_identity": "mine",
+    "self_destination": "mine",
+    "self_host": "mine",
+    "trusted_identity": "trust",
+    "trusted_command": "trust",
+}
+
+
+def _permit_command_line(approval_id: str, method: str) -> str:
+    """The `/guardian approve` command that grants ``method`` for ``approval_id``."""
+    return f"/guardian approve {approval_id} {_PERMIT_METHOD_KEYWORDS.get(method, method)}"
+
+# Destination kinds (capability._FAMILY_TO_DEST_KIND values) whose self-allowlist /
+# trusted-by-id mechanisms the resolver consults (doc 06 §3.1). A `host`-kind family
+# (web_api/web_read/browser_read) is resolved against self.hosts; a store/draft/local
+# write is resolved against self.destinations + trusted-by-connector-id.
+_PERMIT_STORE_KINDS = frozenset({"store", "draft", "local"})
+_PERMIT_HOST_KINDS = frozenset({"host"})
+
+_STRUCTURAL_ADMIN_DENIED = (
+    "Permission denied: widening what counts as yours or trusted requires the CLI or a "
+    "configured Guardian owner. You can still approve this action with once/session/keep."
+)
+
+
+def _permit_recipient_value(approval: dict[str, Any]) -> str:
+    """The RAW recipient to add to self.identities / trusted_recipients, or "".
+
+    Read from the short-lived ``permit_recipient`` captured at block time (doc 06 §4.1) —
+    NOT the pseudonymized ``recipient_identity``, which the engine never matches against.
+    Conservative (doc 06 §3): a templated/empty recipient yields "" and is never offered
+    as a self/trusted identity (it can't be proven).
+    """
+    return str(approval.get("permit_recipient") or "").strip()
+
+
+def _permit_dest_id(approval: dict[str, Any]) -> str:
+    """The bare connector id for a store write (e.g. ``notion`` for ``mcp:notion``).
+
+    Prefers the structured ``dest_id`` captured at block time (doc 06 §4.1); falls back
+    to parsing the legacy ``destination`` string so pre-migration approvals still resolve.
+    """
+    dest_id = str(approval.get("dest_id") or "").strip().lower()
+    if dest_id:
+        return dest_id
+    destination = str(approval.get("destination") or "")
+    if ":" in destination:
+        return destination.split(":", 1)[1].strip().lower()
+    return destination.strip().lower()
+
+
+def _permit_host_value(approval: dict[str, Any], dest_kind: str) -> str:
+    """The network host to add to self.hosts, normalized; "" when none is derivable."""
+    host = str(approval.get("permit_host") or "")
+    if not host and dest_kind in _PERMIT_HOST_KINDS:
+        host = str(approval.get("dest_id") or approval.get("destination") or "")
+    return destinations._normalize_host(host)
+
+
+def _approval_permit_options(approval: dict[str, Any]) -> list[dict[str, Any]]:
+    """The ordered, context-filtered ways to permit ``approval`` (doc 06 §2-3).
+
+    Pure. Rows are ordered narrowest -> broadest. Rule rows are always present;
+    structural rows appear only for the dimensions that (a) carry a concrete value and
+    (b) the engine actually consults for this family (doc 06 §3.1). A block may yield
+    SEVERAL structural rows (e.g. a terminal command to a host -> self_host + trusted_command).
+    """
+    family = str(approval.get("action_family") or "")
+    tool_name = str(approval.get("tool_name") or "")
+    data_classes = [
+        cls for cls in (approval.get("data_classes") or []) if cls in core._ALL_PRIVACY_CLASSES
+    ]
+    options: list[dict[str, Any]] = []
+
+    def add(method: str, label: str, detail: str = "", value: str = "", kind: str = "",
+            structural: bool = False) -> None:
+        options.append({
+            "method": method,
+            "label": label,
+            "detail": detail,
+            "value": value,
+            "kind": kind,
+            "structural": structural,
+            "data_classes": list(data_classes),
+        })
+
+    # Rows 1-3: an allow rule, narrowest to broadest. Always available.
+    add("rule_once", "Just this once", "one retry of this exact action")
+    add("rule_session", "For this session", "this exact action until the session ends")
+    add("rule_keep", "Keep this exact action", "only this tool + destination, ongoing")
+
+    dest_kind = str(approval.get("dest_kind") or "") or capability._dest_kind_for_family(family)
+    subtype = str(approval.get("action_subtype") or "") or capability._action_subtype_for(
+        family, tool_name
+    )
+    # Outward-sharing reaches other parties even on a self store, so the self_* claims are
+    # suppressed (the engine resolves these to external regardless: doc 06 §3.1).
+    cfg = destinations._destinations_config(None)
+    allow_self = not destinations._is_outward_sharing(subtype, cfg)
+    recipient = _permit_recipient_value(approval)
+
+    if family in capability._MESSAGING_FAMILIES or dest_kind == "messaging":
+        # §3.1 messaging row: trust is a property of the recipient, not a store/host.
+        if recipient:
+            if allow_self:
+                add("self_identity", "This recipient is me", recipient, recipient, "identity", True)
+            add("trusted_identity", "Trust this recipient", recipient, recipient, "identity", True)
+    elif dest_kind in _PERMIT_STORE_KINDS:
+        dest_id = _permit_dest_id(approval)
+        if allow_self and dest_id and dest_id != "messaging":
+            token = f"{dest_kind}:{dest_id}"
+            add("self_destination", "This store is mine", token, token, "destination", True)
+        if dest_id and dest_id != "messaging":
+            add("trusted_identity", "Trust this destination", dest_id, dest_id, "identity", True)
+    elif family == "terminal_exec" or dest_kind == "terminal":
+        # A terminal action carries TWO independent dimensions (doc 06 §3): the host it
+        # reaches (self.hosts) and the command itself (trusted command).
+        host = _permit_host_value(approval, "terminal")
+        command = str(approval.get("permit_command") or "")
+        if allow_self and host:
+            add("self_host", "This host is mine", host, host, "host", True)
+        if command:
+            add("trusted_command", "Trust this command", command, command, "command", True)
+    elif dest_kind in _PERMIT_HOST_KINDS:
+        host = _permit_host_value(approval, dest_kind)
+        if allow_self and host:
+            add("self_host", "This host is mine", host, host, "host", True)
+
+    return options
+
+
+def _permit_option_for(approval: dict[str, Any], method: str) -> dict[str, Any] | None:
+    for option in _approval_permit_options(approval):
+        if option["method"] == method:
+            return option
+    return None
+
+
+def _apply_structural_permit(method: str, option: dict[str, Any]) -> tuple[bool, str]:
+    """Apply a structural (self_*/trusted_*) permit by calling the same config mutators
+    the /destinations/* surfaces use. Trusted entries are scoped to the approval's data
+    classes (doc 06 invariant #6), never widened to ``*``."""
+    value = str(option.get("value") or "")
+    classes = option.get("data_classes") or None
+    note = "approved from a guardian block"
+    if method == "self_identity":
+        return rules_mod._add_self_destination("identity", value)
+    if method == "self_destination":
+        return rules_mod._add_self_destination("destination", value)
+    if method == "self_host":
+        return rules_mod._add_self_destination("host", value)
+    if method == "trusted_identity":
+        return rules_mod._add_trusted_recipient(value, classes=classes, note=note)
+    if method == "trusted_command":
+        return rules_mod._add_trusted_command(value, classes=classes, note=note)
+    return False, f"Unknown permit option {method}."
+
+
+def _materialize_permit(
+    approval: dict[str, Any], method: str, option: dict[str, Any] | None
+) -> tuple[bool, str, str, str]:
+    """Apply one permit method. Returns ``(ok, message, rule_id, rule_source)``.
+
+    Rule methods reproduce the legacy ``_guardian_approve`` behavior verbatim (persistent
+    once/keep rules, session-volatile rule) so the slash surface can delegate here without
+    a user-visible change. Structural methods call the config mutators.
+    """
+    if method in _RULE_PERMIT_METHODS:
+        rule = _rule_from_approval(approval, persistent=(method == "rule_keep"))
+        if method == "rule_once":
+            rule["remaining_invocations"] = 1
+            rule["id"] = f"rule_{secrets.token_hex(4)}"
+            rules = rules_mod._persistent_privacy_rules()
+            rules.append(rule)
+            if not rules_mod._save_persistent_privacy_rules(rules):
+                return False, "Failed to save one-time privacy approval; Hermes Guardian remains blocked.", "", ""
+            scope_word = "once"
+        elif method == "rule_session":
+            state._SESSION_APPROVALS.setdefault(approval.get("session_id") or "", []).append(rule)
+            scope_word = "session"
+        else:  # rule_keep
+            rules = rules_mod._persistent_privacy_rules()
+            rules.append(rule)
+            if not rules_mod._save_persistent_privacy_rules(rules):
+                return False, "Failed to save persistent privacy approval; Hermes Guardian remains blocked.", "", ""
+            scope_word = "always"
+        scope_label = scope_word if scope_word != "always" else f"always for {_rule_scope_label(rule)}"
+        classes = ", ".join(approval.get("data_classes") or ["private"])
+        message = (
+            f"Approved {approval.get('action_family', '')} -> {approval.get('destination', '')} "
+            f"for {classes} ({scope_label})."
+        )
+        return True, message, rule.get("id", ""), scope_word
+
+    ok, mutator_message = _apply_structural_permit(method, option or {})
+    return ok, mutator_message, "", method
+
+
+def _apply_permit_option(owner_hash: str, approval_id: str, method: str) -> tuple[bool, str]:
+    """Resolve, gate, and apply one permit method for a pending approval (doc 06 §5).
+
+    The single consumer for BOTH surfaces, so the security gate (doc 06 §6) lives here
+    once: rule methods require the approval-owner check; structural methods additionally
+    require the admin check (CLI or a configured owner). A method not offered for this
+    approval is refused (no dead-end permits).
+    """
+    requested_id = approval_id
+    if method not in _PERMIT_METHODS:
+        return False, f"Unknown permit option {method}."
+    structural = method in _STRUCTURAL_PERMIT_METHODS
+    with state._LOCK:
+        llm._prune_expired()
+        resolved_id = _resolve_pending_approval_id(approval_id) or ""
+        approval = state._PENDING_APPROVALS.get(resolved_id)
+        if not approval:
+            return False, f"No pending approval found for {requested_id}."
+        if not _approval_owner_allowed(owner_hash, approval):
+            return False, "Approval denied: this request belongs to a different user/session."
+        if structural and not _owner_is_authenticated(owner_hash):
+            return False, _STRUCTURAL_ADMIN_DENIED
+        option = _permit_option_for(approval, method)
+        if structural and (option is None or not option.get("value")):
+            return False, "That permit option isn't available for this action."
+        # Consume first; restore on failure (mirrors the legacy once/keep save path).
+        state._PENDING_APPROVALS.pop(resolved_id, None)
+        _delete_pending_approvals_from_store_unlocked([resolved_id])
+        ok, message, rule_id, rule_source = _materialize_permit(approval, method, option)
+        if not ok:
+            state._PENDING_APPROVALS[resolved_id] = approval
+            _save_pending_approval_to_store_unlocked(approval)
+            return False, message
+    activity_store._emit_activity(
+        "manual_approved",
+        session_id=approval.get("session_id", ""),
+        owner_hash=approval.get("owner_hash", ""),
+        tool_name=approval.get("tool_name", ""),
+        action_family=approval.get("action_family", ""),
+        destination=approval.get("destination", ""),
+        purpose=approval.get("purpose", "unknown"),
+        recipient_identity=approval.get("recipient_identity", "none"),
+        data_classes=approval.get("data_classes") or [],
+        reason=f"approved {rule_source or method}",
+        approval_id=resolved_id,
+        rule_id=rule_id,
+        rule_source=rule_source,
+        action_detail=approval.get("action_detail", ""),
+    )
+    return True, message
 
 
 def _rule_scope_label(rule: dict[str, Any]) -> str:

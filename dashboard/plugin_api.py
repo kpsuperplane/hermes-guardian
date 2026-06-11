@@ -282,7 +282,13 @@ async def delete_rule(request: Request, rule_id: str) -> JSONResponse:
 @router.post("/approvals/{approval_id}/approve")
 async def approve(request: Request, approval_id: str, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
-    return _json_mutation_result(_guardian()._dashboard_approval_action(approval_id, "approve", str(body.get("scope") or "")))
+    # `method` is the doc-06 permit method (self_host, trusted_identity, rule_keep, …);
+    # `scope` is the legacy once/always alias. Structural methods widen the trust boundary,
+    # so they need the same destination-trust confirmation the /destinations/* edits do.
+    method = str(body.get("method") or body.get("scope") or "")
+    if _guardian()._dashboard_permit_method_is_structural(method):
+        _require_dashboard_confirmation("destination_trust", body)
+    return _json_mutation_result(_guardian()._dashboard_approval_action(approval_id, "approve", method))
 
 
 @router.post("/approvals/{approval_id}/dismiss")

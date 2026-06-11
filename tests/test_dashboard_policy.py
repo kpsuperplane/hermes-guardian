@@ -406,6 +406,53 @@ def test_dashboard_approval_actions_remove_pending_blocks():
     assert payload["policy"]["recent_blocks"] == []
 
 
+# --- doc 06 §8-9: permit options on the snapshot + method-based approve --------
+def test_pending_snapshot_carries_context_permit_options():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    plugin._on_pre_tool_call("send_message", {"to": "me@example.com", "text": "hi"}, session_id="s1")
+
+    pending = plugin._dashboard_pending_approvals()
+    assert len(pending) == 1
+    methods = {opt["method"] for opt in pending[0]["permit_options"]}
+    # Rule rows always, plus the messaging structural dimensions.
+    assert {"rule_once", "rule_session", "rule_keep", "self_identity", "trusted_identity"} <= methods
+    self_identity = next(o for o in pending[0]["permit_options"] if o["method"] == "self_identity")
+    assert self_identity["value"] == "me@example.com" and self_identity["structural"] is True
+
+
+def test_dashboard_approve_by_structural_method_mutates_config():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    plugin._on_pre_tool_call("send_message", {"to": "me@example.com", "text": "hi"}, session_id="s1")
+    approval_id = first_pending_id(plugin)
+
+    payload, status = plugin._dashboard_approval_action(approval_id, "approve", "self_identity")
+    assert status == 200 and payload["ok"] is True
+    assert "me@example.com" in plugin._self_config_snapshot()["identities"]
+    assert approval_id not in plugin._PENDING_APPROVALS
+
+
+def test_dashboard_structural_method_detection_and_unknown_rejected():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    plugin._on_pre_tool_call("send_message", {"to": "me@example.com", "text": "hi"}, session_id="s1")
+    approval_id = first_pending_id(plugin)
+
+    # The HTTP layer uses this to decide whether to require the destination-trust confirm.
+    assert plugin._dashboard_permit_method_is_structural("self_identity") is True
+    assert plugin._dashboard_permit_method_is_structural("trusted_identity") is True
+    assert plugin._dashboard_permit_method_is_structural("once") is False  # legacy scope alias
+    assert plugin._dashboard_permit_method_is_structural("rule_keep") is False
+
+    payload, status = plugin._dashboard_approval_action(approval_id, "approve", "bogus_method")
+    assert status == 400 and payload["ok"] is False
+    assert approval_id in plugin._PENDING_APPROVALS
+
+
 def test_datatables_payload_labels_terminal_taint_as_result():
     plugin = load_plugin()
 

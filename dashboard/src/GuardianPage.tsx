@@ -17,7 +17,7 @@ import { ProtectionTab } from "@/tabs/ProtectionTab";
 import { ReviewTab } from "@/tabs/ReviewTab";
 import { SharingTab } from "@/tabs/SharingTab";
 import { WhatsYoursTab } from "@/tabs/WhatsYoursTab";
-import type { PendingApproval, RecentBlock } from "@/types";
+import type { PendingApproval } from "@/types";
 
 // The five-tab IA (charter §1, doc 02). Order is fixed: it mirrors decide().
 // Reading left-to-right is reading decide() top-to-bottom: what happened ->
@@ -159,7 +159,7 @@ export function GuardianPage() {
           approvals={approvals.approvals}
           approvalsLoading={approvals.loading}
           onApprovalAction={(approval: PendingApproval, action) =>
-            actions.approvalAction(approval as RecentBlock, action)
+            actions.approvalAction(approval, action)
           }
           turns={history.turns}
           loading={history.loading}

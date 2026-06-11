@@ -216,7 +216,7 @@ def test_deny_round_trip_against_seeded_pending_item():
     assert approval_id not in plugin._PENDING_APPROVALS
 
 
-def test_approve_defaults_scope_to_once_when_omitted():
+def test_bare_approve_shows_the_permit_menu_without_granting():  # doc 06 §7.1
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
@@ -225,9 +225,13 @@ def test_approve_defaults_scope_to_once_when_omitted():
 
     plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id}"))
     out = plugin._handle_guardian_command(f"approve {approval_id}")
-    assert "Approved message_send" in out
-    rules = plugin._persistent_privacy_rules()
-    assert rules and rules[0]["remaining_invocations"] == 1
+    # Bare `approve <id>` no longer silently grants once; it lists the ways to permit.
+    assert "Ways to permit" in out
+    assert f"/guardian approve {approval_id} once" in out
+    assert f"/guardian approve {approval_id} mine" in out  # this recipient is me
+    assert "Approved" not in out
+    assert plugin._persistent_privacy_rules() == []
+    assert approval_id in plugin._PENDING_APPROVALS
 
 
 # --- §6.4 Delegation, not duplication: group verb == original handler. ---------

@@ -191,7 +191,18 @@ def test_message_send_uses_messaging_destination_with_hashed_recipient_identity(
     assert approval["purpose"] == "follow_up"
     assert approval["recipient_identity"].startswith("recipient_")
     assert approval["recipient_identity"] == plugin._recipient_identity_from_value("friend")
-    assert "friend" not in json.dumps(approval)
+    # recipient_identity + action_detail stay pseudonymized. The RAW recipient is captured
+    # ONLY in the short-lived permit_recipient field (doc 06 §4 decision), so a structural
+    # "trust this recipient" / "this is me" permit can be granted later without re-typing it.
+    assert approval["permit_recipient"] == "friend"
+    assert "friend" not in approval["recipient_identity"]
+    assert "friend" not in approval["action_detail"]
+    leaked = {
+        key: value
+        for key, value in approval.items()
+        if key != "permit_recipient" and "friend" in json.dumps(value)
+    }
+    assert leaked == {}, f"raw recipient leaked outside permit_recipient: {leaked}"
 
 
 def test_legacy_message_destination_rule_still_matches_hashed_recipient_shape():

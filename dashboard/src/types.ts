@@ -213,6 +213,19 @@ export interface ActivityTurn {
 }
 
 // --- Activity pending approvals (doc 02 §Tab1) ---
+// A context-derived way to permit a block (doc 06). Rule rows (structural=false) create
+// an allow rule; structural rows widen what counts as yours/trusted and need the admin
+// confirm. `value` is the concrete recipient/host/command/connector the option would add.
+export interface PermitOption {
+  method: string;
+  label: string;
+  detail?: string;
+  value?: string;
+  kind?: string;
+  structural?: boolean;
+  data_classes?: string[];
+}
+
 export interface PendingApproval {
   id?: string;
   tool_name?: string;
@@ -229,6 +242,7 @@ export interface PendingApproval {
   covered_by_rule?: boolean;
   covered_rule_id?: string;
   covered_rule_source?: string;
+  permit_options?: PermitOption[];
 }
 
 // --- Pure-function widget payloads (doc 02 §Tab2/§Tab3) ---

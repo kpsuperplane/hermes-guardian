@@ -178,6 +178,15 @@ def _ensure_activity_db() -> None:
                     conn.execute("ALTER TABLE pending_approvals ADD COLUMN destination_trust TEXT NOT NULL DEFAULT 'unknown'")
                 if "decision_step" not in pending_columns:
                     conn.execute("ALTER TABLE pending_approvals ADD COLUMN decision_step TEXT NOT NULL DEFAULT ''")
+                # Raw permit candidates (doc 06 §4.1): the concrete recipient/host/command a
+                # structural permit would add to self.* / trusted_recipients. Kept verbatim
+                # ONLY in this short-lived row (deleted on approve/dismiss/expiry).
+                if "permit_recipient" not in pending_columns:
+                    conn.execute("ALTER TABLE pending_approvals ADD COLUMN permit_recipient TEXT NOT NULL DEFAULT ''")
+                if "permit_host" not in pending_columns:
+                    conn.execute("ALTER TABLE pending_approvals ADD COLUMN permit_host TEXT NOT NULL DEFAULT ''")
+                if "permit_command" not in pending_columns:
+                    conn.execute("ALTER TABLE pending_approvals ADD COLUMN permit_command TEXT NOT NULL DEFAULT ''")
                 conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_session_idx ON pending_approvals(session_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_expires_idx ON pending_approvals(expires_at)")
                 conn.execute("CREATE INDEX IF NOT EXISTS pending_approvals_cron_job_idx ON pending_approvals(cron_job_id)")

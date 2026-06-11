@@ -589,6 +589,8 @@ sharing process-global state across tests.
   comments, docs, or code that note what was there before, explain that a change
   occurred, or reference the old behavior. Write the code and docs as if the new
   shape is the only shape that ever existed.
+- Commit directly to `main`. Do not create feature branches or open PRs for
+  changes in this repo — commit and push on `main`.
 - Use `rg`/`rg --files` for repository search.
 - Keep edits tightly scoped. This repository relies on security invariants more
   than broad refactors.

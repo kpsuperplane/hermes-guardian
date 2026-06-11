@@ -6,8 +6,8 @@ import { text } from "@/lib/format";
 import { formToPayload, payloadIsWildcardAllow, ruleToForm } from "@/lib/rules";
 import type {
   OverrideForm,
+  PendingApproval,
   Policy,
-  RecentBlock,
   Rule,
   RuleForm,
   ToastVariant,
@@ -33,9 +33,12 @@ export interface GuardianActionDeps {
   showToast: (message?: unknown, variant?: ToastVariant) => void;
 }
 
-// Same-screen approval verbs (Activity tab). Moved here from the retired
-// BlocksTab so the Activity merge owns its own action vocabulary.
-export type ApprovalAction = "approve-once" | "approve-always" | "dismiss";
+// Same-screen approval verbs (Activity tab). A permit grants one doc-06 method
+// (rule_once/.../self_host/trusted_identity); a dismiss drops the pending approval.
+// `structural` marks a trust-boundary-widening method that needs the admin confirm.
+export type ApprovalAction =
+  | { kind: "permit"; method: string; structural?: boolean }
+  | { kind: "dismiss" };
 
 function errText(err: unknown): string {
   return String((err as Error)?.message || err);
@@ -496,20 +499,34 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       });
   }
 
-  function approvalAction(block: RecentBlock, action: ApprovalAction) {
-    const actionId =
-      action === "dismiss"
-        ? text(block.dismiss_id || block.approval_id || block.id)
-        : text(block.approval_id || block.id);
+  function approvalAction(approval: PendingApproval, action: ApprovalAction) {
+    const actionId = text(approval.id);
     if (!actionId) return;
+    // Structural permits permanently widen what counts as yours/trusted; confirm first
+    // (mirroring the destination-trust edits) and send the same confirmation token.
+    if (action.kind === "permit" && action.structural) {
+      if (
+        !window.confirm(
+          "This permanently changes what Guardian treats as yours or trusted, for every " +
+            "future action — not just this one. Continue?",
+        )
+      ) {
+        return;
+      }
+    }
     const path =
-      action === "dismiss"
+      action.kind === "dismiss"
         ? "/approvals/" + encodeURIComponent(actionId) + "/dismiss"
         : "/approvals/" + encodeURIComponent(actionId) + "/approve";
-    const body = action === "approve-always" ? { scope: "always" } : { scope: "once" };
+    const body: Record<string, unknown> =
+      action.kind === "dismiss"
+        ? {}
+        : action.structural
+          ? { method: action.method, confirm: "destination-trust" }
+          : { method: action.method };
     api(path, {
       method: "POST",
-      body: JSON.stringify(action === "dismiss" ? {} : body),
+      body: JSON.stringify(body),
     })
       .then((result) => {
         showToast(result.message || "Updated.");

@@ -103,17 +103,34 @@ def _activity_taints_text(row: dict[str, Any], *, code: bool = False, html_code:
     return core._presentation.activity_taints_text(row, code=code, html_code=html_code)
 
 
-def _dashboard_approval_action(approval_id: str, action: str, scope: str = "") -> tuple[dict[str, Any], int]:
+def _dashboard_permit_method(value: str) -> str | None:
+    """Resolve a dashboard approve payload to a permit method (doc 06 §8).
+
+    Accepts a method id directly (``self_host``, ``trusted_identity``, …) or a legacy
+    scope word (``once``/``session``/``keep``/``always``) for back-compat. Returns ``None``
+    for an unrecognized value so the caller can 400.
+    """
+    token = str(value or "").strip().lower()
+    if token in approvals._PERMIT_METHODS:
+        return token
+    return commands._SCOPE_KEYWORD_TO_METHOD.get(token)
+
+
+def _dashboard_permit_method_is_structural(value: str) -> bool:
+    """True iff the payload resolves to a trust-boundary-widening method (admin + confirm)."""
+    return _dashboard_permit_method(value) in approvals._STRUCTURAL_PERMIT_METHODS
+
+
+def _dashboard_approval_action(approval_id: str, action: str, method: str = "") -> tuple[dict[str, Any], int]:
     approval_id = str(approval_id or "").strip()
     action = str(action or "").strip().lower()
-    scope = str(scope or "").strip().lower()
     if not re.fullmatch(r"[0-9]{4}", approval_id):
         return {"ok": False, "message": "Invalid approval id.", "policy": activity_rows._policy_snapshot()}, 400
     if action == "approve":
-        if scope not in {"once", "always"}:
-            return {"ok": False, "message": "Approval scope must be once or always.", "policy": activity_rows._policy_snapshot()}, 400
-        message = commands._guardian_approve(core._CLI_OWNER_HASH, approval_id, scope)
-        ok = message.startswith("Approved ")
+        resolved = _dashboard_permit_method(method)
+        if resolved is None:
+            return {"ok": False, "message": f"Unsupported approval method '{method}'.", "policy": activity_rows._policy_snapshot()}, 400
+        ok, message = approvals._apply_permit_option(core._CLI_OWNER_HASH, approval_id, resolved)
     elif action == "dismiss":
         message = commands._guardian_deny(core._CLI_OWNER_HASH, approval_id)
         ok = message.startswith("Dismissed ")

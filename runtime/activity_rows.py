@@ -1041,6 +1041,9 @@ def _policy_snapshot() -> dict[str, Any]:
                     )
                     if str(approval.get("cron_job_id") or "")
                     else "",
+                    # The context-filtered ways to permit this block (doc 06): rule scopes
+                    # plus any structural option (this recipient is me, trust this host, …).
+                    "permit_options": approvals._approval_permit_options(approval),
                     **_pending_approval_rule_coverage(approval),
                 }
                 for approval in list(state._PENDING_APPROVALS.values())

@@ -35,7 +35,9 @@ _GUARDIAN_HELP_LINES = [
     "ACTIVITY — what happened, and what needs you",
     "  activity [limit]        recent decided actions",
     "  approvals               list pending approvals",
-    "  approve <id> [once|session|always]   approve a pending item",
+    "  approve <id>            show the ways to permit a pending item",
+    "  approve <id> once|session|keep       allow this exact action (1x / session / ongoing)",
+    "  approve <id> mine|trust              it's yours / you trust it (admin; if the action supports it)",
     "  deny <id>               deny a pending item (alias: dismiss)",
     "  clear-taint             clear session taint",
     "",
@@ -435,8 +437,8 @@ def _handle_guardian_command(raw_args: str = "") -> str:
     if command == "clear-taint":
         return _guardian_clear_taint(owner_hash)
     if command == "approve" and len(tokens) >= 2:
-        scope = tokens[2].lower() if len(tokens) >= 3 else "once"
-        return _guardian_approve(owner_hash, tokens[1], scope)
+        keyword = tokens[2].lower() if len(tokens) >= 3 else ""
+        return _guardian_approve(owner_hash, tokens[1], keyword)
     if command in {"deny", "dismiss"} and len(tokens) == 2:
         return _guardian_dismiss(owner_hash, tokens[1])
     return "Invalid /guardian command. Try /guardian help."
@@ -459,8 +461,8 @@ def _guardian_activity_command(owner_hash: str, tokens: list[str]) -> str:
     if sub == "approvals":
         return _guardian_approvals_command(owner_hash)
     if sub == "approve" and len(tokens) >= 3:
-        scope = tokens[3].lower() if len(tokens) >= 4 else "once"
-        return _guardian_approve(owner_hash, tokens[2], scope)
+        keyword = tokens[3].lower() if len(tokens) >= 4 else ""
+        return _guardian_approve(owner_hash, tokens[2], keyword)
     if sub in {"deny", "dismiss"} and len(tokens) == 3:
         return _guardian_dismiss(owner_hash, tokens[2])
     if sub == "clear-taint":
@@ -673,7 +675,7 @@ def _guardian_approvals_command(owner_hash: str) -> str:
             f"- {approval.get('id', '')}: {approval.get('action_family', '')} -> "
             f"{approval.get('destination', '')} ({classes})"
         )
-    lines.append("Use /guardian approve <id> [once|session|always] | /guardian deny <id>.")
+    lines.append("Run /guardian approve <id> to see the ways to permit it, or /guardian deny <id>.")
     return "\n".join(lines)
 
 
@@ -1401,61 +1403,85 @@ def _guardian_deny(owner_hash: str, approval_id: str) -> str:
     return _guardian_dismiss(owner_hash, approval_id)
 
 
-def _guardian_approve(owner_hash: str, approval_id: str, scope: str) -> str:
-    if scope not in {"once", "session", "always"}:
-        return "Approval scope must be one of: once, session, always."
+# Slash keyword -> permit method (doc 06 §7). The rule scopes map directly; the
+# context keywords `mine`/`trust` resolve to the single self_*/trusted_* option the
+# approval offers (each context yields at most one of each, so no qualifier is needed).
+# `always` stays as a hidden back-compat alias for `keep`.
+_SCOPE_KEYWORD_TO_METHOD = {
+    "once": "rule_once",
+    "session": "rule_session",
+    "keep": "rule_keep",
+    "always": "rule_keep",
+}
+
+
+def _resolve_owned_approval(owner_hash: str, approval_id: str):
+    """Resolve a pending approval the caller is allowed to act on. Returns
+    ``(resolved_id, approval, error_message)`` — ``error_message`` is "" on success."""
     requested_id = approval_id
     with state._LOCK:
         llm._prune_expired()
-        approval_id = approvals._resolve_pending_approval_id(approval_id) or ""
-        approval = state._PENDING_APPROVALS.get(approval_id)
+        resolved_id = approvals._resolve_pending_approval_id(approval_id) or ""
+        approval = state._PENDING_APPROVALS.get(resolved_id)
         if not approval:
-            return f"No pending approval found for {requested_id}."
+            return "", None, f"No pending approval found for {requested_id}."
         if not approvals._approval_owner_allowed(owner_hash, approval):
-            return "Approval denied: this request belongs to a different user/session."
-        state._PENDING_APPROVALS.pop(approval_id, None)
-        approvals._delete_pending_approvals_from_store_unlocked([approval_id])
-        rule = approvals._rule_from_approval(approval, persistent=(scope == "always"))
-        sid = approval["session_id"]
-        if scope == "once":
-            rule["remaining_invocations"] = 1
-            rule["id"] = f"rule_{secrets.token_hex(4)}"
-            rules = rules_mod._persistent_privacy_rules()
-            rules.append(rule)
-            if not rules_mod._save_persistent_privacy_rules(rules):
-                state._PENDING_APPROVALS[approval_id] = approval
-                approvals._save_pending_approval_to_store_unlocked(approval)
-                return "Failed to save one-time privacy approval; Hermes Guardian remains blocked."
-        elif scope == "session":
-            state._SESSION_APPROVALS.setdefault(sid, []).append(rule)
+            return "", None, "Approval denied: this request belongs to a different user/session."
+    return resolved_id, approval, ""
+
+
+def _guardian_permit_menu(owner_hash: str, approval_id: str) -> str:
+    """The context-filtered list of ways to permit a pending approval (doc 06 §7.1)."""
+    resolved_id, approval, error = _resolve_owned_approval(owner_hash, approval_id)
+    if error:
+        return error
+    lines = [
+        f"Ways to permit approval {resolved_id} "
+        f"({approval.get('action_family', '')} -> {approval.get('destination', '')}):"
+    ]
+    for option in approvals._approval_permit_options(approval):
+        command = approvals._permit_command_line(resolved_id, option["method"])
+        admin = " [admin]" if option.get("structural") else ""
+        detail = f" — {option['detail']}" if option.get("detail") else ""
+        lines.append(f"  {command}{admin}: {option['label']}{detail}")
+    lines.append(f"or dismiss with: /guardian dismiss {resolved_id}")
+    return "\n".join(lines)
+
+
+def _context_permit_method(owner_hash: str, approval_id: str, keyword: str):
+    """Resolve `mine`/`trust` to the single self_*/trusted_* method the approval offers.
+    Returns ``(method, error_message)`` — exactly one is set."""
+    resolved_id, approval, error = _resolve_owned_approval(owner_hash, approval_id)
+    if error:
+        return None, error
+    prefix = "self_" if keyword == "mine" else "trusted_"
+    methods = [
+        option["method"]
+        for option in approvals._approval_permit_options(approval)
+        if option["method"].startswith(prefix)
+    ]
+    if not methods:
+        return None, (
+            f"No '{keyword}' option for approval {resolved_id} given this action.\n"
+            + _guardian_permit_menu(owner_hash, approval_id)
+        )
+    return methods[0], None
+
+
+def _guardian_approve(owner_hash: str, approval_id: str, keyword: str = "") -> str:
+    keyword = str(keyword or "").strip().lower()
+    if not keyword:
+        return _guardian_permit_menu(owner_hash, approval_id)
+    method = _SCOPE_KEYWORD_TO_METHOD.get(keyword)
+    if method is None:
+        if keyword in {"mine", "trust"}:
+            method, error = _context_permit_method(owner_hash, approval_id, keyword)
+            if error:
+                return error
         else:
-            persistent_rule = rule
-            rules = rules_mod._persistent_privacy_rules()
-            rules.append(persistent_rule)
-            if not rules_mod._save_persistent_privacy_rules(rules):
-                state._PENDING_APPROVALS[approval_id] = approval
-                approvals._save_pending_approval_to_store_unlocked(approval)
-                return "Failed to save persistent privacy approval; Hermes Guardian remains blocked."
-    activity_store._emit_activity(
-        "manual_approved",
-        session_id=approval.get("session_id", ""),
-        owner_hash=approval.get("owner_hash", ""),
-        tool_name=approval.get("tool_name", ""),
-        action_family=approval.get("action_family", ""),
-        destination=approval.get("destination", ""),
-        purpose=approval.get("purpose", "unknown"),
-        recipient_identity=approval.get("recipient_identity", "none"),
-        data_classes=approval.get("data_classes") or [],
-        reason=f"approved {scope}",
-        approval_id=approval_id,
-        rule_id=rule.get("id", ""),
-        rule_source=scope,
-        action_detail=approval.get("action_detail", ""),
-    )
-    scope_label = scope
-    if scope == "always":
-        scope_label = f"always for {approvals._rule_scope_label(rule)}"
-    return (
-        f"Approved {approval['action_family']} -> {approval['destination']} "
-        f"for {', '.join(approval.get('data_classes') or ['private'])} ({scope_label})."
-    )
+            return (
+                f"Unknown approve option '{keyword}'.\n"
+                + _guardian_permit_menu(owner_hash, approval_id)
+            )
+    _ok, message = approvals._apply_permit_option(owner_hash, approval_id, method)
+    return message
