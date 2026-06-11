@@ -25,7 +25,7 @@ def _option(plugin, approval, method):
     raise AssertionError(f"{method} not offered; got {_methods(plugin, approval)}")
 
 
-_RULE_METHODS = {"rule_once", "rule_session", "rule_keep"}
+_RULE_METHODS = {"rule_once", "rule_session", "rule_keep", "rule_keep_exact"}
 
 
 def _approval(**overrides):
@@ -40,11 +40,12 @@ def _approval(**overrides):
     return base
 
 
-# --- 1. The three rule rows are always present, narrowest -> broadest. ---------
+# --- 1. The four rule rows are always present, narrowest -> broadest. ----------
 def test_rule_rows_always_offered_in_breadth_order():
     plugin = load_plugin()
     methods = [opt["method"] for opt in plugin._approval_permit_options(_approval())]
-    assert methods[:3] == ["rule_once", "rule_session", "rule_keep"]
+    # exact-command persistence is narrower than shape-only persistence, so it precedes it.
+    assert methods[:4] == ["rule_once", "rule_session", "rule_keep_exact", "rule_keep"]
 
 
 # --- 2. Messaging offers self-identity + trusted-recipient on the recipient. ---
@@ -204,6 +205,42 @@ def test_apply_rule_keep_creates_persistent_rule():
     assert "Approved message_send" in message
     assert len(plugin._persistent_privacy_rules()) == 1
     assert plugin._persistent_privacy_rules()[0]["remaining_invocations"] == -1
+
+
+# --- 11b. keep-exact: persistent trust pinned to the byte-identical command. ----
+def test_apply_rule_keep_exact_persists_only_the_exact_command():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+
+    # A compound command: trusted_command can't derive a safe prefix, so only keep-exact
+    # can persistently permit it.
+    cmd = "echo one && echo two"
+    blocked = plugin._on_pre_tool_call("terminal", {"command": cmd}, session_id="s1")
+    assert blocked is not None
+    approval_id = first_pending_id(plugin)
+
+    offered = {
+        opt["method"] for opt in plugin._approval_permit_options(plugin._PENDING_APPROVALS[approval_id])
+    }
+    assert "rule_keep_exact" in offered
+    assert "trusted_command" not in offered  # no prefix is derivable from a compound command
+
+    ok, message = plugin._apply_permit_option(plugin._CLI_OWNER_HASH, approval_id, "rule_keep_exact")
+    assert ok, message
+    rules = plugin._persistent_privacy_rules()
+    assert len(rules) == 1
+    assert rules[0]["remaining_invocations"] == -1  # persistent
+    assert rules[0].get("fingerprint")              # pinned to the exact action
+
+    # The byte-identical command is now allowed with no new prompt.
+    assert plugin._on_pre_tool_call("terminal", {"command": cmd}, session_id="s1") is None
+
+    # A one-byte-different command is NOT covered — it re-blocks (no prefix-riding).
+    altered = plugin._on_pre_tool_call(
+        "terminal", {"command": "echo one && echo three"}, session_id="s1"
+    )
+    assert altered is not None
 
 
 # --- 12. The structural admin gate: a non-admin owner cannot widen trust. ------

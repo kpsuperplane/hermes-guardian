@@ -351,7 +351,9 @@ def _guardian_block_message(approval: dict[str, Any]) -> str:
     )
 
 
-def _rule_from_approval(approval: dict[str, Any], *, persistent: bool = False) -> dict[str, Any]:
+def _rule_from_approval(
+    approval: dict[str, Any], *, persistent: bool = False, keep_fingerprint: bool = False
+) -> dict[str, Any]:
     cron_job_id = _cron_job_id_from_session(approval.get("session_id"))
     scope = {
         "owner_hash": approval.get("owner_hash") or "",
@@ -380,7 +382,10 @@ def _rule_from_approval(approval: dict[str, Any], *, persistent: bool = False) -
         "remaining_invocations": -1,
         "created_at": int(state._now()),
     }
-    if not persistent:
+    # Volatile rules are always fingerprint-pinned (exact action). A persistent rule is
+    # normally shape-only (``rule_keep``), but ``keep_fingerprint`` keeps the pin so a
+    # persistent rule permits only the byte-identical action (``rule_keep_exact``).
+    if not persistent or keep_fingerprint:
         rule["fingerprint"] = approval.get("fingerprint") or ""
     return rule
 
@@ -393,8 +398,12 @@ def _rule_from_approval(approval: dict[str, Any], *, persistent: bool = False) -
 # (a dead-end permit that would re-block is never offered: doc 06 §3.1, invariant #2),
 # no less. `_apply_permit_option` is the single consumer that applies one of them.
 
-# Rule methods (doc 06 §2 rows 1-3): an allow rule, gated by the approval-owner check.
-_RULE_PERMIT_METHODS = frozenset({"rule_once", "rule_session", "rule_keep"})
+# Rule methods (doc 06 §2 rows 1-4): an allow rule, gated by the approval-owner check.
+# ``rule_keep_exact`` is persistent like ``rule_keep`` but stays pinned to the action's
+# fingerprint (the HMAC over the exact args), so it permits ONLY byte-identical repeats —
+# the safe way to keep a compound/heredoc command whose shape can't be reduced to a
+# trustable prefix (no shell parsing, no prefix-riding: any change breaks the match).
+_RULE_PERMIT_METHODS = frozenset({"rule_once", "rule_session", "rule_keep", "rule_keep_exact"})
 # Structural methods (rows 4-5): widen what counts as yours/trusted. They are admin-gated
 # because they change the trust boundary permanently (doc 06 §6), exactly as the
 # /destinations/* surfaces are.
@@ -410,6 +419,7 @@ _PERMIT_METHOD_KEYWORDS = {
     "rule_once": "once",
     "rule_session": "session",
     "rule_keep": "keep",
+    "rule_keep_exact": "keep-exact",
     "self_identity": "mine",
     "self_destination": "mine",
     "self_host": "mine",
@@ -496,10 +506,11 @@ def _approval_permit_options(approval: dict[str, Any]) -> list[dict[str, Any]]:
             "data_classes": list(data_classes),
         })
 
-    # Rows 1-3: an allow rule, narrowest to broadest. Always available.
+    # Rows 1-4: an allow rule, narrowest to broadest. Always available.
     add("rule_once", "Just this once", "one retry of this exact action")
     add("rule_session", "For this session", "this exact action until the session ends")
-    add("rule_keep", "Keep this exact action", "only this tool + destination, ongoing")
+    add("rule_keep_exact", "Keep this exact command", "this exact action, byte-for-byte, ongoing")
+    add("rule_keep", "Keep this action type", "any action of this tool + destination, ongoing")
 
     dest_kind = str(approval.get("dest_kind") or "") or capability._dest_kind_for_family(family)
     subtype = str(approval.get("action_subtype") or "") or capability._action_subtype_for(
@@ -578,7 +589,10 @@ def _materialize_permit(
     a user-visible change. Structural methods call the config mutators.
     """
     if method in _RULE_PERMIT_METHODS:
-        rule = _rule_from_approval(approval, persistent=(method == "rule_keep"))
+        persistent = method in {"rule_keep", "rule_keep_exact"}
+        rule = _rule_from_approval(
+            approval, persistent=persistent, keep_fingerprint=(method == "rule_keep_exact")
+        )
         if method == "rule_once":
             rule["remaining_invocations"] = 1
             rule["id"] = f"rule_{secrets.token_hex(4)}"
@@ -590,13 +604,24 @@ def _materialize_permit(
         elif method == "rule_session":
             state._SESSION_APPROVALS.setdefault(approval.get("session_id") or "", []).append(rule)
             scope_word = "session"
+        elif method == "rule_keep_exact":
+            rules = rules_mod._persistent_privacy_rules()
+            rules.append(rule)
+            if not rules_mod._save_persistent_privacy_rules(rules):
+                return False, "Failed to save persistent privacy approval; Hermes Guardian remains blocked.", "", ""
+            scope_word = "exact"
         else:  # rule_keep
             rules = rules_mod._persistent_privacy_rules()
             rules.append(rule)
             if not rules_mod._save_persistent_privacy_rules(rules):
                 return False, "Failed to save persistent privacy approval; Hermes Guardian remains blocked.", "", ""
             scope_word = "always"
-        scope_label = scope_word if scope_word != "always" else f"always for {_rule_scope_label(rule)}"
+        if scope_word == "always":
+            scope_label = f"always for {_rule_scope_label(rule)}"
+        elif scope_word == "exact":
+            scope_label = "always for this exact command"
+        else:
+            scope_label = scope_word
         classes = ", ".join(approval.get("data_classes") or ["private"])
         message = (
             f"Approved {approval.get('action_family', '')} -> {approval.get('destination', '')} "

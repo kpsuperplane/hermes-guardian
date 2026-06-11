@@ -36,7 +36,8 @@ _GUARDIAN_HELP_LINES = [
     "  activity [limit]        recent decided actions",
     "  approvals               list pending approvals",
     "  approve <id>            show the ways to permit a pending item",
-    "  approve <id> once|session|keep       allow this exact action (1x / session / ongoing)",
+    "  approve <id> once|session|keep       allow this exact action (1x / session / ongoing, by type)",
+    "  approve <id> keep-exact              allow only this byte-identical action, ongoing",
     "  approve <id> mine|trust              it's yours / you trust it (admin; if the action supports it)",
     "  deny <id>               deny a pending item (alias: dismiss)",
     "  clear-taint             clear session taint",
@@ -1447,6 +1448,7 @@ _SCOPE_KEYWORD_TO_METHOD = {
     "once": "rule_once",
     "session": "rule_session",
     "keep": "rule_keep",
+    "keep-exact": "rule_keep_exact",
     "always": "rule_keep",
 }
 
