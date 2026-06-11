@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
+from .. import state
+from ..privacy import tool_policy
+
 
 _SHARED_CONTEXT_TTL_SECONDS = 120
 _SHARED_CONTEXT: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
 
 def _shared_context_key(session_id: str | None, tool_name: str) -> tuple[str, str]:
-    return (_normalize_session_id(session_id), str(tool_name or "").lower())
+    return (tool_policy._normalize_session_id(session_id), str(tool_name or "").lower())
 
 
 def _prune_shared_context_unlocked(now: float | None = None) -> None:

@@ -9,6 +9,18 @@ from typing import Any
 import shlex
 import secrets
 
+from . import dashboard as dashboard_mod
+from .. import core
+from .. import state
+from ..integrations import cron_notifications
+from ..privacy import approvals
+from ..privacy import destinations
+from ..privacy import llm
+from ..privacy import rules as rules_mod
+from ..privacy import tool_policy
+from ..runtime import activity_rows
+from ..runtime import activity_store
+
 _FAILURE_HISTORY_DECISIONS = ("blocked", "denied", "security_blocked")
 
 # Grouped help (doc 03 §4): the five concepts in `decide` order, with the
@@ -114,7 +126,7 @@ def _guardian_help_text() -> str:
 
 
 def _slash_admin_allowed(owner_hash: str) -> bool:
-    return owner_hash == _CLI_OWNER_HASH or owner_hash in _configured_owner_hashes()
+    return owner_hash == core._CLI_OWNER_HASH or owner_hash in approvals._configured_owner_hashes()
 
 
 def _global_mutation_denied_message() -> str:
@@ -124,7 +136,7 @@ def _global_mutation_denied_message() -> str:
 def _guardian_dashboard_command(tokens: list[str]) -> str:
     action = tokens[1].lower() if len(tokens) > 1 else "status"
     if action == "prune":
-        result = _prune_activity_db(force=True)
+        result = activity_store._prune_activity_db(force=True)
         return (
             "Hermes Guardian activity pruned: "
             f"deleted={result['deleted']} remaining={result['remaining']}"
@@ -175,7 +187,7 @@ def _guardian_history_command(
             command = tokens[0].lower() if tokens else "history"
             return f"Usage: /guardian {command} [limit]"
     limit = max(1, min(limit, 25))  # number of TURNS to show
-    rows = _activity_rows(filters or {}, limit=1000)
+    rows = activity_rows._activity_rows(filters or {}, limit=1000)
     if not rows:
         return empty_message
 
@@ -197,7 +209,7 @@ def _guardian_history_command(
     for key in turn_keys:
         turn_rows = groups[key]
         first = turn_rows[0]
-        when = _activity_time_text(first)
+        when = dashboard_mod._activity_time_text(first)
         n = len(turn_rows)
         prompt = ""
         for candidate in turn_rows:
@@ -210,21 +222,21 @@ def _guardian_history_command(
         lines.append("")
         lines.append(f"{label} · {when} · {n} check{'s' if n != 1 else ''}")
         if prompt:
-            lines.append(f"> {_clip_text(prompt, 200, ellipsis='...', fallback='')}")
+            lines.append(f"> {dashboard_mod._clip_text(prompt, 200, ellipsis='...', fallback='')}")
         for check in turn_rows[:_MAX_CHECKS_PER_TURN]:
             decision = str(check.get("decision") or "").strip()
-            icon = _activity_status_icon(decision)
+            icon = dashboard_mod._activity_status_icon(decision)
             # 🤖 suffix when the LLM verifier was involved (auto-approval, or a verdict
             # whose reason names the verifier).
             if decision == "auto_approved" or "llm" in str(check.get("reason") or "").lower():
                 icon = icon + "🤖"
-            tool = _clip_text(_activity_display_tool(check), 60, ellipsis="...", fallback="n/a")
-            taints = _activity_taints_text(check, code=True)
+            tool = dashboard_mod._clip_text(dashboard_mod._activity_display_tool(check), 60, ellipsis="...", fallback="n/a")
+            taints = dashboard_mod._activity_taints_text(check, code=True)
             lines.append(f"↳ {icon} `{tool}` · {taints}")
-            action_detail = _clip_text(check.get("action_detail") or "", 200, ellipsis="...", fallback="")
+            action_detail = dashboard_mod._clip_text(check.get("action_detail") or "", 200, ellipsis="...", fallback="")
             if action_detail:
                 lines.append(f"   Action: `{action_detail}`")
-            reason_text = _activity_reason_line_text(check)
+            reason_text = dashboard_mod._activity_reason_line_text(check)
             if reason_text:
                 lines.append(f"   {reason_text}")
         if n > _MAX_CHECKS_PER_TURN:
@@ -263,8 +275,8 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
         or ""
     ).strip().lower()
     destination = (params.get("destination") or params.get("dest") or "").strip().lower()
-    purpose = _normalize_rule_purpose(params.get("purpose", "unknown"), allow_star=False)
-    recipient_identity = _normalize_rule_recipient_identity(
+    purpose = tool_policy._normalize_rule_purpose(params.get("purpose", "unknown"), allow_star=False)
+    recipient_identity = tool_policy._normalize_rule_recipient_identity(
         params.get("recipient_identity", params.get("recipient", "none")),
         allow_star=False,
     )
@@ -273,7 +285,7 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
     classes = sorted({
         cls.strip()
         for cls in re.split(r"[,+]", raw_classes)
-        if cls.strip() in _ALL_PRIVACY_CLASSES
+        if cls.strip() in core._ALL_PRIVACY_CLASSES
     })
     # Preview how a recipient/destination resolves to a trust level (doc 03 §2.2). For a
     # messaging destination the recipient drives trust; otherwise the destination token.
@@ -287,15 +299,15 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
         verb in action_family for verb in ("message", "send")
     )
     if is_messaging:
-        trust = resolve_destination_trust("messaging", "messaging", "send", raw_recipient)
+        trust = destinations.resolve_destination_trust("messaging", "messaging", "send", raw_recipient)
     else:
         dest_token = destination.split(":", 1)[1] if destination.startswith("mcp:") else destination
         dest_kind = destination.split(":", 1)[0] if ":" in destination else (destination or "store")
-        trust = resolve_destination_trust(dest_kind, dest_token, "write", raw_recipient)
+        trust = destinations.resolve_destination_trust(dest_kind, dest_token, "write", raw_recipient)
     destination_trust = _trust_label_for_debug(trust)
     shape = {
-        "session_id": _GLOBAL_SESSION_ID,
-        "owner_hash": _CLI_OWNER_HASH,
+        "session_id": core._GLOBAL_SESSION_ID,
+        "owner_hash": core._CLI_OWNER_HASH,
         "tool_name": tool_name,
         "action_family": action_family,
         "destination": destination,
@@ -304,7 +316,7 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
         "data_classes": classes,
         "fingerprint": "debug",
     }
-    privacy_policy = _privacy_policy()
+    privacy_policy = core._privacy_policy()
     if privacy_policy == "off":
         return {
             "decision": "allowed",
@@ -319,7 +331,7 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
             "tool_name": tool_name,
             "reason": "privacy policy is off",
         }
-    source = _approval_source(shape, consume_once=False)
+    source = rules_mod._approval_source(shape, consume_once=False)
     if source:
         denied = source.get("effect") == "deny"
         return {
@@ -387,7 +399,7 @@ def _guardian_debug_command(tokens: list[str]) -> str:
 
 
 def _handle_guardian_command(raw_args: str = "") -> str:
-    owner_hash = _pop_command_owner(raw_args)
+    owner_hash = approvals._pop_command_owner(raw_args)
     try:
         tokens = shlex.split(raw_args.strip())
     except ValueError as exc:
@@ -559,7 +571,7 @@ def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
         enabled = _parse_on_off(tokens[2]) if len(tokens) >= 3 else None
         if enabled is None:
             return "Usage: /guardian protection persist-prompts on|off"
-        ok, message = _set_persist_prompts(enabled)
+        ok, message = rules_mod._set_persist_prompts(enabled)
         return message
     if sub in {"language-packs", "language-pack", "languages"}:
         return _guardian_language_packs_command(owner_hash, ["language-packs", *tokens[2:]])
@@ -577,7 +589,7 @@ def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
 
 def _guardian_protection_overview() -> str:
     """The PROTECTION parent screen: security rules + tool overrides + packs."""
-    persist = "on" if _persist_prompts_enabled() else "off"
+    persist = "on" if rules_mod._persist_prompts_enabled() else "off"
     return "\n\n".join(
         [
             _guardian_security_command("", ["security"]),
@@ -603,7 +615,7 @@ def _guardian_check_command(tokens: list[str]) -> str:
     if len(tokens) < 2:
         return "Usage: /guardian check <destination|recipient>"
     value = " ".join(tokens[1:]).strip()
-    result = _dashboard_resolve_destination(value)
+    result = dashboard_mod._dashboard_resolve_destination(value)
     trust = result.get("trust") or "unknown"
     reasons = {
         "self": "in your self-allowlist -> self",
@@ -629,7 +641,7 @@ def _guardian_sharing_preview_command(args: list[str]) -> str:
     action_family = args[0].strip()
     destination = args[1].strip()
     classes = [cls.strip() for cls in re.split(r"[,+]", " ".join(args[2:])) if cls.strip()]
-    result = _dashboard_preview_send(action_family, destination, classes)
+    result = dashboard_mod._dashboard_preview_send(action_family, destination, classes)
     return (
         "Guardian send preview\n"
         f"Action: {result.get('action_family') or '(missing)'}\n"
@@ -649,8 +661,8 @@ def _guardian_approvals_command(owner_hash: str) -> str:
     """
     pending = [
         approval
-        for approval in _dashboard_pending_approvals()
-        if approval.get("owner_hash") == owner_hash or owner_hash == _CLI_OWNER_HASH
+        for approval in dashboard_mod._dashboard_pending_approvals()
+        if approval.get("owner_hash") == owner_hash or owner_hash == core._CLI_OWNER_HASH
     ]
     if not pending:
         return "No pending Guardian approvals."
@@ -677,21 +689,21 @@ def _parse_on_off(token: str) -> bool | None:
 def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
     if len(tokens) == 1:
         return (
-            f"Privacy mode: {_privacy_policy()}\n"
-            f"Unknown-tools mode: {_unknown_tools_mode()}\n"
-            f"LLM user-prompt context: {'on' if _llm_user_context_enabled() else 'off'}\n"
-            f"LLM cron context: {'on' if _llm_cron_context_enabled() else 'off'}\n"
-            f"LLM verifier model: {_llm_verifier_model() or 'default'}"
+            f"Privacy mode: {core._privacy_policy()}\n"
+            f"Unknown-tools mode: {rules_mod._unknown_tools_mode()}\n"
+            f"LLM user-prompt context: {'on' if rules_mod._llm_user_context_enabled() else 'off'}\n"
+            f"LLM cron context: {'on' if rules_mod._llm_cron_context_enabled() else 'off'}\n"
+            f"LLM verifier model: {rules_mod._llm_verifier_model() or 'default'}"
         )
     if len(tokens) == 3 and tokens[1].lower() == "mode":
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
-        ok, message = _set_privacy_mode(tokens[2])
+        ok, message = rules_mod._set_privacy_mode(tokens[2])
         return message
     if len(tokens) == 3 and tokens[1].lower() in {"unknown-tools", "unknown_tools"}:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
-        ok, message = _set_unknown_tools_mode(tokens[2])
+        ok, message = rules_mod._set_unknown_tools_mode(tokens[2])
         return message
     if len(tokens) == 3 and tokens[1].lower() in {"user-context", "user_context"}:
         if not _slash_admin_allowed(owner_hash):
@@ -699,7 +711,7 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
         enabled = _parse_on_off(tokens[2])
         if enabled is None:
             return "Usage: /guardian review owner-context on|off"
-        ok, message = _set_llm_user_context(enabled)
+        ok, message = rules_mod._set_llm_user_context(enabled)
         return message
     if len(tokens) == 3 and tokens[1].lower() in {"cron-context", "cron_context"}:
         if not _slash_admin_allowed(owner_hash):
@@ -707,12 +719,12 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
         enabled = _parse_on_off(tokens[2])
         if enabled is None:
             return "Usage: /guardian review cron-context on|off"
-        ok, message = _set_llm_cron_context(enabled)
+        ok, message = rules_mod._set_llm_cron_context(enabled)
         return message
     if len(tokens) >= 3 and tokens[1].lower() in {"verifier-model", "verifier_model"}:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
-        ok, message = _set_llm_verifier_model(" ".join(tokens[2:]))
+        ok, message = rules_mod._set_llm_verifier_model(" ".join(tokens[2:]))
         return message
     return (
         "Usage: /guardian review mode strict|read-only|llm|off | "
@@ -724,10 +736,10 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
 
 
 def _guardian_tools_command() -> str:
-    overrides = _tool_overrides_snapshot()
+    overrides = rules_mod._tool_overrides_snapshot()
     lines = [
         "Hermes Guardian tool overrides",
-        f"Unknown-tools mode: {_unknown_tools_mode()}",
+        f"Unknown-tools mode: {rules_mod._unknown_tools_mode()}",
     ]
     if not overrides:
         lines.append("No tool overrides configured.")
@@ -782,17 +794,17 @@ def _guardian_tool_command(owner_hash: str, tokens: list[str]) -> str:
             kwargs["note"] = params["note"]
         if not kwargs:
             return "Provide at least one of: taints=, egress=, direction=, destination=, note=.\n" + usage
-        ok, message = _set_tool_override(match, **kwargs)
+        ok, message = rules_mod._set_tool_override(match, **kwargs)
         return message
     if sub in {"delete", "remove"} and len(tokens) == 3:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
-        ok, message = _delete_tool_override(tokens[2])
+        ok, message = rules_mod._delete_tool_override(tokens[2])
         return message
     if sub in {"enable", "disable"} and len(tokens) == 3:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
-        ok, message = _set_tool_override_enabled(tokens[2], sub == "enable")
+        ok, message = rules_mod._set_tool_override_enabled(tokens[2], sub == "enable")
         return message
     return usage
 
@@ -805,8 +817,8 @@ def _guardian_self_command(owner_hash: str, tokens: list[str]) -> str:
         "/guardian mine remove destination|identity|host <value>"
     )
     if not sub:
-        snapshot = _self_config_snapshot()
-        trusted = _trusted_recipients_snapshot()
+        snapshot = rules_mod._self_config_snapshot()
+        trusted = rules_mod._trusted_recipients_snapshot()
         lines = ["Hermes Guardian self-destinations (intra-boundary, never gated)"]
         lines.append(f"Destinations ({len(snapshot['destinations'])}): " + (", ".join(snapshot["destinations"]) or "none"))
         lines.append(f"Identities ({len(snapshot['identities'])}): " + (", ".join(snapshot["identities"]) or "none (send-to-self not proven)"))
@@ -822,12 +834,12 @@ def _guardian_self_command(owner_hash: str, tokens: list[str]) -> str:
     if sub == "add" and len(tokens) >= 4:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
-        _ok, message = _add_self_destination(tokens[2], " ".join(tokens[3:]))
+        _ok, message = rules_mod._add_self_destination(tokens[2], " ".join(tokens[3:]))
         return message
     if sub in {"remove", "delete"} and len(tokens) >= 4:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
-        _ok, message = _remove_self_destination(tokens[2], " ".join(tokens[3:]))
+        _ok, message = rules_mod._remove_self_destination(tokens[2], " ".join(tokens[3:]))
         return message
     return usage
 
@@ -842,7 +854,7 @@ def _guardian_trusted_command(owner_hash: str, tokens: list[str]) -> str:
         "/guardian sharing destination remove command <n>"
     )
     if not sub:
-        trusted = _trusted_recipients_snapshot()
+        trusted = rules_mod._trusted_recipients_snapshot()
         if not trusted:
             return "No trusted destinations configured.\n" + usage
         lines = ["🛡️ **Guardian trusted destinations**"]
@@ -857,7 +869,7 @@ def _guardian_trusted_command(owner_hash: str, tokens: list[str]) -> str:
         lines.append(usage)
         return "\n".join(lines)
     if sub == "suggest":
-        suggestions = _trusted_destination_suggestions()
+        suggestions = rules_mod._trusted_destination_suggestions()
         if not suggestions:
             return "No command suggestions available yet (none gated recently; no skill scripts found)."
         lines = ["🛡️ **Trusted-destination suggestions** · `/guardian sharing destination trust <n>`"]
@@ -873,7 +885,7 @@ def _guardian_trusted_command(owner_hash: str, tokens: list[str]) -> str:
             index = int(tokens[2])
         except ValueError:
             return "Usage: /guardian sharing destination trust <n> [classes=<class+class>]"
-        suggestions = _trusted_destination_suggestions()
+        suggestions = rules_mod._trusted_destination_suggestions()
         if index < 0 or index >= len(suggestions):
             return f"No suggestion #{index}. Run /guardian sharing destination suggest for the list."
         params, errors = _parse_key_value_args(tokens[3:], allowed_keys={"classes", "class", "data_classes", "note"})
@@ -881,7 +893,7 @@ def _guardian_trusted_command(owner_hash: str, tokens: list[str]) -> str:
             return "Invalid arguments: " + "; ".join(errors)
         classes = params.get("classes") or params.get("class") or params.get("data_classes")
         class_list = [cls.strip() for cls in re.split(r"[,+]", classes)] if classes else None
-        _ok, message = _add_trusted_command(suggestions[index]["value"], classes=class_list, note=params.get("note", ""))
+        _ok, message = rules_mod._add_trusted_command(suggestions[index]["value"], classes=class_list, note=params.get("note", ""))
         return message
     if sub == "add" and len(tokens) >= 3:
         if not _slash_admin_allowed(owner_hash):
@@ -892,22 +904,22 @@ def _guardian_trusted_command(owner_hash: str, tokens: list[str]) -> str:
             return "Invalid trusted destination arguments: " + "; ".join(errors) + f"\n{usage}"
         classes = params.get("classes") or params.get("class") or params.get("data_classes")
         class_list = [cls.strip() for cls in re.split(r"[,+]", classes)] if classes else None
-        _ok, message = _add_trusted_recipient(identity, classes=class_list, note=params.get("note", ""))
+        _ok, message = rules_mod._add_trusted_recipient(identity, classes=class_list, note=params.get("note", ""))
         return message
     if sub in {"remove", "delete"} and len(tokens) >= 3:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
         if tokens[2].lower() == "command" and len(tokens) == 4:
-            commands = [e for e in _trusted_recipients_snapshot() if e.get("kind") == "command"]
+            commands = [e for e in rules_mod._trusted_recipients_snapshot() if e.get("kind") == "command"]
             try:
                 index = int(tokens[3])
             except ValueError:
                 return "Usage: /guardian sharing destination remove command <n>"
             if index < 0 or index >= len(commands):
                 return f"No trusted command #{index}."
-            _ok, message = _remove_trusted_command(commands[index]["value"])
+            _ok, message = rules_mod._remove_trusted_command(commands[index]["value"])
             return message
-        _ok, message = _remove_trusted_recipient(tokens[2])
+        _ok, message = rules_mod._remove_trusted_recipient(tokens[2])
         return message
     return usage
 
@@ -916,7 +928,7 @@ def _guardian_sharing_command(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     usage = "Usage: /guardian sharing outward add <subtype> | /guardian sharing outward remove <subtype>"
     if not sub:
-        snapshot = _outward_sharing_snapshot()
+        snapshot = rules_mod._outward_sharing_snapshot()
         lines = ["Hermes Guardian outward-sharing subtypes (always external, even on a self store)"]
         for subtype in snapshot["builtin"]:
             lines.append(f"- {subtype} (builtin, non-removable)")
@@ -927,12 +939,12 @@ def _guardian_sharing_command(owner_hash: str, tokens: list[str]) -> str:
     if sub == "add" and len(tokens) == 3:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
-        _ok, message = _add_outward_sharing_subtype(tokens[2])
+        _ok, message = rules_mod._add_outward_sharing_subtype(tokens[2])
         return message
     if sub in {"remove", "delete"} and len(tokens) == 3:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
-        _ok, message = _remove_outward_sharing_subtype(tokens[2])
+        _ok, message = rules_mod._remove_outward_sharing_subtype(tokens[2])
         return message
     return usage
 
@@ -951,9 +963,9 @@ def _activity_row_for_why(identifier: str) -> dict[str, Any] | None:
     """
     raw = str(identifier or "").strip()
     activity_match = re.fullmatch(r"(?:activity-)?(\d+)", raw)
-    _ensure_activity_db()
+    activity_store._ensure_activity_db()
     try:
-        with _activity_connect() as conn:
+        with activity_store._activity_connect() as conn:
             if re.fullmatch(r"[0-9]{4}", raw):
                 # 4 digits could be an approval id OR a small row id; prefer approval id.
                 row = conn.execute(
@@ -961,14 +973,14 @@ def _activity_row_for_why(identifier: str) -> dict[str, Any] | None:
                     (raw,),
                 ).fetchone()
                 if row is not None:
-                    return _activity_row_from_sql(row)
+                    return activity_rows._activity_row_from_sql(row)
             if activity_match:
                 row = conn.execute(
                     "SELECT * FROM activity WHERE id = ? LIMIT 1",
                     (int(activity_match.group(1)),),
                 ).fetchone()
                 if row is not None:
-                    return _activity_row_from_sql(row)
+                    return activity_rows._activity_row_from_sql(row)
     except Exception:
         return None
     return None
@@ -989,7 +1001,7 @@ def _guardian_why(identifier: str) -> str:
     destination = str(row.get("destination") or "")
     trust = str(row.get("destination_trust") or "unknown")
     step = str(row.get("decision_step") or "")
-    classes = _activity_data_classes_list(row.get("data_classes"))
+    classes = activity_rows._activity_data_classes_list(row.get("data_classes"))
     direction = "read" if decision in {"read", "tainted"} else "write"
     lines = [
         f"Guardian decision for {identifier}",
@@ -1012,7 +1024,7 @@ def _guardian_why(identifier: str) -> str:
 def _guardian_security_command(owner_hash: str, tokens: list[str]) -> str:
     if len(tokens) == 1:
         lines = ["Hermes Guardian security rules"]
-        for rule in _security_rules_snapshot():
+        for rule in rules_mod._security_rules_snapshot():
             state = "enabled" if rule.get("enabled") else "disabled"
             lines.append(
                 f"- {rule['id']}: {state} - {rule.get('label', '')}"
@@ -1023,7 +1035,7 @@ def _guardian_security_command(owner_hash: str, tokens: list[str]) -> str:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
         enabled = tokens[1].lower() == "enable"
-        ok, message = _set_security_rule(tokens[2], enabled)
+        ok, message = rules_mod._set_security_rule(tokens[2], enabled)
         return message
     return "Usage: /guardian protection security | /guardian protection security enable|disable <rule_id>"
 
@@ -1031,7 +1043,7 @@ def _guardian_security_command(owner_hash: str, tokens: list[str]) -> str:
 def _guardian_language_packs_command(owner_hash: str, tokens: list[str]) -> str:
     if len(tokens) == 1:
         lines = ["Hermes Guardian language packs"]
-        for pack in _language_packs_snapshot():
+        for pack in rules_mod._language_packs_snapshot():
             state = "enabled" if pack.get("enabled") else "disabled"
             required = " required" if pack.get("required") else ""
             lines.append(
@@ -1043,7 +1055,7 @@ def _guardian_language_packs_command(owner_hash: str, tokens: list[str]) -> str:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
         enabled = tokens[1].lower() == "enable"
-        ok, message = _set_language_pack(tokens[2], enabled)
+        ok, message = rules_mod._set_language_pack(tokens[2], enabled)
         return message
     return (
         "Usage: /guardian protection language-packs | "
@@ -1076,8 +1088,8 @@ def _new_privacy_rule_from_params(
 
     action_family = raw_action
     destination = raw_destination
-    purpose = _normalize_rule_purpose(params.get("purpose", "*"))
-    recipient_identity = _normalize_rule_recipient_identity(
+    purpose = tool_policy._normalize_rule_purpose(params.get("purpose", "*"))
+    recipient_identity = tool_policy._normalize_rule_recipient_identity(
         params.get("recipient_identity", params.get("recipient", "*"))
     )
     tool_name = params.get("tool") or params.get("tool_name") or "*"
@@ -1085,7 +1097,7 @@ def _new_privacy_rule_from_params(
         classes = ["*"]
     else:
         requested_classes = [cls.strip() for cls in re.split(r"[,+]", raw_classes) if cls.strip()]
-        invalid_classes = [cls for cls in requested_classes if cls not in _ALL_PRIVACY_CLASSES]
+        invalid_classes = [cls for cls in requested_classes if cls not in core._ALL_PRIVACY_CLASSES]
         if invalid_classes:
             return _rule_add_error("Unknown data class(es): " + ", ".join(invalid_classes) + ".")
         if not requested_classes:
@@ -1099,12 +1111,12 @@ def _new_privacy_rule_from_params(
     requested_owner = params.get("owner") or params.get("owner_hash")
     cron_job_id = params.get("cron") or params.get("cron_job_id") or ""
     if requested_owner is None:
-        rule_owner = "*" if owner_hash == _CLI_OWNER_HASH or (cron_job_id and _slash_admin_allowed(owner_hash)) else owner_hash
+        rule_owner = "*" if owner_hash == core._CLI_OWNER_HASH or (cron_job_id and _slash_admin_allowed(owner_hash)) else owner_hash
     else:
         rule_owner = requested_owner
         if rule_owner == "*" and not _slash_admin_allowed(owner_hash):
             return None, _global_mutation_denied_message()
-        if rule_owner != "*" and owner_hash != _CLI_OWNER_HASH and rule_owner != owner_hash:
+        if rule_owner != "*" and owner_hash != core._CLI_OWNER_HASH and rule_owner != owner_hash:
             return None, "Permission denied: you can only create privacy rules for your own owner scope."
     if cron_job_id and not _slash_admin_allowed(owner_hash):
         return None, _global_mutation_denied_message()
@@ -1130,7 +1142,7 @@ def _new_privacy_rule_from_params(
         "remaining_invocations": remaining,
         "created_at": int(state._now()),
     }
-    return _normalize_privacy_rule(rule), ""
+    return rules_mod._normalize_privacy_rule(rule), ""
 
 
 def _guardian_rule_command(owner_hash: str, tokens: list[str]) -> str:
@@ -1141,9 +1153,9 @@ def _guardian_rule_command(owner_hash: str, tokens: list[str]) -> str:
         rule, error = _new_privacy_rule_from_params(owner_hash, tokens[2].lower(), params)
         if not rule:
             return error
-        rules = _persistent_privacy_rules()
+        rules = rules_mod._persistent_privacy_rules()
         rules.append(rule)
-        if not _save_persistent_privacy_rules(rules):
+        if not rules_mod._save_persistent_privacy_rules(rules):
             return "Failed to save privacy rule."
         match = rule.get("match") or {}
         return (
@@ -1157,25 +1169,25 @@ def _guardian_rule_command(owner_hash: str, tokens: list[str]) -> str:
         return _guardian_delete_rule(owner_hash, tokens[2])
     if len(tokens) == 3 and tokens[1].lower() in {"enable", "disable"}:
         desired = tokens[1].lower() == "enable"
-        rules = _persistent_privacy_rules()
+        rules = rules_mod._persistent_privacy_rules()
         for rule in rules:
-            if rule.get("id") == tokens[2] and _rule_delete_owner_allowed(owner_hash, rule):
+            if rule.get("id") == tokens[2] and approvals._rule_delete_owner_allowed(owner_hash, rule):
                 rule["enabled"] = desired
-                if not _save_persistent_privacy_rules(rules):
+                if not rules_mod._save_persistent_privacy_rules(rules):
                     return "Failed to save privacy rule."
                 return f"{'Enabled' if desired else 'Disabled'} privacy rule {tokens[2]}."
         return f"No matching privacy rule found for {tokens[2]}."
     if len(tokens) == 5 and tokens[1].lower() == "move" and tokens[3].lower() in {"before", "after"}:
-        rules = _persistent_privacy_rules()
-        moving = next((rule for rule in rules if rule.get("id") == tokens[2] and _rule_delete_owner_allowed(owner_hash, rule)), None)
-        target = next((rule for rule in rules if rule.get("id") == tokens[4] and _rule_delete_owner_allowed(owner_hash, rule)), None)
+        rules = rules_mod._persistent_privacy_rules()
+        moving = next((rule for rule in rules if rule.get("id") == tokens[2] and approvals._rule_delete_owner_allowed(owner_hash, rule)), None)
+        target = next((rule for rule in rules if rule.get("id") == tokens[4] and approvals._rule_delete_owner_allowed(owner_hash, rule)), None)
         if moving is None or target is None:
             return "No matching privacy rule found for move."
         rules = [rule for rule in rules if rule.get("id") != tokens[2]]
         target_index = next((idx for idx, rule in enumerate(rules) if rule.get("id") == tokens[4]), len(rules))
         insert_at = target_index if tokens[3].lower() == "before" else target_index + 1
         rules.insert(insert_at, moving)
-        if not _save_persistent_privacy_rules(rules):
+        if not rules_mod._save_persistent_privacy_rules(rules):
             return "Failed to save privacy rule order."
         return f"Moved privacy rule {tokens[2]} {tokens[3].lower()} {tokens[4]}."
     return (
@@ -1187,27 +1199,27 @@ def _guardian_rule_command(owner_hash: str, tokens: list[str]) -> str:
 
 def _guardian_status(owner_hash: str) -> str:
     with state._LOCK:
-        _prune_expired()
-        session_ids = _owner_session_ids(owner_hash)
+        llm._prune_expired()
+        session_ids = approvals._owner_session_ids(owner_hash)
         taint = sorted({cls for sid in session_ids for cls in state._SESSIONS.get(sid, {}).get("taint", set())})
         pending = [
             approval
             for approval in state._PENDING_APPROVALS.values()
-            if approval.get("owner_hash") == owner_hash or owner_hash == _CLI_OWNER_HASH
+            if approval.get("owner_hash") == owner_hash or owner_hash == core._CLI_OWNER_HASH
         ]
-        rules = _privacy_rules_for_owner(owner_hash)
+        rules = rules_mod._privacy_rules_for_owner(owner_hash)
         disabled_security = [
             rule
-            for rule in _security_rules_snapshot()
+            for rule in rules_mod._security_rules_snapshot()
             if not bool(rule.get("enabled"))
         ]
         enabled_language_packs = [
             pack
-            for pack in _language_packs_snapshot()
+            for pack in rules_mod._language_packs_snapshot()
             if bool(pack.get("enabled"))
         ]
-    risk_banners = _runtime_risk_banners()
-    trust_summary = _destination_trust_summary()
+    risk_banners = activity_rows._runtime_risk_banners()
+    trust_summary = activity_rows._destination_trust_summary()
     self_block = trust_summary.get("self") or {}
     tally = trust_summary.get("tally") or {}
     tally_text = (
@@ -1217,11 +1229,11 @@ def _guardian_status(owner_hash: str) -> str:
     )
     lines = [
         "Hermes Guardian status",
-        f"Privacy mode (preset): {_privacy_policy()}",
-        f"Unknown tools: {_unknown_tools_mode()} ({len(_tool_overrides())} override(s))",
-        f"LLM context: user-prompt {'on' if _llm_user_context_enabled() else 'off'}, "
-        f"cron {'on' if _llm_cron_context_enabled() else 'off'}",
-        f"Security rules: {len(_SECURITY_RULE_IDS) - len(disabled_security)} enabled, {len(disabled_security)} disabled",
+        f"Privacy mode (preset): {core._privacy_policy()}",
+        f"Unknown tools: {rules_mod._unknown_tools_mode()} ({len(rules_mod._tool_overrides())} override(s))",
+        f"LLM context: user-prompt {'on' if rules_mod._llm_user_context_enabled() else 'off'}, "
+        f"cron {'on' if rules_mod._llm_cron_context_enabled() else 'off'}",
+        f"Security rules: {len(rules_mod._SECURITY_RULE_IDS) - len(disabled_security)} enabled, {len(disabled_security)} disabled",
         f"Language packs: {', '.join(pack.get('id', '') for pack in enabled_language_packs) or 'none'}",
         f"Taint classes: {', '.join(taint) if taint else 'none'}",
         f"Pending approvals: {len(pending)}",
@@ -1251,10 +1263,10 @@ def _guardian_status(owner_hash: str) -> str:
 
 
 def _guardian_rules(owner_hash: str) -> str:
-    rules = _privacy_rules_for_owner(owner_hash)
+    rules = rules_mod._privacy_rules_for_owner(owner_hash)
     if not rules:
         return "No persistent Guardian privacy rules."
-    lines = [f"🛡️ **Guardian privacy rules** · mode `{_privacy_policy()}` · {len(rules)} shown"]
+    lines = [f"🛡️ **Guardian privacy rules** · mode `{core._privacy_policy()}` · {len(rules)} shown"]
     for rule in rules:
         match = rule.get("match") if isinstance(rule.get("match"), dict) else {}
         effect = str(rule.get("effect") or "allow").strip().lower()
@@ -1289,7 +1301,7 @@ def _rule_match_text(value: Any, fallback: str) -> str:
     text = str(value or "").strip()
     if not text or text == "*":
         return fallback
-    return _clip_text(text, 96, ellipsis="...", fallback=fallback)
+    return dashboard_mod._clip_text(text, 96, ellipsis="...", fallback=fallback)
 
 
 def _rule_scope_text(rule: dict[str, Any]) -> str:
@@ -1298,14 +1310,14 @@ def _rule_scope_text(rule: dict[str, Any]) -> str:
     if cron_job_id:
         cron_job_name = str(scope.get("cron_job_name") or rule.get("cron_job_name") or "").strip()
         try:
-            cron_job_name = cron_job_name or _cron_job_name(cron_job_id)
+            cron_job_name = cron_job_name or cron_notifications._cron_job_name(cron_job_id)
         except Exception:
             pass
         return f"[Cron] {cron_job_name or cron_job_id}"
     if str(scope.get("session_id") or rule.get("session_id") or "").strip():
         return "Session scoped"
     owner_hash = str(scope.get("owner_hash") or rule.get("owner_hash") or "*").strip()
-    label = _rule_scope_label(rule).lower()
+    label = approvals._rule_scope_label(rule).lower()
     if owner_hash == "*" or label in {"all owners", "global"}:
         return "Runs everywhere"
     if label == "session":
@@ -1334,7 +1346,7 @@ def _rule_classes_line(classes: list[Any]) -> str:
 
 def _guardian_clear_taint(owner_hash: str) -> str:
     with state._LOCK:
-        session_ids = _owner_session_ids(owner_hash)
+        session_ids = approvals._owner_session_ids(owner_hash)
         for sid in session_ids:
             session = state._SESSIONS.get(sid)
             if session:
@@ -1346,29 +1358,29 @@ def _guardian_clear_taint(owner_hash: str) -> str:
 
 
 def _guardian_revoke(owner_hash: str, rule_id: str) -> str:
-    ok, message, _removed = _delete_persistent_rule(owner_hash, rule_id)
+    ok, message, _removed = approvals._delete_persistent_rule(owner_hash, rule_id)
     if ok:
         return f"Revoked privacy rule {rule_id}."
     return message
 
 
 def _guardian_delete_rule(owner_hash: str, rule_id: str) -> str:
-    ok, message, _removed = _delete_persistent_rule(owner_hash, rule_id)
+    ok, message, _removed = approvals._delete_persistent_rule(owner_hash, rule_id)
     return message
 
 
 def _guardian_dismiss(owner_hash: str, approval_id: str) -> str:
     requested_id = approval_id
     with state._LOCK:
-        approval_id = _resolve_pending_approval_id(approval_id) or ""
+        approval_id = approvals._resolve_pending_approval_id(approval_id) or ""
         approval = state._PENDING_APPROVALS.get(approval_id)
         if not approval:
             return f"No pending approval found for {requested_id}."
-        if not _approval_owner_allowed(owner_hash, approval):
+        if not approvals._approval_owner_allowed(owner_hash, approval):
             return "Approval denied: this request belongs to a different user/session."
         state._PENDING_APPROVALS.pop(approval_id, None)
-        _delete_pending_approvals_from_store_unlocked([approval_id])
-    _emit_activity(
+        approvals._delete_pending_approvals_from_store_unlocked([approval_id])
+    activity_store._emit_activity(
         "denied",
         session_id=approval.get("session_id", ""),
         owner_hash=approval.get("owner_hash", ""),
@@ -1394,37 +1406,37 @@ def _guardian_approve(owner_hash: str, approval_id: str, scope: str) -> str:
         return "Approval scope must be one of: once, session, always."
     requested_id = approval_id
     with state._LOCK:
-        _prune_expired()
-        approval_id = _resolve_pending_approval_id(approval_id) or ""
+        llm._prune_expired()
+        approval_id = approvals._resolve_pending_approval_id(approval_id) or ""
         approval = state._PENDING_APPROVALS.get(approval_id)
         if not approval:
             return f"No pending approval found for {requested_id}."
-        if not _approval_owner_allowed(owner_hash, approval):
+        if not approvals._approval_owner_allowed(owner_hash, approval):
             return "Approval denied: this request belongs to a different user/session."
         state._PENDING_APPROVALS.pop(approval_id, None)
-        _delete_pending_approvals_from_store_unlocked([approval_id])
-        rule = _rule_from_approval(approval, persistent=(scope == "always"))
+        approvals._delete_pending_approvals_from_store_unlocked([approval_id])
+        rule = approvals._rule_from_approval(approval, persistent=(scope == "always"))
         sid = approval["session_id"]
         if scope == "once":
             rule["remaining_invocations"] = 1
             rule["id"] = f"rule_{secrets.token_hex(4)}"
-            rules = _persistent_privacy_rules()
+            rules = rules_mod._persistent_privacy_rules()
             rules.append(rule)
-            if not _save_persistent_privacy_rules(rules):
+            if not rules_mod._save_persistent_privacy_rules(rules):
                 state._PENDING_APPROVALS[approval_id] = approval
-                _save_pending_approval_to_store_unlocked(approval)
+                approvals._save_pending_approval_to_store_unlocked(approval)
                 return "Failed to save one-time privacy approval; Hermes Guardian remains blocked."
         elif scope == "session":
             state._SESSION_APPROVALS.setdefault(sid, []).append(rule)
         else:
             persistent_rule = rule
-            rules = _persistent_privacy_rules()
+            rules = rules_mod._persistent_privacy_rules()
             rules.append(persistent_rule)
-            if not _save_persistent_privacy_rules(rules):
+            if not rules_mod._save_persistent_privacy_rules(rules):
                 state._PENDING_APPROVALS[approval_id] = approval
-                _save_pending_approval_to_store_unlocked(approval)
+                approvals._save_pending_approval_to_store_unlocked(approval)
                 return "Failed to save persistent privacy approval; Hermes Guardian remains blocked."
-    _emit_activity(
+    activity_store._emit_activity(
         "manual_approved",
         session_id=approval.get("session_id", ""),
         owner_hash=approval.get("owner_hash", ""),
@@ -1442,7 +1454,7 @@ def _guardian_approve(owner_hash: str, approval_id: str, scope: str) -> str:
     )
     scope_label = scope
     if scope == "always":
-        scope_label = f"always for {_rule_scope_label(rule)}"
+        scope_label = f"always for {approvals._rule_scope_label(rule)}"
     return (
         f"Approved {approval['action_family']} -> {approval['destination']} "
         f"for {', '.join(approval.get('data_classes') or ['private'])} ({scope_label})."

@@ -9,6 +9,13 @@ import secrets
 from pathlib import Path
 from typing import Any
 
+from . import llm
+from . import tool_policy
+from .. import core
+from .. import state
+from ..integrations import cron_notifications
+from ..runtime import activity_store
+
 
 _PRIVACY_RULE_FILE_VERSION = 4
 _DEFAULT_PRIVACY_MODE = "llm"
@@ -271,7 +278,7 @@ def _normalize_rule_classes(raw: Any, *, allow_star: bool = True) -> list[str]:
         if allow_star and text == "*":
             return ["*"]
         text = _CLASS_ALIASES.get(text, text)
-        if text in _ALL_PRIVACY_CLASSES and text not in classes:
+        if text in core._ALL_PRIVACY_CLASSES and text not in classes:
             classes.append(text)
     return sorted(classes)
 
@@ -320,7 +327,7 @@ def _normalize_tool_override(entry: Any) -> dict[str, Any] | None:
     direction_raw = str(entry.get("direction") or "").strip().lower()
     direction = direction_raw if direction_raw in _TOOL_OVERRIDE_DIRECTIONS else ""
     destination = (
-        _safe_policy_token(entry.get("destination"), default="", limit=80)
+        tool_policy._safe_policy_token(entry.get("destination"), default="", limit=80)
         if entry.get("destination")
         else ""
     )
@@ -470,7 +477,7 @@ def _normalize_trusted_recipient_entry(entry: Any) -> dict[str, Any] | None:
     classes = _normalize_rule_classes(entry.get("classes", entry.get("class", ["*"]))) or ["*"]
     note = re.sub(r"\s+", " ", str(entry.get("note") or "")).strip()[:200]
     if kind == "command":
-        value = _normalize_trusted_command(entry.get("value") or entry.get("command"))
+        value = tool_policy._normalize_trusted_command(entry.get("value") or entry.get("command"))
         if not value:
             return None
         return {"kind": "command", "value": value, "classes": classes, "note": note}
@@ -536,9 +543,9 @@ def _normalize_outward_sharing(raw: Any) -> dict[str, Any]:
 
 def _available_language_pack_map() -> dict[str, dict[str, Any]]:
     try:
-        packs = _language._available_language_packs()
+        packs = core._language._available_language_packs()
     except Exception as exc:
-        logger.warning("%s: failed to inspect language packs: %s", _PLUGIN_NAME, exc)
+        core.logger.warning("%s: failed to inspect language packs: %s", core._PLUGIN_NAME, exc)
         packs = [{"id": "en", "name": "English", "default_enabled": True, "required": True}]
     return {str(pack.get("id") or ""): pack for pack in packs if pack.get("id")}
 
@@ -546,11 +553,11 @@ def _available_language_pack_map() -> dict[str, dict[str, Any]]:
 def _normalize_language_pack_ids(raw: Any = None) -> list[str]:
     available = _available_language_pack_map()
     if raw is None:
-        normalized = list(_language._enabled_pack_ids())
+        normalized = list(core._language._enabled_pack_ids())
     elif isinstance(raw, list):
-        normalized = list(_language._enabled_pack_ids(",".join(str(item) for item in raw)))
+        normalized = list(core._language._enabled_pack_ids(",".join(str(item) for item in raw)))
     else:
-        normalized = list(_language._enabled_pack_ids(str(raw or "")))
+        normalized = list(core._language._enabled_pack_ids(str(raw or "")))
     selected: set[str] = {pack_id for pack_id in normalized if pack_id in available}
     if "en" in available:
         selected.add("en")
@@ -588,10 +595,10 @@ def _apply_language_pack_config(data: dict[str, Any]) -> None:
     if ids == _LANGUAGE_PACK_APPLIED_IDS:
         return
     try:
-        _security._set_enabled_language_packs(",".join(ids))
+        core._security._set_enabled_language_packs(",".join(ids))
         _LANGUAGE_PACK_APPLIED_IDS = ids
     except Exception as exc:
-        logger.warning("%s: failed to apply language packs %s: %s", _PLUGIN_NAME, ",".join(ids), exc)
+        core.logger.warning("%s: failed to apply language packs %s: %s", core._PLUGIN_NAME, ",".join(ids), exc)
 
 
 def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
@@ -619,15 +626,15 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
             "tool_name": str(match.get("tool_name") or "*").strip() or "*",
             "action_family": str(match.get("action_family") or "*").strip().lower() or "*",
             "destination": str(match.get("destination") or "*").strip().lower() or "*",
-            "purpose": _normalize_rule_purpose(match.get("purpose", "*")),
-            "recipient_identity": _normalize_rule_recipient_identity(
+            "purpose": tool_policy._normalize_rule_purpose(match.get("purpose", "*")),
+            "recipient_identity": tool_policy._normalize_rule_recipient_identity(
                 match.get("recipient_identity", match.get("recipient", "*"))
             ),
             "data_classes": _normalize_rule_classes(match.get("data_classes", ["*"])) or ["*"],
         },
         "scope": {
             "owner_hash": str(scope.get("owner_hash") or rule.get("owner_hash") or "*").strip() or "*",
-            "session_id": _normalize_session_id(scope.get("session_id") or rule.get("session_id") or "")
+            "session_id": tool_policy._normalize_session_id(scope.get("session_id") or rule.get("session_id") or "")
             if (scope.get("session_id") or rule.get("session_id")) else "",
             "cron_job_id": str(scope.get("cron_job_id") or rule.get("cron_job_id") or "").strip(),
             "cron_job_name": str(scope.get("cron_job_name") or rule.get("cron_job_name") or "").strip(),
@@ -894,7 +901,7 @@ def _load_privacy_config() -> dict[str, Any]:
                 state._PERSISTENT_RULES_MTIME = current_mtime
             state._PERSISTENT_RULES_ERROR = False
         except Exception as exc:
-            logger.warning("%s: failed to load privacy rules: %s", _PLUGIN_NAME, exc)
+            core.logger.warning("%s: failed to load privacy rules: %s", core._PLUGIN_NAME, exc)
             state._PERSISTENT_RULES_CACHE = _strict_privacy_config()
             state._PERSISTENT_RULES_MTIME = None
             state._PERSISTENT_RULES_ERROR = True
@@ -1046,7 +1053,7 @@ def _save_privacy_config(data: dict[str, Any]) -> bool:
             state._PERSISTENT_RULES_ERROR = False
             return True
         except Exception as exc:
-            logger.warning("%s: failed to save privacy rules: %s", _PLUGIN_NAME, exc)
+            core.logger.warning("%s: failed to save privacy rules: %s", core._PLUGIN_NAME, exc)
             state._PERSISTENT_RULES_ERROR = True
             return False
 
@@ -1290,7 +1297,7 @@ def _discover_verifier_model_options() -> list[str]:
     home = _hermes_home_dir()
     config = _read_host_yaml_best_effort(home / "config.yaml")
     plugin_llm = (
-        (((config.get("plugins") or {}).get("entries") or {}).get(_PLUGIN_NAME) or {}).get("llm")
+        (((config.get("plugins") or {}).get("entries") or {}).get(core._PLUGIN_NAME) or {}).get("llm")
         if isinstance(config, dict)
         else None
     )
@@ -1384,7 +1391,7 @@ def _set_tool_override(
         invalid = [
             str(cls).strip()
             for cls in requested
-            if str(cls).strip() and str(cls).strip() not in _ALL_PRIVACY_CLASSES
+            if str(cls).strip() and str(cls).strip() not in core._ALL_PRIVACY_CLASSES
         ]
         if invalid:
             return False, "Unknown data class(es): " + ", ".join(sorted(set(invalid))) + "."
@@ -1632,7 +1639,7 @@ def _trusted_destination_suggestions(limit: int = 60) -> list[dict[str, Any]]:
     trusted = {e["value"] for e in _trusted_recipients_snapshot() if e["kind"] == "command"}
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for row in _recent_command_suggestions(limit=20):
+    for row in activity_store._recent_command_suggestions(limit=20):
         value = str(row.get("prefix") or "")
         if not value or value in trusted or value in seen:
             continue
@@ -1641,10 +1648,10 @@ def _trusted_destination_suggestions(limit: int = 60) -> list[dict[str, Any]]:
             "value": value,
             "label": value,
             "kind": "command",
-            "wildcard": _trusted_command_is_wildcard(value),
+            "wildcard": tool_policy._trusted_command_is_wildcard(value),
             "source": "recent",
         })
-    for item in _skills_command_suggestions(limit=200):
+    for item in tool_policy._skills_command_suggestions(limit=200):
         value = str(item.get("value") or "")
         if not value or value in trusted or value in seen:
             continue
@@ -1656,10 +1663,10 @@ def _trusted_destination_suggestions(limit: int = 60) -> list[dict[str, Any]]:
 
 
 def _add_trusted_command(command: str, *, classes: Any = None, note: str = "") -> tuple[bool, str]:
-    token = _normalize_trusted_command(command)
+    token = tool_policy._normalize_trusted_command(command)
     if not token:
         return False, "Trusted command must be non-empty and free of shell metacharacters (; | & > < ` $())."
-    if _trusted_command_is_wildcard(token) and not _trusted_command_wildcard_under_skills(token):
+    if tool_policy._trusted_command_is_wildcard(token) and not tool_policy._trusted_command_wildcard_under_skills(token):
         return False, "A wildcard trusted command must resolve under the Hermes skills directory."
     normalized_classes = _classes_arg_or_star(classes)
     note_text = re.sub(r"\s+", " ", str(note or "")).strip()[:200]
@@ -1671,7 +1678,7 @@ def _add_trusted_command(command: str, *, classes: Any = None, note: str = "") -
 
 
 def _remove_trusted_command(command: str) -> tuple[bool, str]:
-    token = _normalize_trusted_command(command)
+    token = tool_policy._normalize_trusted_command(command)
     entries = _trusted_destination_entries_for_save()
     remaining = [e for e in entries if not (e["kind"] == "command" and e["value"] == token)]
     if len(remaining) == len(entries):
@@ -1831,7 +1838,7 @@ def _scope_matches(scope: dict[str, Any], shape: dict[str, Any]) -> bool:
     return (
         (owner_hash == "*" or owner_hash == shape.get("owner_hash"))
         and (not session_id or session_id == shape.get("session_id"))
-        and (not cron_job_id or cron_job_id == _cron_job_id_from_session(shape.get("session_id")))
+        and (not cron_job_id or cron_job_id == cron_notifications._cron_job_id_from_session(shape.get("session_id")))
     )
 
 
@@ -1894,7 +1901,7 @@ def _rule_source_payload(rule: dict[str, Any], source: str) -> dict[str, str]:
 
 def _approval_source(shape: dict[str, Any], *, consume_once: bool = True) -> dict[str, str] | None:
     with state._LOCK:
-        _prune_expired()
+        llm._prune_expired()
         sid = shape["session_id"]
         once_rules = state._ONCE_APPROVALS.get(sid, [])
         for rule in list(once_rules):
@@ -1938,6 +1945,6 @@ def _privacy_rules_for_owner(owner_hash: str) -> list[dict[str, Any]]:
     for rule in _persistent_privacy_rules():
         scope = rule.get("scope") if isinstance(rule.get("scope"), dict) else {}
         rule_owner = str(scope.get("owner_hash") or "*")
-        if owner_hash == _CLI_OWNER_HASH or rule_owner in {"*", owner_hash}:
+        if owner_hash == core._CLI_OWNER_HASH or rule_owner in {"*", owner_hash}:
             rules.append(rule)
     return rules

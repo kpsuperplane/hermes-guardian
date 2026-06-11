@@ -5,16 +5,21 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from . import llm
+from . import tool_policy
+from .. import core
+from ..security import module as security_module
+
 
 def _redact_action_detail_text(text: str) -> str:
     text = str(text or "")
-    reason = _sensitive_reason(text)
+    reason = security_module._sensitive_reason(text)
     if reason:
         return f"<security-sensitive content redacted: {reason}>"
-    text = re.sub(r"https?://[^\s\"'<>]+", lambda m: _sanitize_url_for_llm(m.group(0)), text)
-    text = _EMAIL_ADDRESS_RE.sub("<email>", text)
-    text = _PHONE_RE.sub("<phone>", text)
-    text = _SSN_RE.sub("<ssn>", text)
+    text = re.sub(r"https?://[^\s\"'<>]+", lambda m: llm._sanitize_url_for_llm(m.group(0)), text)
+    text = core._EMAIL_ADDRESS_RE.sub("<email>", text)
+    text = core._PHONE_RE.sub("<phone>", text)
+    text = core._SSN_RE.sub("<ssn>", text)
     text = re.sub(r"\b(\d{6,8})\b", "<code>", text)
     text = re.sub(
         r"\b([A-Za-z_][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASS|AUTH)[A-Za-z0-9_]*=)([^\s;&|]+)",
@@ -29,16 +34,16 @@ def _redact_action_detail_text(text: str) -> str:
 
 def _redacted_content_note(value: Any) -> str:
     text = str(value or "")
-    classes = sorted(_classes_from_content(text))
+    classes = sorted(tool_policy._classes_from_content(text))
     suffix = f"; classes={','.join(classes)}" if classes else ""
     return f"<redacted {len(text)} chars{suffix}>"
 
 
 def _redacted_url_action_detail(prefix: str, args: Any, destination: str) -> str:
-    url = _extract_url(args)
-    host = _safe_host_from_url(url) if url else ""
+    url = tool_policy._extract_url(args)
+    host = tool_policy._safe_host_from_url(url) if url else ""
     target = host or destination or "remote"
-    if url and _url_sends_remote_text(url):
+    if url and tool_policy._url_sends_remote_text(url):
         return f"{prefix} {target}: <url path/query redacted>"
     return f"{prefix} {target}"
 
@@ -74,20 +79,20 @@ def _activity_action_detail(tool_name: str, args: Any, action_family: str = "", 
             method = args.get("method") or args.get("command") or ""
             return f"cdp {str(method)[:160]}"
         if lower_action == "computer_use":
-            action = _computer_use_action(args)
+            action = tool_policy._computer_use_action(args)
             if action in {"type", "set_value"}:
                 text = args.get("text") if action == "type" else args.get("value")
                 return f"computer {action}: {_redacted_content_note(text)}"
             return f"computer {action}"
         if lower_action == "message_send":
-            recipient_identity = _recipient_identity_from_args(args)
+            recipient_identity = tool_policy._recipient_identity_from_args(args)
             return f"send via {destination or 'messaging'} to {recipient_identity}: <message redacted>"
         if lower_action == "message_list":
             return "list message targets"
         if lower_action == "web_api":
             return _redacted_url_action_detail("request", args, destination)
         if lower_action in {"web_read", "browser_read"}:
-            url = _extract_url(args)
+            url = tool_policy._extract_url(args)
             if url:
                 return _redacted_url_action_detail("load", args, destination)
             query = str(args.get("query") or args.get("q") or "")
@@ -101,7 +106,7 @@ def _activity_action_detail(tool_name: str, args: Any, action_family: str = "", 
             prompt = args.get("prompt") or args.get("user_prompt") or args.get("text") or args.get("question") or ""
             return f"{tool_name}: {_redacted_content_note(prompt)}"
         if lower_action == "cron_write":
-            action = _arg_action(args)
+            action = tool_policy._arg_action(args)
             deliver = str(args.get("deliver") or "origin")[:120]
             return f"cron {action} deliver={deliver}: {_redacted_content_note(args.get('prompt') or '')}"
         if lower_action == "local_write":

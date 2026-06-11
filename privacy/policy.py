@@ -21,6 +21,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import capability
+from . import destinations
+from . import rules as rules_mod
+
 
 # --- Decision outcomes (doc 02 §3) -------------------------------------------
 # The codebase represents outcomes as plain strings in activity rows and hook returns
@@ -94,10 +98,10 @@ def _taint_policy_classes(taint: Any) -> frozenset[str]:
     out: set[str] = set()
     for cls in raw:
         text = str(cls)
-        if text in POLICY_CLASSES:
+        if text in capability.POLICY_CLASSES:
             out.add(text)
             continue
-        mapped = _policy_classes_for({text})
+        mapped = capability._policy_classes_for({text})
         if mapped:
             out |= mapped
         else:
@@ -124,7 +128,7 @@ def match_declassification_rule(
     Total and pure: any malformed rule store yields None (fail-closed: no allow).
     """
     try:
-        rules = _persistent_privacy_rules()
+        rules = rules_mod._persistent_privacy_rules()
     except Exception:
         return None
     if not isinstance(rules, list):
@@ -194,14 +198,14 @@ def decide(cap: Any, taint: Any = None, purpose: Any = "unknown", mode: Any = "s
     destination = getattr(cap, "destination", None)
     raw_trust = getattr(destination, "trust", None)
     trust = _normalize_trust(raw_trust)
-    if trust == DestinationTrust.UNKNOWN:
-        trust = DestinationTrust.EXTERNAL
+    if trust == destinations.DestinationTrust.UNKNOWN:
+        trust = destinations.DestinationTrust.EXTERNAL
 
     # 3. Intra-boundary destinations never gate.
     if trust in (
-        DestinationTrust.SELF,
-        DestinationTrust.LOCAL_SYSTEM,
-        DestinationTrust.MODEL_PROVIDER,
+        destinations.DestinationTrust.SELF,
+        destinations.DestinationTrust.LOCAL_SYSTEM,
+        destinations.DestinationTrust.MODEL_PROVIDER,
     ):
         return ALLOW
 
@@ -251,16 +255,16 @@ def decide_with_step(
 
     destination = getattr(cap, "destination", None)
     trust = _normalize_trust(getattr(destination, "trust", None))
-    if trust == DestinationTrust.UNKNOWN:
-        trust = DestinationTrust.EXTERNAL
+    if trust == destinations.DestinationTrust.UNKNOWN:
+        trust = destinations.DestinationTrust.EXTERNAL
         unknown_origin = True
     else:
         unknown_origin = False
 
     if trust in (
-        DestinationTrust.SELF,
-        DestinationTrust.LOCAL_SYSTEM,
-        DestinationTrust.MODEL_PROVIDER,
+        destinations.DestinationTrust.SELF,
+        destinations.DestinationTrust.LOCAL_SYSTEM,
+        destinations.DestinationTrust.MODEL_PROVIDER,
     ):
         return ALLOW, f"step3_intra_boundary_{_trust_value(trust)}"
 
@@ -290,12 +294,12 @@ def _normalize_trust(raw_trust: Any) -> Any:
     Keeps ``decide`` total: a missing/garbage trust resolves to UNKNOWN (-> external),
     never to an intra-boundary trust.
     """
-    if isinstance(raw_trust, DestinationTrust):
+    if isinstance(raw_trust, destinations.DestinationTrust):
         return raw_trust
     try:
-        return DestinationTrust(str(raw_trust).strip().lower())
+        return destinations.DestinationTrust(str(raw_trust).strip().lower())
     except Exception:
-        return DestinationTrust.UNKNOWN
+        return destinations.DestinationTrust.UNKNOWN
 
 
 # --- Facade bridging (AGENTS.md "Loader And Namespace Rules") -----------------

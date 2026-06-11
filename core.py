@@ -29,6 +29,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -41,22 +42,35 @@ _PLUGIN_ROOT = Path(__file__).parent
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-
-def _load_relative_module(name: str, relative_path: str) -> Any:
-    """Load a plugin-relative module file by absolute path."""
+# The plugin is loaded by absolute path under an inconsistent module name (the façade
+# picks `<facade>.core`, pytest uses `__init__.core`, etc.). The logic modules are
+# real submodules that use ordinary relative imports (`from .. import core`,
+# `from .runtime import activity_store`, …), which need a stable package whose
+# subpackages resolve. Anchor one canonical package rooted at the plugin directory and
+# alias THIS core module into it as `<pkg>.core`, so every relative import inside the
+# tree resolves to the same single set of module objects regardless of how the façade
+# named us. `state` and the three reusable helpers are loaded as submodules of it too.
+_PKG = "_hermes_guardian"
+if _PKG not in sys.modules:
     import importlib.util
 
-    module_name = f"{__name__}.{name}"
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-    module_path = Path(__file__).parent / relative_path
-    spec = importlib.util.spec_from_file_location(module_name, module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"failed to load {module_path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
+    _pkg_spec = importlib.util.spec_from_file_location(
+        _PKG, _PLUGIN_ROOT / "__init__.py",
+        submodule_search_locations=[str(_PLUGIN_ROOT)],
+    )
+    _pkg = importlib.util.module_from_spec(_pkg_spec)
+    _pkg.__path__ = [str(_PLUGIN_ROOT)]
+    sys.modules[_PKG] = _pkg
+# Bind this already-executing core module as the canonical `<pkg>.core` so that
+# `from .. import core` / `from . import core` inside the logic modules find it.
+sys.modules[f"{_PKG}.core"] = sys.modules[__name__]
+
+
+def _load_relative_module(name: str, relative_path: str) -> Any:
+    """Load a reusable helper submodule of the canonical package by absolute path."""
+    import importlib
+
+    return importlib.import_module(f"{_PKG}.{name}")
 
 
 _presentation = _load_relative_module("ui.presentation", "ui/presentation.py")
@@ -625,23 +639,6 @@ _REGISTERED_HOOKS = (
 )
 
 
-def _core_logic_path(name: str) -> Path:
-    return Path(__file__).parent / f"{name}.py"
-
-
-def _load_logic_module(name: str) -> None:
-    path = _core_logic_path(name)
-    code = path.read_text()
-    compiled = compile(code, str(path), "exec")
-    exec(compiled, globals(), globals())
-
-
-def _load_core_logic() -> None:
-    """Load modular logic files so `core.py` remains a thin façade."""
-    for name in _CORE_LOGIC_MODULES:
-        _load_logic_module(name)
-
-
 def _core_logic_missing_required_symbols() -> tuple[str, ...]:
     return tuple(
         name
@@ -664,10 +661,7 @@ def _unsafe_diagnostics_enabled() -> bool:
 
 
 def _privacy_policy() -> str:
-    try:
-        return _privacy_mode()
-    except NameError:
-        return "llm"
+    return rules._privacy_mode()
 
 
 def _short_hash(value: str | None) -> str:
@@ -678,13 +672,153 @@ def _short_hash(value: str | None) -> str:
 
 
 def _safe_session_label(session_id: str | None) -> str:
-    sid = _normalize_session_id(session_id)
+    sid = tool_policy._normalize_session_id(session_id)
     if sid == _GLOBAL_SESSION_ID:
         return sid
     return sid[:18]
 
 
-_load_core_logic()
+# The logic modules are genuine, normally-importable submodules. They reference
+# core's constants (and each other) at call time through module-object imports, so
+# this import block must come AFTER every constant above is defined. Each is imported
+# once, in the dependency order of _CORE_LOGIC_MODULES, through the canonical package
+# so their relative imports resolve.
+def _import_logic(dotted: str) -> Any:
+    import importlib
+
+    return importlib.import_module(f"{_PKG}.{dotted}")
+
+
+_m_shared_context = _import_logic("runtime.shared_context")
+_m_security_module = _import_logic("security.module")
+_m_activity_store = _import_logic("runtime.activity_store")
+_m_activity_rows = _import_logic("runtime.activity_rows")
+_m_taint = _import_logic("privacy.taint")
+_m_destinations = _import_logic("privacy.destinations")
+tool_policy = _import_logic("privacy.tool_policy")
+_m_capability = _import_logic("privacy.capability")
+_m_policy = _import_logic("privacy.policy")
+_m_action_details = _import_logic("privacy.action_details")
+_m_llm = _import_logic("privacy.llm")
+rules = _import_logic("privacy.rules")
+_m_approvals = _import_logic("privacy.approvals")
+_m_privacy_module = _import_logic("privacy.module")
+_m_cron_notifications = _import_logic("integrations.cron_notifications")
+_m_dashboard = _import_logic("ui.dashboard")
+_m_commands = _import_logic("ui.commands")
+_m_hooks = _import_logic("hooks")
+_m_runtime_state = _import_logic("runtime.state")
+
+# Entrypoints that register()/the facade/the module-load wiring below reference at
+# core scope. Binding them onto core also keeps them reachable as `core.<name>`
+# attributes for the facade's dir(_CORE) bridge and _CORE_LOGIC_REQUIRED_SYMBOLS.
+_apply_language_pack_config = rules._apply_language_pack_config
+_load_privacy_config = rules._load_privacy_config
+_security_rule_enabled = rules._security_rule_enabled
+_on_pre_tool_call = _m_hooks._on_pre_tool_call
+_on_transform_tool_result = _m_hooks._on_transform_tool_result
+_on_pre_gateway_dispatch = _m_hooks._on_pre_gateway_dispatch
+_on_transform_llm_output = _m_hooks._on_transform_llm_output
+_on_pre_llm_call = _m_hooks._on_pre_llm_call
+_on_session_reset = _m_runtime_state._on_session_reset
+_on_session_end = _m_runtime_state._on_session_end
+_handle_guardian_command = _m_commands._handle_guardian_command
+_guardian_cli_setup = _m_commands._guardian_cli_setup
+
+
+# name -> the logic module(s) that define it, for monkeypatch propagation (below).
+_LOGIC_SYMBOL_OWNERS: dict[str, list[Any]] = {}
+
+
+def _reexport_logic_symbols() -> None:
+    """Mirror every logic module's public top-level name onto core.
+
+    The facade exposes Hermes-/test-facing entrypoints by bridging core's
+    attributes (it iterates ``dir(_CORE)``). Re-exporting the logic modules'
+    public names lets the facade and the suite reach every handler/helper as
+    ``core.<name>``. Later modules win on rebind (the ``_CORE_LOGIC_MODULES`` order,
+    per ``_CORE_LOGIC_ALLOWED_REBINDS``). Core's own constants/helpers are never
+    overwritten — its globals already hold them and take precedence.
+
+    Each re-exported name also records its owning module(s) so that patching
+    ``core.<name>`` propagates the patch down to the module that defines it (the
+    logic modules now call each other by module-object attribute, so a patch must
+    reach the real definition to be observed). See ``_propagate_to_owners``.
+    """
+    g = globals()
+    for module in _LOGIC_MODULES_IN_LOAD_ORDER:
+        for name in getattr(module, "__dict__", {}):
+            if name.startswith("__"):
+                continue
+            value = module.__dict__[name]
+            _LOGIC_SYMBOL_OWNERS.setdefault(name, [])
+            if module not in _LOGIC_SYMBOL_OWNERS[name]:
+                _LOGIC_SYMBOL_OWNERS[name].append(module)
+            if name in _CORE_OWNED_NAMES:
+                continue
+            g[name] = value
+
+
+def _propagate_to_owners(name: str, value: Any) -> None:
+    """Mirror an attribute set on core down to the logic module(s) that own it.
+
+    Tests and Hermes patch ``core.<name>``; the logic modules resolve that name as
+    ``<owning_module>.<name>`` at call time, so the patch must also land there.
+    """
+    for module in _LOGIC_SYMBOL_OWNERS.get(name, ()):  # pragma: no branch
+        try:
+            setattr(module, name, value)
+        except Exception:
+            pass
+
+
+_LOGIC_MODULES_IN_LOAD_ORDER = (
+    _m_shared_context,
+    _m_security_module,
+    _m_activity_store,
+    _m_activity_rows,
+    _m_taint,
+    _m_destinations,
+    tool_policy,
+    _m_capability,
+    _m_policy,
+    _m_action_details,
+    _m_llm,
+    rules,
+    _m_approvals,
+    _m_privacy_module,
+    _m_cron_notifications,
+    _m_dashboard,
+    _m_commands,
+    _m_hooks,
+    _m_runtime_state,
+)
+# Names core defines itself (constants, regexes, state binding, helpers). These must
+# not be clobbered by a logic module's re-exported import of the same name (e.g. a
+# logic module importing `state` or `re`).
+_CORE_OWNED_NAMES = frozenset(globals())
+_reexport_logic_symbols()
+
+
+class _CoreModule(types.ModuleType):
+    """core's module type: setting a re-exported name also patches its owner module.
+
+    The logic modules are real and call each other through module-object
+    attributes. Tests/Hermes patch ``core.<name>``; this propagates the patch to
+    the module that actually defines ``<name>`` so the live call path observes it.
+    """
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        super().__setattr__(name, value)
+        owners = globals().get("_LOGIC_SYMBOL_OWNERS")
+        if owners and name in owners:
+            globals()["_propagate_to_owners"](name, value)
+
+
+sys.modules[__name__].__class__ = _CoreModule
+sys.modules[f"{_PKG}.core"].__class__ = _CoreModule
+
+
 _assert_core_logic_contract()
 try:
     _security._set_security_rule_enabled_callback(_security_rule_enabled)

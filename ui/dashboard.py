@@ -7,17 +7,29 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from . import commands
+from .. import core
+from .. import state
+from ..privacy import approvals
+from ..privacy import capability
+from ..privacy import destinations
+from ..privacy import policy
+from ..privacy import rules as rules_mod
+from ..privacy import tool_policy
+from ..runtime import activity_rows
+from ..runtime import activity_store
+
 
 
 def _dashboard_payload(filters: dict[str, str] | None = None, *, limit: int = 200) -> dict[str, Any]:
     return {
-        "policy": _policy_snapshot(),
-        "activity": _grouped_activity_rows(filters or {}, limit=limit),
+        "policy": activity_rows._policy_snapshot(),
+        "activity": activity_rows._grouped_activity_rows(filters or {}, limit=limit),
     }
 
 
 def _configured_history_timezone() -> str:
-    raw = state._env(_HISTORY_TIMEZONE_ENV, "").strip()
+    raw = state._env(core._HISTORY_TIMEZONE_ENV, "").strip()
     if raw:
         return raw
     try:
@@ -37,50 +49,50 @@ def _history_timezone() -> ZoneInfo | None:
         try:
             return ZoneInfo(configured)
         except ZoneInfoNotFoundError:
-            logger.warning("%s: invalid history timezone %r; using local time", _PLUGIN_NAME, configured)
+            core.logger.warning("%s: invalid history timezone %r; using local time", core._PLUGIN_NAME, configured)
     return None
 
 
 def _activity_display_tool(row: dict[str, Any]) -> str:
-    return _presentation.activity_display_tool(row)
+    return core._presentation.activity_display_tool(row)
 
 
 def _clip_text(value: Any, limit: int = 120, *, ellipsis: str = "...", fallback: str = "") -> str:
-    return _presentation.clip_text(value, limit, ellipsis=ellipsis, fallback=fallback)
+    return core._presentation.clip_text(value, limit, ellipsis=ellipsis, fallback=fallback)
 
 
 def _friendly_activity_timestamp(ts: Any) -> str:
-    return _presentation.friendly_activity_timestamp(ts, _history_timezone())
+    return core._presentation.friendly_activity_timestamp(ts, _history_timezone())
 
 
 def _activity_time_text(row: dict[str, Any]) -> str:
-    return _presentation.activity_time_text(row, _history_timezone())
+    return core._presentation.activity_time_text(row, _history_timezone())
 
 
 def _activity_clock_text(row: dict[str, Any]) -> str:
-    return _presentation.friendly_activity_clock(row.get("ts"), _history_timezone())
+    return core._presentation.friendly_activity_clock(row.get("ts"), _history_timezone())
 
 
 def _activity_display_reason(row: dict[str, Any]) -> str:
-    return _presentation.activity_display_reason(
+    return core._presentation.activity_display_reason(
         row,
-        all_privacy_classes=_ALL_PRIVACY_CLASSES,
-        taint_reason_for_tool_result=_taint_reason_for_tool_result,
+        all_privacy_classes=core._ALL_PRIVACY_CLASSES,
+        taint_reason_for_tool_result=tool_policy._taint_reason_for_tool_result,
     )
 
 
 def _activity_status_icon(decision: str) -> str:
-    return _presentation.activity_status_icon(decision)
+    return core._presentation.activity_status_icon(decision)
 
 
 def _activity_reason_prefix(decision: str) -> str:
-    return _presentation.activity_reason_prefix(decision)
+    return core._presentation.activity_reason_prefix(decision)
 
 
 def _activity_reason_line_text(row: dict[str, Any], *, limit: int = 72, marker_limit: int = 72) -> str:
-    return _presentation.activity_reason_line_text(
+    return core._presentation.activity_reason_line_text(
         row,
-        marker=_activity_marker(row),
+        marker=activity_rows._activity_marker(row),
         display_reason=_activity_display_reason(row),
         limit=limit,
         marker_limit=marker_limit,
@@ -88,7 +100,7 @@ def _activity_reason_line_text(row: dict[str, Any], *, limit: int = 72, marker_l
 
 
 def _activity_taints_text(row: dict[str, Any], *, code: bool = False, html_code: bool = False) -> str:
-    return _presentation.activity_taints_text(row, code=code, html_code=html_code)
+    return core._presentation.activity_taints_text(row, code=code, html_code=html_code)
 
 
 def _dashboard_approval_action(approval_id: str, action: str, scope: str = "") -> tuple[dict[str, Any], int]:
@@ -96,35 +108,35 @@ def _dashboard_approval_action(approval_id: str, action: str, scope: str = "") -
     action = str(action or "").strip().lower()
     scope = str(scope or "").strip().lower()
     if not re.fullmatch(r"[0-9]{4}", approval_id):
-        return {"ok": False, "message": "Invalid approval id.", "policy": _policy_snapshot()}, 400
+        return {"ok": False, "message": "Invalid approval id.", "policy": activity_rows._policy_snapshot()}, 400
     if action == "approve":
         if scope not in {"once", "always"}:
-            return {"ok": False, "message": "Approval scope must be once or always.", "policy": _policy_snapshot()}, 400
-        message = _guardian_approve(_CLI_OWNER_HASH, approval_id, scope)
+            return {"ok": False, "message": "Approval scope must be once or always.", "policy": activity_rows._policy_snapshot()}, 400
+        message = commands._guardian_approve(core._CLI_OWNER_HASH, approval_id, scope)
         ok = message.startswith("Approved ")
     elif action == "dismiss":
-        message = _guardian_deny(_CLI_OWNER_HASH, approval_id)
+        message = commands._guardian_deny(core._CLI_OWNER_HASH, approval_id)
         ok = message.startswith("Dismissed ")
         if not ok and message.startswith("No pending approval"):
             ok, message = _dashboard_dismiss_expired_approval(approval_id)
     else:
-        return {"ok": False, "message": "Unsupported approval action.", "policy": _policy_snapshot()}, 400
+        return {"ok": False, "message": "Unsupported approval action.", "policy": activity_rows._policy_snapshot()}, 400
     status = 200 if ok else (404 if message.startswith("No pending approval") else 400)
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, status
 
 
 def _dashboard_dismiss_expired_approval(approval_id: str) -> tuple[bool, str]:
     with state._LOCK:
-        approval = _pending_approval_from_store_unlocked(approval_id)
+        approval = approvals._pending_approval_from_store_unlocked(approval_id)
         if not approval:
             return False, f"No pending approval found for {approval_id}."
         if int(float(approval.get("expires_at") or 0)) > int(state._now()):
             return False, f"No pending approval found for {approval_id}."
-        if not _approval_owner_allowed(_CLI_OWNER_HASH, approval):
+        if not approvals._approval_owner_allowed(core._CLI_OWNER_HASH, approval):
             return False, "Approval denied: this request belongs to a different user/session."
-        _delete_pending_approvals_from_store_unlocked([approval_id])
+        approvals._delete_pending_approvals_from_store_unlocked([approval_id])
 
-    _emit_activity(
+    activity_store._emit_activity(
         "denied",
         session_id=approval.get("session_id", ""),
         owner_hash=approval.get("owner_hash", ""),
@@ -142,54 +154,54 @@ def _dashboard_dismiss_expired_approval(approval_id: str) -> tuple[bool, str]:
 
 
 def _dashboard_rule_delete_action(rule_id: str) -> tuple[dict[str, Any], int]:
-    ok, message, _removed = _delete_persistent_rule(_CLI_OWNER_HASH, rule_id)
+    ok, message, _removed = approvals._delete_persistent_rule(core._CLI_OWNER_HASH, rule_id)
     status = 200 if ok else (404 if message.startswith("No matching privacy rule") else 400)
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, status
 
 
 def _dashboard_privacy_mode_action(mode: str) -> tuple[dict[str, Any], int]:
-    ok, message = _set_privacy_mode(mode)
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+    ok, message = rules_mod._set_privacy_mode(mode)
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
 def _dashboard_security_rule_action(rule_id: str, enabled: Any) -> tuple[dict[str, Any], int]:
-    ok, message = _set_security_rule(rule_id, _config_bool(enabled, default=True))
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+    ok, message = rules_mod._set_security_rule(rule_id, rules_mod._config_bool(enabled, default=True))
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
 def _dashboard_language_pack_action(pack_id: str, enabled: Any) -> tuple[dict[str, Any], int]:
-    ok, message = _set_language_pack(pack_id, _config_bool(enabled, default=True))
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+    ok, message = rules_mod._set_language_pack(pack_id, rules_mod._config_bool(enabled, default=True))
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
 def _dashboard_unknown_tools_mode_action(mode: str) -> tuple[dict[str, Any], int]:
-    ok, message = _set_unknown_tools_mode(mode)
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+    ok, message = rules_mod._set_unknown_tools_mode(mode)
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
 def _dashboard_llm_user_context_action(enabled: Any) -> tuple[dict[str, Any], int]:
-    ok, message = _set_llm_user_context(_config_bool(enabled, default=_DEFAULT_LLM_USER_CONTEXT))
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+    ok, message = rules_mod._set_llm_user_context(rules_mod._config_bool(enabled, default=rules_mod._DEFAULT_LLM_USER_CONTEXT))
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
 def _dashboard_llm_cron_context_action(enabled: Any) -> tuple[dict[str, Any], int]:
-    ok, message = _set_llm_cron_context(_config_bool(enabled, default=_DEFAULT_LLM_CRON_CONTEXT))
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+    ok, message = rules_mod._set_llm_cron_context(rules_mod._config_bool(enabled, default=rules_mod._DEFAULT_LLM_CRON_CONTEXT))
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
 def _dashboard_persist_prompts_action(enabled: Any) -> tuple[dict[str, Any], int]:
-    ok, message = _set_persist_prompts(_config_bool(enabled, default=_DEFAULT_PERSIST_PROMPTS))
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+    ok, message = rules_mod._set_persist_prompts(rules_mod._config_bool(enabled, default=rules_mod._DEFAULT_PERSIST_PROMPTS))
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
 def _dashboard_llm_verifier_model_action(model: Any) -> tuple[dict[str, Any], int]:
-    ok, message = _set_llm_verifier_model(str(model or ""))
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+    ok, message = rules_mod._set_llm_verifier_model(str(model or ""))
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
 def _dashboard_tool_override_create_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     match = payload.get("match") or payload.get("tool") or payload.get("tool_name") or ""
-    ok, message = _set_tool_override(
+    ok, message = rules_mod._set_tool_override(
         match,
         taints=payload.get("taints"),
         egress=payload.get("egress"),
@@ -198,22 +210,22 @@ def _dashboard_tool_override_create_action(payload: dict[str, Any]) -> tuple[dic
         note=payload.get("note"),
         enabled=payload.get("enabled"),
     )
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
 def _dashboard_tool_override_update_action(override_id: str, payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     target = str(override_id or "").strip()
-    existing = next((o for o in _tool_overrides() if o.get("id") == target), None)
+    existing = next((o for o in rules_mod._tool_overrides() if o.get("id") == target), None)
     if existing is None:
         return {
             "ok": False,
             "message": f"No matching tool override found for {override_id}.",
-            "policy": _policy_snapshot(),
+            "policy": activity_rows._policy_snapshot(),
         }, 404
     if set(payload.keys()) <= {"enabled"} and "enabled" in payload:
-        ok, message = _set_tool_override_enabled(target, _config_bool(payload.get("enabled"), default=True))
+        ok, message = rules_mod._set_tool_override_enabled(target, rules_mod._config_bool(payload.get("enabled"), default=True))
     else:
-        ok, message = _set_tool_override(
+        ok, message = rules_mod._set_tool_override(
             existing.get("match"),
             taints=payload.get("taints"),
             egress=payload.get("egress"),
@@ -222,13 +234,13 @@ def _dashboard_tool_override_update_action(override_id: str, payload: dict[str, 
             note=payload.get("note"),
             enabled=payload.get("enabled"),
         )
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
 def _dashboard_tool_override_delete_action(match_or_id: str) -> tuple[dict[str, Any], int]:
-    ok, message = _delete_tool_override(match_or_id)
+    ok, message = rules_mod._delete_tool_override(match_or_id)
     status = 200 if ok else (404 if message.startswith("No matching tool override") else 400)
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, status
 
 
 # --- Destinations & Trust panel actions (doc 03 §3.1) ------------------------
@@ -238,16 +250,16 @@ def _dashboard_tool_override_delete_action(match_or_id: str) -> tuple[dict[str, 
 def _dashboard_self_add_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     kind = str(payload.get("kind") or "").strip().lower()
     value = str(payload.get("value") or "").strip()
-    ok, message = _add_self_destination(kind, value)
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+    ok, message = rules_mod._add_self_destination(kind, value)
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
 def _dashboard_self_remove_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     kind = str(payload.get("kind") or "").strip().lower()
     value = str(payload.get("value") or "").strip()
-    ok, message = _remove_self_destination(kind, value)
+    ok, message = rules_mod._remove_self_destination(kind, value)
     status = 200 if ok else (404 if message.startswith("No ") else 400)
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, status
 
 
 def _dashboard_trusted_add_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
@@ -256,38 +268,38 @@ def _dashboard_trusted_add_action(payload: dict[str, Any]) -> tuple[dict[str, An
     note = str(payload.get("note") or "")
     if kind == "command":
         value = str(payload.get("value") or payload.get("command") or "")
-        ok, message = _add_trusted_command(value, classes=classes, note=note)
+        ok, message = rules_mod._add_trusted_command(value, classes=classes, note=note)
     else:
         value = str(payload.get("value") or payload.get("identity") or "")
-        ok, message = _add_trusted_recipient(value, classes=classes, note=note)
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+        ok, message = rules_mod._add_trusted_recipient(value, classes=classes, note=note)
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
 def _dashboard_trusted_remove_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     kind = str(payload.get("kind") or "identity").strip().lower()
     value = str(payload.get("value") or payload.get("identity") or payload.get("command") or "")
     if kind == "command":
-        ok, message = _remove_trusted_command(value)
+        ok, message = rules_mod._remove_trusted_command(value)
     else:
-        ok, message = _remove_trusted_recipient(value)
+        ok, message = rules_mod._remove_trusted_recipient(value)
     status = 200 if ok else (404 if message.startswith("No ") else 400)
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, status
 
 
 def _dashboard_trusted_suggestions() -> dict[str, Any]:
     """Pickable trusted-command candidates for the Trusted-destinations picker."""
-    return {"suggestions": _trusted_destination_suggestions()}
+    return {"suggestions": rules_mod._trusted_destination_suggestions()}
 
 
 def _dashboard_sharing_add_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    ok, message = _add_outward_sharing_subtype(str(payload.get("subtype") or ""))
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, 200 if ok else 400
+    ok, message = rules_mod._add_outward_sharing_subtype(str(payload.get("subtype") or ""))
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
 def _dashboard_sharing_remove_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    ok, message = _remove_outward_sharing_subtype(str(payload.get("subtype") or ""))
+    ok, message = rules_mod._remove_outward_sharing_subtype(str(payload.get("subtype") or ""))
     status = 200 if ok else (404 if message.startswith("No ") else 400)
-    return {"ok": ok, "message": message, "policy": _policy_snapshot()}, status
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, status
 
 
 # --- Activity tab: clear session taint (doc 02 §Tab1) ------------------------
@@ -295,8 +307,8 @@ def _dashboard_sharing_remove_action(payload: dict[str, Any]) -> tuple[dict[str,
 # command (/guardian clear-taint) uses; it stays admin-token guarded in
 # dashboard/plugin_api.py like every other mutator.
 def _dashboard_clear_taint_action() -> tuple[dict[str, Any], int]:
-    message = _guardian_clear_taint(_CLI_OWNER_HASH)
-    return {"ok": True, "message": message, "policy": _policy_snapshot()}, 200
+    message = commands._guardian_clear_taint(core._CLI_OWNER_HASH)
+    return {"ok": True, "message": message, "policy": activity_rows._policy_snapshot()}, 200
 
 
 # --- Activity tab: pending-approvals read list (doc 02 §Tab1) ----------------
@@ -304,7 +316,7 @@ def _dashboard_clear_taint_action() -> tuple[dict[str, Any], int]:
 # (the "pending" list, with trust pill + decision step). The dashboard's GET
 # /approvals reads exactly that slice — no new decision logic, no mutation.
 def _dashboard_pending_approvals() -> list[dict[str, Any]]:
-    return list(_policy_snapshot().get("pending") or [])
+    return list(activity_rows._policy_snapshot().get("pending") or [])
 
 
 # --- Pure-function widgets (charter §5; doc 02 §Tab2/§Tab3) ------------------
@@ -341,12 +353,12 @@ def _dashboard_resolve_destination(value: str) -> dict[str, Any]:
     kind, dest_id = _parse_destination_value(raw)
     recipient = dest_id if kind in {"messaging", "message", "send"} else ""
     subtype = "send" if kind in {"messaging", "message", "send"} else "write"
-    trust = _resolve_destination_trust(kind, dest_id, subtype, recipient, _load_privacy_config())
+    trust = destinations._resolve_destination_trust(kind, dest_id, subtype, recipient, core._load_privacy_config())
     return {
         "value": raw,
         "kind": kind,
         "id": dest_id,
-        "trust": _normalize_destination_trust_label(getattr(trust, "value", trust)),
+        "trust": activity_store._normalize_destination_trust_label(getattr(trust, "value", trust)),
     }
 
 
@@ -373,9 +385,9 @@ def _build_preview_capability(action_family: str, destination: str, classes: lis
     else:
         recipient = ""
         subtype = "write"
-    trust = _resolve_destination_trust(kind, dest_id, subtype, recipient, _load_privacy_config())
-    dest = _Destination(kind=kind, id=dest_id, trust=trust)
-    return _Capability(
+    trust = destinations._resolve_destination_trust(kind, dest_id, subtype, recipient, core._load_privacy_config())
+    dest = capability._Destination(kind=kind, id=dest_id, trust=trust)
+    return capability._Capability(
         direction="write",
         destination=dest,
         data_classes=frozenset(str(c) for c in (classes or []) if str(c).strip()),
@@ -391,19 +403,19 @@ def _dashboard_preview_send(action_family: str, destination: str, classes: list[
     which decide() step fires and the outcome.
     """
     cap = _build_preview_capability(action_family, destination, classes)
-    outcome, step = _decide_with_step(
-        cap, classes or [], "unknown", _privacy_policy()
+    outcome, step = policy._decide_with_step(
+        cap, classes or [], "unknown", core._privacy_policy()
     )
     dest = getattr(cap, "destination", None)
     return {
         "action_family": str(action_family or ""),
         "destination": str(destination or ""),
         "data_classes": sorted(str(c) for c in (classes or []) if str(c).strip()),
-        "destination_trust": _normalize_destination_trust_label(
+        "destination_trust": activity_store._normalize_destination_trust_label(
             getattr(getattr(dest, "trust", None), "value", getattr(dest, "trust", None))
         ),
         "decision": str(outcome),
-        "decision_step": _normalize_decision_step_label(step),
+        "decision_step": activity_store._normalize_decision_step_label(step),
     }
 
 
@@ -449,7 +461,7 @@ def _dashboard_sharing_impact(candidate: dict[str, Any], *, limit: int = 200) ->
     no decision-engine change. This is the prioritized guardrail from doc 02 §Tab3.
     """
     effect = str(candidate.get("effect") or "allow").strip().lower()
-    rows = _grouped_activity_rows({"decisions": "approve,blocked,denied,gated"}, limit=limit)
+    rows = activity_rows._grouped_activity_rows({"decisions": "approve,blocked,denied,gated"}, limit=limit)
     matched: list[dict[str, Any]] = []
     for row in rows:
         decision = str(row.get("decision") or "").strip().lower()
@@ -464,7 +476,7 @@ def _dashboard_sharing_impact(candidate: dict[str, Any], *, limit: int = 200) ->
                 "decision": decision,
                 "action_family": str(row.get("action_family") or ""),
                 "destination": str(row.get("destination") or ""),
-                "destination_trust": _normalize_destination_trust_label(row.get("destination_trust")),
+                "destination_trust": activity_store._normalize_destination_trust_label(row.get("destination_trust")),
                 "data_classes": row.get("data_classes"),
                 "purpose": str(row.get("purpose") or "unknown"),
                 "recipient_identity": str(row.get("recipient_identity") or "none"),
@@ -482,21 +494,21 @@ def _dashboard_sharing_impact(candidate: dict[str, Any], *, limit: int = 200) ->
 
 
 def _dashboard_rule_create_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    rule = _normalize_privacy_rule(payload)
+    rule = rules_mod._normalize_privacy_rule(payload)
     if rule is None:
-        return {"ok": False, "message": "Invalid privacy rule.", "policy": _policy_snapshot()}, 400
-    rules = _persistent_privacy_rules()
+        return {"ok": False, "message": "Invalid privacy rule.", "policy": activity_rows._policy_snapshot()}, 400
+    rules = rules_mod._persistent_privacy_rules()
     rules.append(rule)
-    if not _save_persistent_privacy_rules(rules):
-        return {"ok": False, "message": "Failed to save privacy rule.", "policy": _policy_snapshot()}, 500
-    return {"ok": True, "message": f"Added privacy rule {rule['id']}.", "policy": _policy_snapshot()}, 200
+    if not rules_mod._save_persistent_privacy_rules(rules):
+        return {"ok": False, "message": "Failed to save privacy rule.", "policy": activity_rows._policy_snapshot()}, 500
+    return {"ok": True, "message": f"Added privacy rule {rule['id']}.", "policy": activity_rows._policy_snapshot()}, 200
 
 
 def _dashboard_rule_update_action(rule_id: str, payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    rules = _persistent_privacy_rules()
+    rules = rules_mod._persistent_privacy_rules()
     index = next((idx for idx, rule in enumerate(rules) if rule.get("id") == rule_id), -1)
     if index < 0:
-        return {"ok": False, "message": f"No matching privacy rule found for {rule_id}.", "policy": _policy_snapshot()}, 404
+        return {"ok": False, "message": f"No matching privacy rule found for {rule_id}.", "policy": activity_rows._policy_snapshot()}, 404
     move = payload.get("move") if isinstance(payload.get("move"), dict) else {}
     if move:
         target_id = str(move.get("target_id") or "").strip()
@@ -505,17 +517,17 @@ def _dashboard_rule_update_action(rule_id: str, payload: dict[str, Any]) -> tupl
         target_index = next((idx for idx, rule in enumerate(rules) if rule.get("id") == target_id), -1)
         if target_index < 0 or where not in {"before", "after"}:
             rules.insert(index, moving)
-            return {"ok": False, "message": "Invalid rule move.", "policy": _policy_snapshot()}, 400
+            return {"ok": False, "message": "Invalid rule move.", "policy": activity_rows._policy_snapshot()}, 400
         rules.insert(target_index if where == "before" else target_index + 1, moving)
     else:
         merged = dict(rules[index])
         for key in ("effect", "enabled", "match", "scope", "remaining_invocations"):
             if key in payload:
                 merged[key] = payload[key]
-        normalized = _normalize_privacy_rule(merged)
+        normalized = rules_mod._normalize_privacy_rule(merged)
         if normalized is None:
-            return {"ok": False, "message": "Invalid privacy rule update.", "policy": _policy_snapshot()}, 400
+            return {"ok": False, "message": "Invalid privacy rule update.", "policy": activity_rows._policy_snapshot()}, 400
         rules[index] = normalized
-    if not _save_persistent_privacy_rules(rules):
-        return {"ok": False, "message": "Failed to save privacy rules.", "policy": _policy_snapshot()}, 500
-    return {"ok": True, "message": f"Updated privacy rule {rule_id}.", "policy": _policy_snapshot()}, 200
+    if not rules_mod._save_persistent_privacy_rules(rules):
+        return {"ok": False, "message": "Failed to save privacy rules.", "policy": activity_rows._policy_snapshot()}, 500
+    return {"ok": True, "message": f"Updated privacy rule {rule_id}.", "policy": activity_rows._policy_snapshot()}, 200

@@ -29,6 +29,8 @@ import re
 from enum import Enum
 from typing import Any
 
+from .. import core
+
 
 class DestinationTrust(str, Enum):
     """Trust of a sink's destination relative to the data owner (doc 01 §2).
@@ -65,7 +67,7 @@ def _destinations_config(config: Any) -> dict[str, Any]:
     """
     if config is None:
         try:
-            config = _load_privacy_config()
+            config = core._load_privacy_config()
         except Exception:
             return {}
     return config if isinstance(config, dict) else {}

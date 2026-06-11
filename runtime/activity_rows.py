@@ -8,9 +8,18 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from . import activity_store
+from .. import core
+from .. import state
+from ..privacy import approvals
+from ..privacy import llm
+from ..privacy import rules as rules_mod
+from ..privacy import tool_policy
+from ..ui import dashboard
+
 
 def _activity_rows(filters: dict[str, str], *, limit: int = 200) -> list[dict[str, Any]]:
-    _ensure_activity_db()
+    activity_store._ensure_activity_db()
     clauses, params = _activity_filter_clauses(filters)
     sql = "SELECT * FROM activity"
     if clauses:
@@ -18,7 +27,7 @@ def _activity_rows(filters: dict[str, str], *, limit: int = 200) -> list[dict[st
     sql += " ORDER BY ts DESC, id DESC LIMIT ?"
     params.append(max(1, min(int(limit), 1000)))
     try:
-        with _activity_connect() as conn:
+        with activity_store._activity_connect() as conn:
             rows = conn.execute(sql, params).fetchall()
     except Exception:
         return []
@@ -37,14 +46,14 @@ def _dashboard_suggestion_value(value: Any, *, limit: int = 160) -> str:
 def _activity_distinct_values(column: str, *, limit: int = 40) -> list[str]:
     if column not in {"destination", "tool_name", "purpose", "recipient_identity", "destination_trust"}:
         return []
-    _ensure_activity_db()
+    activity_store._ensure_activity_db()
     sql = (
         f"SELECT {column} AS value, MAX(ts) AS latest FROM activity "
         f"WHERE {column} NOT IN ('', '*') "
         f"GROUP BY {column} ORDER BY latest DESC LIMIT ?"
     )
     try:
-        with _activity_connect() as conn:
+        with activity_store._activity_connect() as conn:
             values = [row["value"] for row in conn.execute(sql, (max(1, min(int(limit), 100)),)).fetchall()]
     except Exception:
         return []
@@ -109,13 +118,13 @@ def _activity_data_classes_list(value: Any) -> list[str]:
     return sorted(
         cls
         for cls in (str(item).strip() for item in raw)
-        if cls in _ALL_PRIVACY_CLASSES
+        if cls in core._ALL_PRIVACY_CLASSES
     )
 
 
 def _pending_approval_rule_coverage(approval: dict[str, Any]) -> dict[str, Any]:
     shape = {
-        "session_id": _normalize_session_id(approval.get("session_id")),
+        "session_id": tool_policy._normalize_session_id(approval.get("session_id")),
         "owner_hash": str(approval.get("owner_hash") or ""),
         "tool_name": str(approval.get("tool_name") or ""),
         "action_family": str(approval.get("action_family") or ""),
@@ -126,7 +135,7 @@ def _pending_approval_rule_coverage(approval: dict[str, Any]) -> dict[str, Any]:
         "data_classes": _activity_data_classes_list(approval.get("data_classes")),
         "fingerprint": str(approval.get("fingerprint") or ""),
     }
-    source = _approval_source(shape, consume_once=False)
+    source = rules_mod._approval_source(shape, consume_once=False)
     if source and source.get("effect") == "allow":
         return {
             "covered_by_rule": True,
@@ -149,8 +158,8 @@ def _stored_pending_approval_expirations(approval_ids: set[str]) -> dict[str, in
     if not ids:
         return {}
     try:
-        _ensure_activity_db()
-        with _activity_connect() as conn:
+        activity_store._ensure_activity_db()
+        with activity_store._activity_connect() as conn:
             rows = conn.execute(
                 """
                 SELECT id, expires_at
@@ -160,7 +169,7 @@ def _stored_pending_approval_expirations(approval_ids: set[str]) -> dict[str, in
                 ids,
             ).fetchall()
     except Exception as exc:
-        logger.debug("%s: failed to load stored approval expirations: %s", _PLUGIN_NAME, exc)
+        core.logger.debug("%s: failed to load stored approval expirations: %s", core._PLUGIN_NAME, exc)
         return {}
     return {
         str(row["id"]): int(float(row["expires_at"] or 0))
@@ -178,8 +187,8 @@ def _resolved_approval_times(approval_ids: set[str]) -> dict[str, int]:
     if not ids:
         return {}
     try:
-        _ensure_activity_db()
-        with _activity_connect() as conn:
+        activity_store._ensure_activity_db()
+        with activity_store._activity_connect() as conn:
             rows = conn.execute(
                 """
                 SELECT approval_id, MAX(ts) AS ts
@@ -195,7 +204,7 @@ def _resolved_approval_times(approval_ids: set[str]) -> dict[str, int]:
                 ids + list(_RESOLVED_APPROVAL_DECISIONS),
             ).fetchall()
     except Exception as exc:
-        logger.debug("%s: failed to load resolved approval times: %s", _PLUGIN_NAME, exc)
+        core.logger.debug("%s: failed to load resolved approval times: %s", core._PLUGIN_NAME, exc)
         return {}
     return {
         str(row["approval_id"]): int(float(row["ts"] or 0))
@@ -346,7 +355,7 @@ def _activity_filter_clauses(filters: dict[str, str]) -> tuple[list[str], list[A
     decisions = [
         decision.strip()
         for decision in str(filters.get("decisions") or "").split(",")
-        if decision.strip() in _ACTIVITY_DECISIONS
+        if decision.strip() in core._ACTIVITY_DECISIONS
     ]
     if decisions:
         clauses.append("decision IN (" + ",".join("?" for _ in decisions) + ")")
@@ -364,12 +373,12 @@ def _activity_filter_clauses(filters: dict[str, str]) -> tuple[list[str], list[A
 
 
 def _activity_count(clauses: list[str] | None = None, params: list[Any] | None = None) -> int:
-    _ensure_activity_db()
+    activity_store._ensure_activity_db()
     sql = "SELECT COUNT(*) FROM activity"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     try:
-        with _activity_connect() as conn:
+        with activity_store._activity_connect() as conn:
             return int(conn.execute(sql, params or []).fetchone()[0])
     except Exception:
         return 0
@@ -423,10 +432,10 @@ def _activity_plain_reason_line(row: dict[str, Any], *, limit: int = 120) -> str
     decision = str(row.get("decision") or "").strip()
     if decision == "tainted":
         return ""
-    reason = _clip_text(_activity_display_reason(row), limit, ellipsis="...", fallback="")
+    reason = dashboard._clip_text(dashboard._activity_display_reason(row), limit, ellipsis="...", fallback="")
     if not reason:
         return ""
-    prefix = _activity_reason_prefix(decision)
+    prefix = dashboard._activity_reason_prefix(decision)
     return f"{prefix}: {reason}" if prefix else reason
 
 
@@ -435,11 +444,11 @@ def _activity_datatables_row(row: dict[str, Any]) -> dict[str, Any]:
         "id": int(row.get("id") or 0),
         "DT_RowId": f"activity-{int(row.get('id') or 0)}",
         "ts": int(row.get("ts") or 0),
-        "time": _activity_time_text(row),
-        "time_short": _activity_clock_text(row),
-        "icon": _activity_status_icon(str(row.get("decision") or "")),
+        "time": dashboard._activity_time_text(row),
+        "time_short": dashboard._activity_clock_text(row),
+        "icon": dashboard._activity_status_icon(str(row.get("decision") or "")),
         "decision": str(row.get("decision") or ""),
-        "tool": _activity_display_tool(row),
+        "tool": dashboard._activity_display_tool(row),
         "tool_name": str(row.get("tool_name") or ""),
         "action_family": str(row.get("action_family") or ""),
         "destination": str(row.get("destination") or ""),
@@ -449,7 +458,7 @@ def _activity_datatables_row(row: dict[str, Any]) -> dict[str, Any]:
         "recipient_identity": str(row.get("recipient_identity") or ""),
         "data_classes": str(row.get("data_classes") or ""),
         "reason_short": _activity_plain_reason_line(row),
-        "reason": _activity_display_reason(row),
+        "reason": dashboard._activity_display_reason(row),
         "action_detail": str(row.get("action_detail") or ""),
         "mode": str(row.get("mode") or row.get("privacy_policy") or ""),
         "session_hash": str(row.get("session_hash") or ""),
@@ -517,8 +526,8 @@ def _activity_datatables_payload(params: dict[str, str]) -> dict[str, Any]:
     sql += f" ORDER BY {sort_column} {sort_dir}, id DESC LIMIT ? OFFSET ?"
     page_params = [*query_params, length, start]
     try:
-        _ensure_activity_db()
-        with _activity_connect() as conn:
+        activity_store._ensure_activity_db()
+        with activity_store._activity_connect() as conn:
             rows = [_activity_row_from_sql(row) for row in conn.execute(sql, page_params).fetchall()]
     except Exception:
         rows = []
@@ -556,8 +565,8 @@ def _activity_turns_payload(params: dict[str, str]) -> dict[str, Any]:
     rows_by_gkey: dict[str, list[dict[str, Any]]] = {}
     total_turns = 0
     try:
-        _ensure_activity_db()
-        with _activity_connect() as conn:
+        activity_store._ensure_activity_db()
+        with activity_store._activity_connect() as conn:
             total_turns = int(
                 conn.execute(
                     f"SELECT COUNT(*) AS n FROM (SELECT 1 FROM activity GROUP BY {gkey_expr})"
@@ -650,7 +659,7 @@ def _group_activity_rows(
     limit: int | None = None,
     window_seconds: int | None = None,
 ) -> list[dict[str, Any]]:
-    window = _activity_group_seconds() if window_seconds is None else max(0, int(window_seconds))
+    window = activity_store._activity_group_seconds() if window_seconds is None else max(0, int(window_seconds))
     if window <= 0:
         grouped = [dict(row, count=1, first_ts=row.get("ts"), grouped=False) for row in rows]
         return grouped[:limit] if limit is not None else grouped
@@ -695,7 +704,7 @@ def _group_activity_rows(
 
 def _grouped_activity_rows(filters: dict[str, str], *, limit: int = 200) -> list[dict[str, Any]]:
     safe_limit = max(1, min(int(limit), 1000))
-    raw_limit = safe_limit if _activity_group_seconds() <= 0 else min(1000, max(safe_limit * 5, safe_limit))
+    raw_limit = safe_limit if activity_store._activity_group_seconds() <= 0 else min(1000, max(safe_limit * 5, safe_limit))
     return _group_activity_rows(_activity_rows(filters, limit=raw_limit), limit=safe_limit)
 
 
@@ -704,7 +713,7 @@ def _cron_job_choices_for_dashboard() -> list[dict[str, Any]]:
     try:
         parsed = json.loads(path.read_text()) if path.exists() else []
     except Exception as exc:
-        logger.warning("%s: failed to load cron job choices for dashboard: %s", _PLUGIN_NAME, exc)
+        core.logger.warning("%s: failed to load cron job choices for dashboard: %s", core._PLUGIN_NAME, exc)
         return []
     if isinstance(parsed, dict):
         raw_jobs: Any = parsed.get("jobs", parsed.get("items", []))
@@ -748,7 +757,7 @@ def _cron_job_choices_for_dashboard() -> list[dict[str, Any]]:
 
 def _runtime_risk_banners() -> list[dict[str, str]]:
     banners = []
-    if not _security_rule_enabled("intrinsic_exfiltration"):
+    if not core._security_rule_enabled("intrinsic_exfiltration"):
         banners.append(
             {
                 "id": "intrinsic_exfiltration_disabled",
@@ -756,7 +765,7 @@ def _runtime_risk_banners() -> list[dict[str, str]]:
                 "message": "Security rule intrinsic_exfiltration is disabled; same-call source-and-sink hard blocks are not active.",
             }
         )
-    if _unknown_tools_mode() == "allow":
+    if rules_mod._unknown_tools_mode() == "allow":
         banners.append(
             {
                 "id": "unknown_tools_allow",
@@ -764,7 +773,7 @@ def _runtime_risk_banners() -> list[dict[str, str]]:
                 "message": "Unknown-tools mode is allow; unrecognized tools are not gated under taint (legacy fail-open).",
             }
         )
-    if _llm_cron_context_enabled():
+    if rules_mod._llm_cron_context_enabled():
         banners.append(
             {
                 "id": "llm_cron_context",
@@ -772,10 +781,10 @@ def _runtime_risk_banners() -> list[dict[str, str]]:
                 "message": "LLM cron context is on; cron jobs supply their own authorization evidence to the verifier (high-risk cron egress still requires manual approval).",
             }
         )
-    if _self_grants_present():
+    if rules_mod._self_grants_present():
         # Doc 03 §3.3: a non-empty self.identities / self.hosts is a real send-to-self /
         # own-infra trust grant. Informational, so the grant is never invisible.
-        snapshot = _self_config_snapshot()
+        snapshot = rules_mod._self_config_snapshot()
         granted = []
         if snapshot.get("identities"):
             granted.append(f"{len(snapshot['identities'])} send-to-self identity(ies)")
@@ -828,9 +837,9 @@ _PERF_HOOK_LABELS = {
 
 def _performance_summary(*, sample_limit: int = 50) -> dict[str, Any]:
     """Aggregate recent per-check timings for the Performance dashboard tab."""
-    _ensure_activity_db()
+    activity_store._ensure_activity_db()
     try:
-        with _activity_connect() as conn:
+        with activity_store._activity_connect() as conn:
             rows = conn.execute(
                 """
                 SELECT ts, hook, tool_name, duration_us, llm_invoked, blocked
@@ -882,10 +891,10 @@ def _destination_trust_tally(*, limit: int = 500) -> dict[str, int]:
     `/guardian status` destination-trust summary, so an operator can spot an
     external/unknown they expected to be self. Metadata-only (reads the enum column).
     """
-    _ensure_activity_db()
+    activity_store._ensure_activity_db()
     tally: dict[str, int] = {}
     try:
-        with _activity_connect() as conn:
+        with activity_store._activity_connect() as conn:
             rows = conn.execute(
                 "SELECT destination_trust AS trust, COUNT(*) AS n FROM activity "
                 "WHERE decision NOT IN ('read', 'tainted') "
@@ -894,7 +903,7 @@ def _destination_trust_tally(*, limit: int = 500) -> dict[str, int]:
     except Exception:
         return {}
     for row in rows:
-        label = _normalize_destination_trust_label(row["trust"])
+        label = activity_store._normalize_destination_trust_label(row["trust"])
         tally[label] = tally.get(label, 0) + int(row["n"] or 0)
     return tally
 
@@ -939,11 +948,11 @@ def _destination_trust_seen(*, limit: int = 300, max_entries: int = 40) -> list[
     is surfaced so messaging egress can be grouped by recipient on the dashboard. Ordered
     most-recent-first, deduped by (destination, trust, recipient_identity).
     """
-    _ensure_activity_db()
+    activity_store._ensure_activity_db()
     counts: dict[tuple[str, str, str], int] = {}
     order: list[tuple[str, str, str]] = []
     try:
-        with _activity_connect() as conn:
+        with activity_store._activity_connect() as conn:
             rows = conn.execute(
                 "SELECT destination, destination_trust AS trust, recipient_identity FROM activity "
                 "WHERE decision NOT IN ('read', 'tainted') "
@@ -953,7 +962,7 @@ def _destination_trust_seen(*, limit: int = 300, max_entries: int = 40) -> list[
     except Exception:
         return []
     for row in rows:
-        trust = _normalize_destination_trust_label(row["trust"])
+        trust = activity_store._normalize_destination_trust_label(row["trust"])
         dest = str(row["destination"] or "")
         recipient = str(row["recipient_identity"] or "none")
         key = (dest, trust, recipient)
@@ -977,25 +986,25 @@ def _destination_trust_seen(*, limit: int = 300, max_entries: int = 40) -> list[
 
 def _destination_trust_summary() -> dict[str, Any]:
     """The destination-trust summary block for status + dashboard (doc 03 §2, §3.1)."""
-    self_snapshot = _self_config_snapshot()
+    self_snapshot = rules_mod._self_config_snapshot()
     return {
         "tally": _destination_trust_tally(),
         "seen": _destination_trust_seen(),
         "self": self_snapshot,
-        "trusted_recipients": _trusted_recipients_snapshot(),
-        "outward_sharing": _outward_sharing_snapshot(),
-        "self_grants_present": _self_grants_present(),
-        "env_overrides": _active_env_overrides(),
+        "trusted_recipients": rules_mod._trusted_recipients_snapshot(),
+        "outward_sharing": rules_mod._outward_sharing_snapshot(),
+        "self_grants_present": rules_mod._self_grants_present(),
+        "env_overrides": rules_mod._active_env_overrides(),
     }
 
 
 def _policy_snapshot() -> dict[str, Any]:
     with state._LOCK:
-        _prune_expired()
+        llm._prune_expired()
         sessions = [
             {
-                "session_label": _safe_session_label(sid),
-                "session_hash": _short_hash(sid),
+                "session_label": core._safe_session_label(sid),
+                "session_hash": core._short_hash(sid),
                 "taint": sorted(session.get("taint") or []),
                 "browser_host": session.get("browser_host") or "",
                 "private_browser_hosts": sorted(session.get("browser_private_hosts") or []),
@@ -1006,13 +1015,13 @@ def _policy_snapshot() -> dict[str, Any]:
             [
                 {
                     "id": approval.get("id"),
-                    "session_label": _safe_session_label(approval.get("session_id")),
-                    "session_hash": _short_hash(approval.get("session_id")),
+                    "session_label": core._safe_session_label(approval.get("session_id")),
+                    "session_hash": core._short_hash(approval.get("session_id")),
                     "tool_name": approval.get("tool_name"),
                     "action_family": approval.get("action_family"),
                     "destination": approval.get("destination"),
-                    "destination_trust": _normalize_destination_trust_label(approval.get("destination_trust")),
-                    "decision_step": _normalize_decision_step_label(approval.get("decision_step")),
+                    "destination_trust": activity_store._normalize_destination_trust_label(approval.get("destination_trust")),
+                    "decision_step": activity_store._normalize_decision_step_label(approval.get("decision_step")),
                     "purpose": approval.get("purpose", "unknown"),
                     "recipient_identity": approval.get("recipient_identity", "none"),
                     "data_classes": sorted(approval.get("data_classes") or []),
@@ -1022,7 +1031,7 @@ def _policy_snapshot() -> dict[str, Any]:
                     "expires_at": int(float(approval.get("expires_at") or 0)),
                     "cron_job_id": str(approval.get("cron_job_id") or ""),
                     "cron_job_name": str(approval.get("cron_job_name") or ""),
-                    "scope": _rule_scope_label(
+                    "scope": approvals._rule_scope_label(
                         {
                             "scope": {
                                 "cron_job_id": str(approval.get("cron_job_id") or ""),
@@ -1039,31 +1048,31 @@ def _policy_snapshot() -> dict[str, Any]:
             key=lambda item: int(item.get("created_at") or 0),
             reverse=True,
         )
-        rules = _persistent_privacy_rules()
+        rules = rules_mod._persistent_privacy_rules()
     suggestions = _dashboard_rule_form_suggestions(rules, pending)
     recent_blocks = _dashboard_recent_blocks(pending)
     risk_banners = _runtime_risk_banners()
     return {
-        "privacy_policy": _privacy_policy(),
-        "privacy_mode": _privacy_policy(),
-        "unknown_tools": _unknown_tools_mode(),
-        "llm_user_context": _llm_user_context_enabled(),
-        "llm_cron_context": _llm_cron_context_enabled(),
-        "persist_prompts": _persist_prompts_enabled(),
-        "llm_verifier_model": _llm_verifier_model(),
-        "llm_verifier_model_options": _verifier_model_options(),
-        "tool_overrides": _tool_overrides_snapshot(),
-        "tool_override_egress_options": sorted(_TOOL_OVERRIDE_EGRESS_VALUES),
-        "tool_override_direction_options": sorted(_TOOL_OVERRIDE_DIRECTIONS),
-        "all_privacy_classes": sorted(_ALL_PRIVACY_CLASSES),
+        "privacy_policy": core._privacy_policy(),
+        "privacy_mode": core._privacy_policy(),
+        "unknown_tools": rules_mod._unknown_tools_mode(),
+        "llm_user_context": rules_mod._llm_user_context_enabled(),
+        "llm_cron_context": rules_mod._llm_cron_context_enabled(),
+        "persist_prompts": rules_mod._persist_prompts_enabled(),
+        "llm_verifier_model": rules_mod._llm_verifier_model(),
+        "llm_verifier_model_options": rules_mod._verifier_model_options(),
+        "tool_overrides": rules_mod._tool_overrides_snapshot(),
+        "tool_override_egress_options": sorted(rules_mod._TOOL_OVERRIDE_EGRESS_VALUES),
+        "tool_override_direction_options": sorted(rules_mod._TOOL_OVERRIDE_DIRECTIONS),
+        "all_privacy_classes": sorted(core._ALL_PRIVACY_CLASSES),
         "destination_trust": _destination_trust_summary(),
         "risk_banners": risk_banners,
-        "security_rules": _security_rules_snapshot(),
-        "language_packs": _language_packs_snapshot(),
+        "security_rules": rules_mod._security_rules_snapshot(),
+        "language_packs": rules_mod._language_packs_snapshot(),
         "activity_db": str(state._ACTIVITY_DB_PATH),
-        "activity_max_rows": _activity_max_rows(),
-        "activity_retention_days": _activity_retention_days(),
-        "activity_group_seconds": _activity_group_seconds(),
+        "activity_max_rows": activity_store._activity_max_rows(),
+        "activity_retention_days": activity_store._activity_retention_days(),
+        "activity_group_seconds": activity_store._activity_group_seconds(),
         "sessions": sessions,
         "pending": pending,
         "recent_blocks": recent_blocks,
@@ -1086,7 +1095,7 @@ def _policy_snapshot() -> dict[str, Any]:
                 "recipient_identity": (rule.get("match") or {}).get("recipient_identity", ""),
                 "tool_name": (rule.get("match") or {}).get("tool_name", ""),
                 "data_classes": sorted((rule.get("match") or {}).get("data_classes") or []),
-                "scope": _rule_scope_label(rule),
+                "scope": approvals._rule_scope_label(rule),
                 "remaining_invocations": int(rule.get("remaining_invocations", -1)),
                 "owner_hash": str((rule.get("scope") or {}).get("owner_hash") or "*"),
                 "session_id": str((rule.get("scope") or {}).get("session_id") or ""),

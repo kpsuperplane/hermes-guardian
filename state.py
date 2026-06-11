@@ -2,9 +2,9 @@
 
 This module owns every piece of mutable runtime state for the plugin, the
 resolved on-disk state-dir paths, and the small clock/env helpers. It is a
-self-contained, normally-loadable module: `core.py` binds it as `state` in its
-shared global namespace (loaded before `_load_core_logic()`), so every
-exec-loaded logic file references these names as `state.<name>`.
+self-contained, normally-importable module: `core.py` loads it as the `state`
+submodule of the plugin package and every other module imports it directly, so
+they reference these names as `state.<name>`.
 """
 
 from __future__ import annotations

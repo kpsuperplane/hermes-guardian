@@ -881,7 +881,7 @@ The implementation is split by responsibility:
 
 | Path | Responsibility |
 | --- | --- |
-| `core.py` | Composition root, shared global namespace, constants, loader, and `register(ctx)`. |
+| `core.py` | Composition root: shared constants, module wiring, and `register(ctx)`. |
 | `hooks.py` | Hook orchestration. Security checks run before privacy checks. |
 | `security/` | Sensitive-content scanner and core-facing wrappers. |
 | `privacy/` | Taint tracking, egress classification, rules, approvals, action details, and LLM verifier helpers. |
@@ -892,12 +892,13 @@ The implementation is split by responsibility:
 | `language_packs/` | Declarative semantic detection packs. |
 | `tests/` | Behavior-focused pytest suite. |
 
-`core.py` exec-loads most modules into one shared global namespace. The ordered
-module list is `_CORE_LOGIC_MODULES`; update that tuple and
-`tests/test_loader_contract.py` together when changing loader order or adding
-exec-loaded files. Avoid adding normal relative imports between exec-loaded
-modules unless doing a deliberate loader refactor. Duplicate top-level
-definitions in exec-loaded modules must be intentional and listed in
+The logic files are real, normally-importable modules. `core.py` imports them in
+dependency order at the bottom of the file (after its constants), using the list
+in `_CORE_LOGIC_MODULES`; update that tuple and `tests/test_loader_contract.py`
+together when changing load order or adding a module. Cross-module references use
+module-object imports (`from . import rules`; call `rules._foo()`) so the
+import cycles and test/Hermes monkeypatching keep working. Duplicate top-level
+definitions across modules must be intentional and listed in
 `_CORE_LOGIC_ALLOWED_REBINDS`.
 
 Guardian registers these Hermes hooks:

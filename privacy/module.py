@@ -5,14 +5,28 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from . import action_details
+from . import approvals
+from . import capability
+from . import destinations
+from . import llm
+from . import policy
+from . import rules
+from . import tool_policy
+from .. import core
+from .. import state
+from ..integrations import cron_notifications
+from ..runtime import activity_store
+from ..security import module as security_module
+
 
 
 def _emit_read_activity_if_applicable(tool_name: str, args: Any, session_id: str | None) -> bool:
-    read_activity = _read_activity_for_tool(tool_name, args, session_id)
+    read_activity = tool_policy._read_activity_for_tool(tool_name, args, session_id)
     if not read_activity:
         return False
     action_family, destination = read_activity
-    _emit_activity(
+    activity_store._emit_activity(
         "read",
         session_id=session_id,
         tool_name=tool_name,
@@ -20,7 +34,7 @@ def _emit_read_activity_if_applicable(tool_name: str, args: Any, session_id: str
         destination=destination,
         data_classes=set(),
         reason="public read",
-        action_detail=_activity_action_detail(tool_name, args, action_family, destination),
+        action_detail=action_details._activity_action_detail(tool_name, args, action_family, destination),
     )
     return True
 
@@ -34,10 +48,10 @@ def _record_allowed_tool_side_effects(
     mark_browser_private_input: bool = False,
 ) -> None:
     if str(tool_name or "").lower() == "browser_navigate":
-        _set_browser_host(session_id, _extract_url(args))
+        tool_policy._set_browser_host(session_id, tool_policy._extract_url(args))
     if mark_browser_private_input and action_family == "browser_type":
-        _mark_browser_private_input(session_id)
-    _record_local_system_result_policy(session_id, tool_name, args)
+        tool_policy._mark_browser_private_input(session_id)
+    tool_policy._record_local_system_result_policy(session_id, tool_name, args)
 
 
 def _emit_egress_activity(
@@ -61,7 +75,7 @@ def _emit_egress_activity(
     destination_trust: str = "unknown",
     decision_step: str = "",
 ) -> None:
-    _emit_activity(
+    activity_store._emit_activity(
         decision,
         session_id=session_id,
         owner_hash=owner_hash,
@@ -84,10 +98,10 @@ def _emit_egress_activity(
     )
 
 
-def _allow_privacy_off_tool_call(tool_name: str, args: Any, session_id: str | None, action: ToolAction | None) -> None:
+def _allow_privacy_off_tool_call(tool_name: str, args: Any, session_id: str | None, action: tool_policy.ToolAction | None) -> None:
     if action:
         action_family, destination = action.as_tuple()
-        data_classes = _data_classes_for_egress(session_id, args)
+        data_classes = tool_policy._data_classes_for_egress(session_id, args)
         if data_classes:
             _emit_egress_activity(
                 "privacy_off_allowed",
@@ -97,7 +111,7 @@ def _allow_privacy_off_tool_call(tool_name: str, args: Any, session_id: str | No
                 destination=destination,
                 data_classes=data_classes,
                 reason="privacy policy off",
-                action_detail=_activity_action_detail(tool_name, args, action_family, destination),
+                action_detail=action_details._activity_action_detail(tool_name, args, action_family, destination),
                 purpose=action.purpose,
                 recipient_identity=action.recipient_identity,
             )
@@ -126,7 +140,7 @@ def _allow_untainted_tool_call(
         destination=destination,
         data_classes=set(),
         reason="no private data in scope",
-        action_detail=_activity_action_detail(tool_name, args, action_family, destination),
+        action_detail=action_details._activity_action_detail(tool_name, args, action_family, destination),
         purpose=purpose,
         recipient_identity=recipient_identity,
         destination_trust=destination_trust,
@@ -170,7 +184,7 @@ def _allow_intra_boundary_tool_call(
         destination=destination,
         data_classes=data_classes,
         reason=reason,
-        action_detail=_activity_action_detail(tool_name, args, action_family, destination),
+        action_detail=action_details._activity_action_detail(tool_name, args, action_family, destination),
         purpose=purpose,
         recipient_identity=recipient_identity,
         destination_trust=_trust_label(trust),
@@ -246,7 +260,7 @@ def _block_for_privacy_rule(shape: dict[str, Any], tool_name: str, source: dict[
         destination_trust=shape.get("destination_trust", "unknown"),
         decision_step=shape.get("decision_step", ""),
     )
-    _notify_cron_failure_if_needed(
+    cron_notifications._notify_cron_failure_if_needed(
         session_id=shape.get("session_id", ""),
         tool_name=tool_name,
         decision="blocked",
@@ -270,12 +284,12 @@ def _block_for_privacy_rule(shape: dict[str, Any], tool_name: str, source: dict[
 
 
 def _allow_read_only_tool_call(shape: dict[str, Any], tool_name: str, args: Any) -> None:
-    logger.info(
+    core.logger.info(
         "%s: read-only policy approved low-risk Hermes Guardian %s to %s for session %s",
-        _PLUGIN_NAME,
+        core._PLUGIN_NAME,
         shape.get("action_family", ""),
         shape.get("destination", ""),
-        _normalize_session_id(shape.get("session_id", "")),
+        tool_policy._normalize_session_id(shape.get("session_id", "")),
     )
     _emit_egress_activity(
         "auto_approved",
@@ -297,14 +311,14 @@ def _allow_read_only_tool_call(shape: dict[str, Any], tool_name: str, args: Any)
 
 
 def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: Any) -> tuple[dict[str, str] | None, str | None]:
-    hard_reason = _llm_hard_deny_reason(shape, args)
+    hard_reason = llm._llm_hard_deny_reason(shape, args)
     if hard_reason:
-        logger.info(
+        core.logger.info(
             "%s: hard-blocked Hermes Guardian %s to %s for session %s (%s)",
-            _PLUGIN_NAME,
+            core._PLUGIN_NAME,
             shape.get("action_family", ""),
             shape.get("destination", ""),
-            _normalize_session_id(shape.get("session_id", "")),
+            tool_policy._normalize_session_id(shape.get("session_id", "")),
             hard_reason,
         )
         _emit_egress_activity(
@@ -322,7 +336,7 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
             destination_trust=shape.get("destination_trust", "unknown"),
             decision_step=shape.get("decision_step", ""),
         )
-        _notify_cron_failure_if_needed(
+        cron_notifications._notify_cron_failure_if_needed(
             session_id=shape.get("session_id", ""),
             tool_name=tool_name,
             decision="security_blocked",
@@ -333,14 +347,14 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
             destination_trust=shape.get("destination_trust", "unknown"),
             decision_step=shape.get("decision_step", ""),
         )
-        return {"action": "block", "message": _block_message(hard_reason)}, None
+        return {"action": "block", "message": security_module._block_message(hard_reason)}, None
 
-    cached = _cached_deny_verdict(shape)
-    verdict = cached if cached is not None else _llm_security_verdict(shape, args)
+    cached = llm._cached_deny_verdict(shape)
+    verdict = cached if cached is not None else llm._llm_security_verdict(shape, args)
     if (
         verdict.get("outcome") == "allow"
         and verdict.get("risk_level") == "high"
-        and _is_cron_session_id(shape.get("session_id"))
+        and approvals._is_cron_session_id(shape.get("session_id"))
     ):
         # Cron runs unattended with no human to catch a bad auto-approval, so a
         # cron job can never self-authorize high-risk egress even when cron
@@ -353,18 +367,18 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
     if cached is None:
         # Cache only freshly-computed denials so retried/looping blocked actions
         # don't re-pay the verifier latency.
-        _store_deny_verdict(shape, verdict)
+        llm._store_deny_verdict(shape, verdict)
     if verdict.get("outcome") == "allow":
         reason = (
             f"llm {verdict.get('risk_level', 'unknown')}: "
             f"{verdict.get('rationale', 'approved')}"
         )
-        logger.info(
+        core.logger.info(
             "%s: LLM-approved Hermes Guardian %s to %s for session %s",
-            _PLUGIN_NAME,
+            core._PLUGIN_NAME,
             shape.get("action_family", ""),
             shape.get("destination", ""),
-            _normalize_session_id(shape.get("session_id", "")),
+            tool_policy._normalize_session_id(shape.get("session_id", "")),
         )
         _emit_egress_activity(
             "auto_approved",
@@ -416,7 +430,7 @@ def _egress_gating_policy_classes(data_classes: Any) -> set[str]:
         fine = set(data_classes or ())
     except TypeError:
         return set()
-    return set(_taint_policy_classes(fine)) & set(_EGRESS_GATING_POLICY_CLASSES)
+    return set(policy._taint_policy_classes(fine)) & set(policy._EGRESS_GATING_POLICY_CLASSES)
 
 
 def _record_turn_external_denial(session_id: Any, data_classes: Any) -> None:
@@ -424,7 +438,7 @@ def _record_turn_external_denial(session_id: Any, data_classes: Any) -> None:
     if not classes:
         return
     with state._LOCK:
-        state._TURN_DENIED_EXTERNAL.setdefault(_normalize_session_id(session_id), set()).update(classes)
+        state._TURN_DENIED_EXTERNAL.setdefault(tool_policy._normalize_session_id(session_id), set()).update(classes)
 
 
 def _turn_external_denial_hit(session_id: Any, data_classes: Any) -> bool:
@@ -432,7 +446,7 @@ def _turn_external_denial_hit(session_id: Any, data_classes: Any) -> bool:
     if not classes:
         return False
     with state._LOCK:
-        remembered = state._TURN_DENIED_EXTERNAL.get(_normalize_session_id(session_id))
+        remembered = state._TURN_DENIED_EXTERNAL.get(tool_policy._normalize_session_id(session_id))
         return bool(remembered and (classes & remembered))
 
 
@@ -448,15 +462,15 @@ def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_r
     # Withholding a private->external egress arms the turn lockdown so a re-route
     # through another channel this turn cannot be auto-allowed (channel-shop defense).
     _record_turn_external_denial(shape.get("session_id"), shape.get("data_classes"))
-    approval = _create_pending_approval(shape)
+    approval = approvals._create_pending_approval(shape)
     approval["reason"] = blocked_reason
-    _save_pending_approval_to_store_unlocked(approval)
-    logger.info(
+    approvals._save_pending_approval_to_store_unlocked(approval)
+    core.logger.info(
         "%s: blocked Hermes Guardian %s to %s for session %s",
-        _PLUGIN_NAME,
+        core._PLUGIN_NAME,
         shape.get("action_family", ""),
         shape.get("destination", ""),
-        _normalize_session_id(shape.get("session_id", "")),
+        tool_policy._normalize_session_id(shape.get("session_id", "")),
     )
     _emit_egress_activity(
         "blocked",
@@ -474,7 +488,7 @@ def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_r
         destination_trust=shape.get("destination_trust", "unknown"),
         decision_step=shape.get("decision_step", ""),
     )
-    _notify_cron_failure_if_needed(
+    cron_notifications._notify_cron_failure_if_needed(
         session_id=shape.get("session_id", ""),
         tool_name=tool_name,
         decision="blocked",
@@ -486,7 +500,7 @@ def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_r
         destination_trust=shape.get("destination_trust", "unknown"),
         decision_step=shape.get("decision_step", ""),
     )
-    return {"action": "block", "message": _guardian_block_message(approval)}
+    return {"action": "block", "message": approvals._guardian_block_message(approval)}
 
 
 # --- decide() is authoritative (Phase 3, doc 04 §5) --------------------------
@@ -522,11 +536,11 @@ def _shadow_decision_for(tool_name: str, args: Any, session_id: str | None):
     retired, doc 02 §4) and the current purpose/mode — exactly the set the live path below
     feeds it, so the test exercises the real decision.
     """
-    cap = classify(tool_name, args, session_id)
-    taint = _data_classes_for_egress(session_id, args)
-    purpose = _purpose_from_args(args)
-    mode = _privacy_policy()
-    decision = decide(cap, taint, purpose, mode)
+    cap = capability.classify(tool_name, args, session_id)
+    taint = tool_policy._data_classes_for_egress(session_id, args)
+    purpose = tool_policy._purpose_from_args(args)
+    mode = core._privacy_policy()
+    decision = policy.decide(cap, taint, purpose, mode)
     return cap, decision
 
 
@@ -547,23 +561,23 @@ def _trusted_destination_match(action_family: str, args: Any, data_classes: set[
     class can never wave through another.
     """
     leaving = set(data_classes or set())
-    entries = _trusted_recipients_snapshot()
+    entries = rules._trusted_recipients_snapshot()
     if action_family == "terminal_exec":
-        command = _terminal_command_for_args(args)
+        command = tool_policy._terminal_command_for_args(args)
         if command:
             for entry in entries:
                 if (
                     entry.get("kind") == "command"
-                    and _trusted_command_matches(entry.get("value"), command)
+                    and tool_policy._trusted_command_matches(entry.get("value"), command)
                     and _trusted_destination_classes_cover(entry.get("classes"), leaving)
                 ):
                     return entry
-    recipient = _normalize_identity(_recipient_raw_from_args(args))
+    recipient = destinations._normalize_identity(tool_policy._recipient_raw_from_args(args))
     if recipient:
         for entry in entries:
             if (
                 entry.get("kind") == "identity"
-                and _normalize_identity(entry.get("value")) == recipient
+                and destinations._normalize_identity(entry.get("value")) == recipient
                 and _trusted_destination_classes_cover(entry.get("classes"), leaving)
             ):
                 return entry
@@ -592,7 +606,7 @@ def _allow_trusted_destination_call(
         destination=destination,
         data_classes=data_classes,
         reason=f"matched trusted destination ({kind})",
-        action_detail=_activity_action_detail(tool_name, args, action_family, destination),
+        action_detail=action_details._activity_action_detail(tool_name, args, action_family, destination),
         purpose=purpose,
         recipient_identity=recipient_identity,
         destination_trust="trusted_recipient",
@@ -611,7 +625,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
       4. A sink: build the Capability, resolve the runtime/persistent approval source, then
          call ``decide`` and map ALLOW/BLOCK/APPROVE onto the existing mechanics.
     """
-    intrinsic_risk = _intrinsic_risk_for_tool(tool_name, args)
+    intrinsic_risk = tool_policy._intrinsic_risk_for_tool(tool_name, args)
     if intrinsic_risk:
         reason = str(intrinsic_risk.get("reason") or "intrinsic source-and-sink risk")
         action_family = str(intrinsic_risk.get("action_family") or "")
@@ -633,7 +647,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
             reason=reason,
             action_detail=action_detail,
         )
-        _notify_cron_failure_if_needed(
+        cron_notifications._notify_cron_failure_if_needed(
             session_id=session_id,
             tool_name=tool_name,
             decision="security_blocked",
@@ -642,10 +656,10 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
             data_classes=data_classes,
             reason=reason,
         )
-        return {"action": "block", "message": f"Blocked by {_PLUGIN_NAME}: {reason}."}
+        return {"action": "block", "message": f"Blocked by {core._PLUGIN_NAME}: {reason}."}
 
-    privacy_policy = _privacy_policy()
-    action = _egress_action_context_for_tool(tool_name, args, session_id)
+    privacy_policy = core._privacy_policy()
+    action = tool_policy._egress_action_context_for_tool(tool_name, args, session_id)
 
     if privacy_policy == "off":
         # off disables ONLY private-egress checks; security already ran (charter §5).
@@ -659,15 +673,15 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
         return None
 
     action_family, destination = action.as_tuple()
-    data_classes = _data_classes_for_egress(session_id, args)
+    data_classes = tool_policy._data_classes_for_egress(session_id, args)
     # Resolve the Capability + decide() step ONCE up front so every emit path (approval
     # source match, block, approve, verifier) stamps the activity row with the SAME
     # destination trust + decide step (doc 03 §3.2). decide_with_step is pure; the outcome
     # it returns equals what the authoritative decide() below returns (asserted by test).
-    cap = classify(tool_name, args, session_id)
-    decision, decision_step = decide_with_step(cap, data_classes, action.purpose, privacy_policy)
+    cap = capability.classify(tool_name, args, session_id)
+    decision, decision_step = policy.decide_with_step(cap, data_classes, action.purpose, privacy_policy)
     destination_trust = _trust_label(getattr(cap.destination, "trust", None))
-    shape = _approval_shape(
+    shape = llm._approval_shape(
         session_id=session_id,
         tool_name=tool_name,
         action_family=action_family,
@@ -687,7 +701,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
     # this stays the authoritative source for an explicit user-granted allow/deny (doc 04
     # §5 "Persistent privacy.rules semantics"). When a source matches it wins, exactly as
     # before.
-    source = _approval_source(shape)
+    source = rules._approval_source(shape)
     if source:
         if source.get("effect") == "deny":
             return _block_for_privacy_rule(shape, tool_name, source)
@@ -695,7 +709,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
         return None
 
     # No explicit approval source: the engine decision computed up front (doc 02 §3).
-    if decision == _DECISION_ALLOW:
+    if decision == policy._DECISION_ALLOW:
         if not data_classes:
             # No private content leaving — the old "no private data in scope" allow.
             _allow_untainted_tool_call(
@@ -727,7 +741,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
             )
         return None
 
-    if decision == _DECISION_BLOCK:
+    if decision == policy._DECISION_BLOCK:
         # A deny declassification rule that match_declassification_rule caught but the
         # richer _approval_source matcher did not (e.g. a rule keyed purely on
         # purpose/classes/destination without a fingerprint). Preserve the deny block path.
@@ -761,9 +775,9 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
     if action_family == "terminal_exec":
         # Remember a safe prefix of this gated command so the Trusted-destinations picker
         # can offer "trust this" (recent-blocks source). Flags/values are stripped.
-        suggestion = _command_prefix_for_suggestion(_terminal_command_for_args(args))
+        suggestion = tool_policy._command_prefix_for_suggestion(tool_policy._terminal_command_for_args(args))
         if suggestion:
-            _record_command_suggestion(suggestion)
+            activity_store._record_command_suggestion(suggestion)
 
     # decision == APPROVE: gate for human approval (doc 02 §3 step 6).
     # Cross-channel turn lockdown (channel-shopping defense): if a private export of
@@ -773,7 +787,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
     # this turn. Channel-agnostic; turn-scoped (cleared on the next user input).
     lockdown = _turn_external_denial_hit(session_id, data_classes)
 
-    if privacy_policy == "read-only" and not lockdown and _read_only_auto_approves(shape, args):
+    if privacy_policy == "read-only" and not lockdown and llm._read_only_auto_approves(shape, args):
         # read-only's metadata-verified low-risk auto-approve preset (doc 02 §6): a
         # read-only auto-approval that happens today must still happen.
         _allow_read_only_tool_call(shape, tool_name, args)
@@ -815,12 +829,12 @@ def _privacy_observe_tool_result(
         parsed = result
 
     local_system_policy = (
-        _consume_local_system_result_policy(session_id, tool_name)
-        if _is_local_system_tool(tool_name)
+        tool_policy._consume_local_system_result_policy(session_id, tool_name)
+        if tool_policy._is_local_system_tool(tool_name)
         else {}
     )
     public_remote_read = bool(local_system_policy.get("remote_read"))
-    taint_classes = _taint_classes_for_tool_result(
+    taint_classes = tool_policy._taint_classes_for_tool_result(
         tool_name,
         parsed,
         status=status,
@@ -828,24 +842,24 @@ def _privacy_observe_tool_result(
         local_system_policy=local_system_policy,
     )
     if taint_classes:
-        _taint_session(session_id, taint_classes)
+        tool_policy._taint_session(session_id, taint_classes)
         # Provenance retired (doc 02 §4): the read taints the session ambiently; there is
         # no read-time fingerprint index. ``decide`` reasons over this ambient taint.
-        _emit_activity(
+        activity_store._emit_activity(
             "tainted",
             session_id=session_id,
             tool_name=tool_name,
             data_classes=taint_classes,
-            reason=_taint_reason_for_tool_result(tool_name, taint_classes),
+            reason=tool_policy._taint_reason_for_tool_result(tool_name, taint_classes),
         )
 
     if str(tool_name or "").lower().startswith("browser_"):
-        url = _extract_url(parsed)
+        url = tool_policy._extract_url(parsed)
         if url:
-            _set_browser_host(session_id, url)
-        if _browser_result_has_private_context(parsed):
-            _mark_browser_private_input(session_id)
-            _emit_activity(
+            tool_policy._set_browser_host(session_id, url)
+        if tool_policy._browser_result_has_private_context(parsed):
+            tool_policy._mark_browser_private_input(session_id)
+            activity_store._emit_activity(
                 "tainted",
                 session_id=session_id,
                 tool_name=tool_name,
@@ -868,7 +882,7 @@ def _final_response_destination(
     recipient: str = "",
     chat_type: str = "",
 ) -> str:
-    state = _ensure_session(session_id)
+    state = tool_policy._ensure_session(session_id)
     platform = str(platform or state.get("platform") or "unknown").strip().lower() or "unknown"
     recipient = str(recipient or "").strip()
     chat_type = str(chat_type or "").strip().lower()
@@ -876,7 +890,7 @@ def _final_response_destination(
     if chat_type:
         parts.append(chat_type)
     if recipient:
-        parts.append(_short_hash(recipient))
+        parts.append(core._short_hash(recipient))
     return ":".join(parts)
 
 
@@ -887,7 +901,7 @@ def _final_destination_is_owner_private(
     sender_id: str = "",
     chat_type: str = "",
 ) -> bool:
-    state = _ensure_session(session_id)
+    state = tool_policy._ensure_session(session_id)
     platform = str(platform or state.get("platform") or "unknown").strip().lower()
     sender_id = str(sender_id or state.get("sender_id") or "").strip()
     chat_type = str(chat_type or "").strip().lower()
@@ -897,22 +911,22 @@ def _final_destination_is_owner_private(
         return False
     owner_hash = str(state.get("owner_hash") or "")
     if sender_id:
-        return _hash_identity(platform or "unknown", sender_id) == owner_hash
+        return tool_policy._hash_identity(platform or "unknown", sender_id) == owner_hash
     return bool(owner_hash and platform and platform != "unknown")
 
 
 def _privacy_transform_llm_output(response_text: str = "", **kwargs: Any) -> str | None:
     session_id = str(kwargs.get("session_id") or "")
-    if not _session_taint(session_id):
+    if not tool_policy._session_taint(session_id):
         return None
-    classes = _data_classes_for_egress(session_id, response_text)
+    classes = tool_policy._data_classes_for_egress(session_id, response_text)
     if not classes:
         return None
     platform = str(kwargs.get("platform") or "")
     sender_id = str(kwargs.get("sender_id") or kwargs.get("user_id") or "")
     chat_type = str(kwargs.get("chat_type") or kwargs.get("channel_type") or kwargs.get("conversation_type") or "")
     recipient = str(kwargs.get("recipient") or kwargs.get("to") or kwargs.get("chat_id") or kwargs.get("channel") or "")
-    recipient_identity = _recipient_identity_from_value(recipient)
+    recipient_identity = tool_policy._recipient_identity_from_value(recipient)
     destination = _final_response_destination(
         session_id=session_id,
         platform=platform,

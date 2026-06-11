@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 
 from support import *  # noqa: F403
@@ -97,6 +98,50 @@ def test_facade_keeps_loader_helpers_private():
 
     for name in plugin._FACADE_CALLABLE_DENYLIST:
         assert not hasattr(plugin, name)
+
+
+def test_core_has_no_exec_based_logic_loader():
+    # The logic files are real, normally-importable modules now; core must not carry
+    # the old exec/compile shared-namespace loader.
+    core_src = (ROOT / "core.py").read_text(encoding="utf-8")
+    for forbidden in ("_load_core_logic", "_load_logic_module", "exec("):
+        assert forbidden not in core_src, f"exec-loader remnant in core.py: {forbidden}"
+
+
+def test_logic_modules_are_real_importable_modules():
+    # Each _CORE_LOGIC_MODULES entry is a genuine module object reachable through the
+    # canonical package, not a namespace fragment exec'd into core's globals.
+    import types
+
+    plugin = load_plugin()
+    pkg = sys.modules["_hermes_guardian"]
+    assert isinstance(pkg, types.ModuleType)
+    for module_name in plugin._CORE._CORE_LOGIC_MODULES:
+        dotted = "_hermes_guardian." + module_name.replace("/", ".")
+        module = sys.modules.get(dotted)
+        assert isinstance(module, types.ModuleType), f"{dotted} is not a real module"
+
+
+def test_logic_modules_import_without_cycle_errors():
+    # Loading the plugin imports every logic module in dependency order; the call-time
+    # module-object references must tolerate the mutual import edges (rules<->llm,
+    # approvals<->cron_notifications, ...) without raising at import.
+    plugin = load_plugin()
+    assert plugin._CORE._core_logic_missing_required_symbols() == ()
+
+
+def test_core_monkeypatch_propagates_to_owning_module():
+    # Patching core.<name> for a re-exported logic symbol must reach the module that
+    # actually defines it, since the logic modules call each other by module attribute.
+    plugin = load_plugin()
+    rules_mod = sys.modules["_hermes_guardian.privacy.rules"]
+    original = plugin._CORE._security_rule_enabled
+    sentinel = object()
+    try:
+        setattr(plugin._CORE, "_security_rule_enabled", sentinel)
+        assert rules_mod._security_rule_enabled is sentinel
+    finally:
+        setattr(plugin._CORE, "_security_rule_enabled", original)
 
 
 def test_facade_monkeypatches_sync_to_core_for_bridged_calls(monkeypatch):

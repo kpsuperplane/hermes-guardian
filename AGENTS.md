@@ -95,8 +95,9 @@ runtime state unless the task explicitly requires it.
 - `__init__.py`: Hermes-facing facade. It loads `core.py` by absolute path and
   bridges private globals/functions so tests and Hermes imports can monkeypatch
   state.
-- `core.py`: composition root and shared global namespace. It defines constants,
-  mutable process state, regexes, helper loaders, and `register(ctx)`.
+- `core.py`: composition root. It defines the shared constants, regexes, and
+  policy text, binds the `state` module and reusable helpers, imports the logic
+  modules in dependency order, and exposes `register(ctx)`.
 - `hooks.py`: hook orchestration only. Security checks run before privacy checks;
   hook-level exceptions fail closed where data could leak.
 - `security/`: reusable sensitive-content scanner plus core-facing wrappers.
@@ -122,23 +123,39 @@ agent files.
 
 ## Loader And Namespace Rules
 
-`core.py` deliberately exec-loads most module files into one shared global
-namespace via `_load_core_logic()`. Files under `privacy/`, `runtime/`, `ui/`,
-`integrations/`, and `hooks.py` often reference globals defined in `core.py` or
-in modules loaded earlier. They are not normal isolated modules when executed by
-the plugin.
+Every module under `privacy/`, `runtime/`, `ui/`, `integrations/`, plus
+`hooks.py` and `state.py`, is a real, normally-importable module. `core.py`
+anchors a canonical package (`_hermes_guardian`) rooted at the plugin directory
+and imports the logic modules as its submodules, in the dependency order listed
+in `_CORE_LOGIC_MODULES`. Each module imports the names it uses: stdlib at the
+top, sibling/cross-package logic modules as module objects (`from . import
+rules`, `from ..runtime import activity_store`, `from .. import core`,
+`from . import state`), and references them as `rules._foo`, `state._LOCK`, etc.
+Cross-module calls go through the module object at call time, which tolerates the
+mutual-import cycles (rules↔llm, approvals↔cron_notifications, …).
+
+`core.py` defines the shared constants/regexes/policy text, binds `state` and the
+three reusable helpers (`_presentation`, `_security`, `_language`), then imports
+the logic modules at the BOTTOM (after all constants exist) and re-exports their
+public names onto itself so the façade's `dir(_CORE)` bridge still reaches every
+handler/helper as `core.<name>`. Core's module type propagates an attribute set
+on `core.<name>` down to the logic module that defines it, so patching
+`plugin._CORE.<name>` in tests still intercepts the live call path.
 
 When editing this code:
 
-- Preserve the `_load_core_logic()` load order unless you have traced every
-  cross-file dependency and updated tests.
-- Do not casually add normal relative imports between exec-loaded modules.
-  Prefer the existing shared-global style unless doing a deliberate loader
-  refactor.
-- Keep reusable standalone imports in modules that are imported normally, such
-  as `security/scanner.py`, `language_packs/runtime.py`, and
-  `ui/presentation.py`.
-- If a function must be monkeypatched through the facade in tests, ensure
+- Add the import a name needs; do not rely on a shared namespace. Run
+  `python3 scripts/_refactor_analysis.py check` to confirm a module has no
+  unresolved free names.
+- Keep `core.py`'s logic-module import block at the bottom and in
+  `_CORE_LOGIC_MODULES` order; new constants must be defined above it.
+- Use module-object imports (`from . import rules`; call `rules._foo()`), not
+  `from .rules import _foo`, so cycles and test/Hermes monkeypatching keep
+  working. Alias a module import when its leaf collides with a local (e.g.
+  `from ..privacy import rules as rules_mod`).
+- Keep reusable standalone modules importable on their own:
+  `security/scanner.py`, `language_packs/runtime.py`, `ui/presentation.py`.
+- If a function must be monkeypatched through the façade in tests, ensure
   `__init__.py` can bridge it correctly.
 - Dashboard API loading must continue to work outside the plugin current working
   directory; see `tests/test_hooks_registration.py`.
@@ -586,8 +603,9 @@ sharing process-global state across tests.
 
 ## Common Pitfalls
 
-- Adding a normal import that works when a file is imported directly but fails
-  when `core.py` exec-loads it.
+- Using `from .module import name` instead of a module-object import
+  (`from . import module`; call `module.name()`) for a cross-module reference,
+  which breaks an import cycle or defeats test/Hermes monkeypatching.
 - Storing raw tool args or content in activity rows, approval records, dashboard
   payloads, or notification messages. (The `llm` verifier input is the deliberate
   exception — it receives the real payload — but its output rationale and all

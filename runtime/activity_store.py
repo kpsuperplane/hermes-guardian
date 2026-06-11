@@ -6,6 +6,12 @@ import re
 import sqlite3
 from typing import Any
 
+from .. import core
+from .. import state
+from ..privacy import approvals
+from ..privacy import rules
+from ..privacy import tool_policy
+
 
 def _activity_connect() -> sqlite3.Connection:
     state._ACTIVITY_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -27,25 +33,25 @@ def _activity_connect() -> sqlite3.Connection:
 def _activity_max_rows() -> int:
     # Document `retention.max_rows` is the source of truth; the env var still overrides
     # for ops (doc 03 §1.2). _retention_setting handles the precedence + surfacing.
-    value, _overridden = _retention_setting(
-        "max_rows", _ACTIVITY_MAX_ROWS_ENV, _DEFAULT_ACTIVITY_MAX_ROWS
+    value, _overridden = rules._retention_setting(
+        "max_rows", core._ACTIVITY_MAX_ROWS_ENV, core._DEFAULT_ACTIVITY_MAX_ROWS
     )
     return value
 
 
 def _activity_retention_days() -> int:
-    value, _overridden = _retention_setting(
-        "max_age_days", _ACTIVITY_RETENTION_DAYS_ENV, _DEFAULT_ACTIVITY_RETENTION_DAYS
+    value, _overridden = rules._retention_setting(
+        "max_age_days", core._ACTIVITY_RETENTION_DAYS_ENV, core._DEFAULT_ACTIVITY_RETENTION_DAYS
     )
     return value
 
 
 def _activity_group_seconds() -> int:
-    raw = state._env(_ACTIVITY_GROUP_SECONDS_ENV, str(_DEFAULT_ACTIVITY_GROUP_SECONDS)).strip()
+    raw = state._env(core._ACTIVITY_GROUP_SECONDS_ENV, str(core._DEFAULT_ACTIVITY_GROUP_SECONDS)).strip()
     try:
         value = int(raw)
     except ValueError:
-        return _DEFAULT_ACTIVITY_GROUP_SECONDS
+        return core._DEFAULT_ACTIVITY_GROUP_SECONDS
     return max(0, min(value, 3600))
 
 
@@ -205,7 +211,7 @@ def _ensure_activity_db() -> None:
                 conn.execute("CREATE INDEX IF NOT EXISTS command_suggestions_ts_idx ON command_suggestions(last_ts)")
             state._ACTIVITY_DB_INITIALIZED = True
         except Exception as exc:
-            logger.debug("%s: failed to initialize activity db: %s", _PLUGIN_NAME, exc)
+            core.logger.debug("%s: failed to initialize activity db: %s", core._PLUGIN_NAME, exc)
 
 
 # Allowed destination-trust labels persisted on a row (doc 03 §3.2). A garbage / empty
@@ -251,7 +257,7 @@ def _record_command_suggestion(prefix: str) -> None:
                 (text[:400], int(state._now())),
             )
     except Exception as exc:
-        logger.debug("%s: failed to record command suggestion: %s", _PLUGIN_NAME, exc)
+        core.logger.debug("%s: failed to record command suggestion: %s", core._PLUGIN_NAME, exc)
 
 
 def _recent_command_suggestions(limit: int = 20) -> list[dict[str, Any]]:
@@ -268,7 +274,7 @@ def _recent_command_suggestions(limit: int = 20) -> list[dict[str, Any]]:
             for row in rows
         ]
     except Exception as exc:
-        logger.debug("%s: failed to read command suggestions: %s", _PLUGIN_NAME, exc)
+        core.logger.debug("%s: failed to read command suggestions: %s", core._PLUGIN_NAME, exc)
         return []
 
 
@@ -300,23 +306,23 @@ def _emit_activity(
     ``decision_step`` (a decide() step label) are METADATA ONLY — no payload content
     (doc 03 §5 / invariant #5). They default to display-safe values for callers/old rows.
     """
-    if decision not in _ACTIVITY_DECISIONS:
+    if decision not in core._ACTIVITY_DECISIONS:
         decision = "allowed"
     if not module:
         if decision in {"security_blocked", "security_suppressed"}:
             module = "security"
         elif decision in {"allowed", "auto_approved", "blocked", "denied", "manual_approved", "privacy_off_allowed", "tainted"}:
             module = "privacy"
-    safe_classes = sorted(str(cls) for cls in (data_classes or []) if str(cls) in _ALL_PRIVACY_CLASSES)
-    sid = _normalize_session_id(session_id)
+    safe_classes = sorted(str(cls) for cls in (data_classes or []) if str(cls) in core._ALL_PRIVACY_CLASSES)
+    sid = tool_policy._normalize_session_id(session_id)
     # Turn grouping is always on (cheap random label). The prompt is persisted ONLY when
     # the operator opts in; both sources (owner request / cron instruction) are already
     # sanitized by _redact_command_for_llm, and we re-clamp defensively. Unauthenticated
     # senders / non-cron sessions yield "" from both, so nothing is persisted for them.
-    turn_id = _current_turn_id(sid)
+    turn_id = tool_policy._current_turn_id(sid)
     user_prompt = ""
-    if _persist_prompts_enabled():
-        user_prompt = (_recent_user_request_for_owner(owner_hash) or _cron_instruction_for_session(sid))[:500]
+    if rules._persist_prompts_enabled():
+        user_prompt = (approvals._recent_user_request_for_owner(owner_hash) or approvals._cron_instruction_for_session(sid))[:500]
     try:
         _ensure_activity_db()
         with _activity_connect() as conn:
@@ -334,10 +340,10 @@ def _emit_activity(
                 (
                     int(state._now()),
                     decision,
-                    _privacy_policy(),
-                    _safe_session_label(sid),
-                    _short_hash(sid),
-                    _short_hash(owner_hash),
+                    core._privacy_policy(),
+                    core._safe_session_label(sid),
+                    core._short_hash(sid),
+                    core._short_hash(owner_hash),
                     str(tool_name or "")[:120],
                     str(action_family or "")[:80],
                     str(destination or "")[:160],
@@ -350,8 +356,8 @@ def _emit_activity(
                     str(module or "")[:40],
                     str(rule_effect or "")[:40],
                     str(rule_scope or "")[:160],
-                    _normalize_rule_purpose(purpose or "unknown", allow_star=False),
-                    _normalize_rule_recipient_identity(recipient_identity or "none", allow_star=False),
+                    tool_policy._normalize_rule_purpose(purpose or "unknown", allow_star=False),
+                    tool_policy._normalize_rule_recipient_identity(recipient_identity or "none", allow_star=False),
                     _normalize_destination_trust_label(destination_trust),
                     _normalize_decision_step_label(decision_step),
                     str(turn_id or "")[:60],
@@ -360,7 +366,7 @@ def _emit_activity(
             )
         _prune_activity_db()
     except Exception as exc:
-        logger.debug("%s: failed to write activity event: %s", _PLUGIN_NAME, exc)
+        core.logger.debug("%s: failed to write activity event: %s", core._PLUGIN_NAME, exc)
 
 
 def _perf_begin_check() -> None:
@@ -404,7 +410,7 @@ def _record_check_timing(
                 ),
             )
     except Exception as exc:
-        logger.debug("%s: failed to write check timing: %s", _PLUGIN_NAME, exc)
+        core.logger.debug("%s: failed to write check timing: %s", core._PLUGIN_NAME, exc)
 
 
 def _prune_activity_db(*, force: bool = False) -> dict[str, int]:
@@ -413,7 +419,7 @@ def _prune_activity_db(*, force: bool = False) -> dict[str, int]:
     A value of 0 disables the corresponding limit.
     """
     now = state._now()
-    if not force and now - state._LAST_ACTIVITY_PRUNE < _ACTIVITY_PRUNE_INTERVAL_SECONDS:
+    if not force and now - state._LAST_ACTIVITY_PRUNE < core._ACTIVITY_PRUNE_INTERVAL_SECONDS:
         return {"deleted": 0, "remaining": -1}
     state._LAST_ACTIVITY_PRUNE = now
 
@@ -462,5 +468,5 @@ def _prune_activity_db(*, force: bool = False) -> dict[str, int]:
                 except sqlite3.Error:
                     pass
     except Exception as exc:
-        logger.debug("%s: failed to prune activity db: %s", _PLUGIN_NAME, exc)
+        core.logger.debug("%s: failed to prune activity db: %s", core._PLUGIN_NAME, exc)
     return {"deleted": int(deleted or 0), "remaining": remaining}

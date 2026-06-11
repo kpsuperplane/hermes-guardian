@@ -30,6 +30,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import destinations
+from . import tool_policy
+
 
 # --- Policy classes / descriptive tags (doc 02 §5) ---------------------------
 # POLICY classes are what ``decide`` reasons over. Small and total.
@@ -295,11 +298,11 @@ def _read_capability(tool_name: str, args: Any, session_id: str | None) -> Capab
     from the read-side helpers in ``privacy/tool_policy`` — they are not load-bearing
     for any block (``decide`` returns ALLOW for direction="read").
     """
-    fine = _classes_from_content(args)
+    fine = tool_policy._classes_from_content(args)
     destination = Destination(
         kind="read",
         id=str(tool_name or ""),
-        trust=DestinationTrust.SELF,
+        trust=destinations.DestinationTrust.SELF,
     )
     return Capability(
         direction="read",
@@ -322,7 +325,7 @@ def classify(tool_name: str = "", args: Any = None, session: Any = None) -> Capa
     doc 02 signature ``classify(tool_name, args, session)``.
     """
     session_id = session if isinstance(session, str) or session is None else str(session)
-    action = _egress_tool_action(tool_name, args, session_id)
+    action = tool_policy._egress_tool_action(tool_name, args, session_id)
     if action is None:
         # Non-sink: a read (or a no-op). direction="read" (doc 02 §7 read rows).
         return _read_capability(tool_name, args, session_id)
@@ -352,17 +355,17 @@ def classify(tool_name: str = "", args: Any = None, session: Any = None) -> Capa
     # Recipient identity matters only for messaging families (doc 01 §3.2). For those,
     # reuse the raw recipient the existing helper resolved; otherwise it is irrelevant.
     if action_family in _MESSAGING_FAMILIES:
-        recipient_identity = _recipient_raw_from_args(args)
+        recipient_identity = tool_policy._recipient_raw_from_args(args)
     else:
         recipient_identity = ""
 
-    trust = resolve_destination_trust(dest_kind, dest_id, subtype, recipient_identity)
+    trust = destinations.resolve_destination_trust(dest_kind, dest_id, subtype, recipient_identity)
 
     destination = Destination(kind=dest_kind, id=dest_id, trust=trust)
 
     # data_classes / data_tags are the POLICY/tag split (doc 02 §5) of the ambient
     # egress class set the existing path computes (content classes ∪ session taint).
-    fine = _data_classes_for_egress(session_id, args)
+    fine = tool_policy._data_classes_for_egress(session_id, args)
     return Capability(
         direction="write",
         destination=destination,

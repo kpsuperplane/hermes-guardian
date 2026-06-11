@@ -11,16 +11,22 @@ import secrets
 from typing import Any
 from urllib.parse import urlparse
 
+from . import rules as rules_mod
+from .. import core
+from .. import state
+from ..runtime import shared_context
+from ..security import module as security_module
+
 
 def _normalize_session_id(session_id: str | None) -> str:
-    return session_id or _GLOBAL_SESSION_ID
+    return session_id or core._GLOBAL_SESSION_ID
 
 
 def _hash_identity(platform: str = "", sender_id: str = "") -> str:
     platform = str(platform or "unknown").strip().lower()
     sender_id = str(sender_id or "unknown").strip()
     if platform == "cli" and sender_id in {"", "unknown"}:
-        return _CLI_OWNER_HASH
+        return core._CLI_OWNER_HASH
     digest = hashlib.sha256(f"{platform}:{sender_id}".encode("utf-8")).hexdigest()
     return f"owner_{digest[:24]}"
 
@@ -110,7 +116,7 @@ def _extract_url(value: Any) -> str:
             candidate = value.get(key)
             if isinstance(candidate, str) and candidate:
                 return candidate
-    text = _stringify_for_scan(value)
+    text = security_module._stringify_for_scan(value)
     match = re.search(r"https?://[^\s\"'<>]+", text)
     return match.group(0) if match else ""
 
@@ -122,7 +128,7 @@ def _extract_urls(value: Any) -> list[str]:
             candidate = value.get(key)
             if isinstance(candidate, str) and candidate:
                 urls.append(candidate)
-    text = _stringify_for_scan(value)
+    text = security_module._stringify_for_scan(value)
     urls.extend(match.group(0) for match in re.finditer(r"https?://[^\s\"'<>]+", text))
     deduped: list[str] = []
     seen: set[str] = set()
@@ -187,7 +193,7 @@ def _browser_has_private_input(session_id: str | None) -> bool:
 
 
 def _browser_result_has_private_context(value: Any) -> bool:
-    text = _stringify_for_scan(value)
+    text = security_module._stringify_for_scan(value)
     if not text:
         return False
     # NB: a bare email address is deliberately NOT a private-context signal —
@@ -195,35 +201,35 @@ def _browser_result_has_private_context(value: Any) -> bool:
     # of a logged-in context would defeat the ambient-business-email suppression
     # in _web_content_taint_classes.
     return bool(
-        _LANGUAGE_PACKS.browser_private_context_pattern.search(text)
+        core._LANGUAGE_PACKS.browser_private_context_pattern.search(text)
         or re.search(r"\b(csrf|document\.cookie|localStorage|sessionStorage)\b", text, re.I)
     )
 
 
 def _classes_from_tool_name(tool_name: str) -> set[str]:
     classes: set[str] = set()
-    for pattern, rule_classes in _SOURCE_TAINT_RULES:
+    for pattern, rule_classes in core._SOURCE_TAINT_RULES:
         if pattern.search(tool_name):
             classes.update(rule_classes)
     return classes
 
 
 def _classes_from_content(value: Any) -> set[str]:
-    text = _stringify_for_scan(value)
+    text = security_module._stringify_for_scan(value)
     if not text:
         return set()
     classes: set[str] = set()
     # Email-record headers (From:/Subject:/Sender: …) are correspondence content;
     # a bare address is an identifier, i.e. contact info.
-    if _email_shaped_text(text):
+    if security_module._email_shaped_text(text):
         classes.add("communications")
-    if _EMAIL_ADDRESS_RE.search(text):
+    if core._EMAIL_ADDRESS_RE.search(text):
         classes.add("contacts")
-    if _PHONE_RE.search(text) or _PRIVATE_FIELD_RE.search(text):
+    if core._PHONE_RE.search(text) or core._PRIVATE_FIELD_RE.search(text):
         classes.add("contacts")
-    if _SSN_RE.search(text):
+    if core._SSN_RE.search(text):
         classes.add("documents")
-    if _CALENDAR_CONTENT_RE.search(text):
+    if core._CALENDAR_CONTENT_RE.search(text):
         # iCal-structured calendar data (e.g. a VEVENT) carries `calendar`, so a calendar
         # event is not mislabeled `contacts` just because it lists attendee emails. Same
         # policy class (personal_private) -> no gating change, but a clearer signal to the
@@ -243,9 +249,9 @@ def _email_is_ambient_business(addr: str) -> bool:
     local, _, domain = str(addr or "").rpartition("@")
     if not domain:
         return False
-    if local.lower() in _ROLE_LOCALPARTS:
+    if local.lower() in core._ROLE_LOCALPARTS:
         return True
-    return domain.lower() not in _CONSUMER_EMAIL_DOMAINS
+    return domain.lower() not in core._CONSUMER_EMAIL_DOMAINS
 
 
 # Inherently public/non-personal line types: toll-free, premium-rate, and shared-cost
@@ -309,7 +315,7 @@ def _has_real_personal_phone(text: str) -> bool:
 def _is_web_sourced_tool(tool_name: str) -> bool:
     """True for browser/web-read tools whose results are page content."""
     lower = str(tool_name or "").lower()
-    return lower.startswith("browser") or bool(_WEB_READ_TOOL_RE.match(lower))
+    return lower.startswith("browser") or bool(core._WEB_READ_TOOL_RE.match(lower))
 
 
 # Read-only documentation tools: skill docs and MCP resource/document reads. Kept in sync
@@ -340,19 +346,19 @@ def _web_content_taint_classes(value: Any, session_id: str | None) -> set[str]:
     marker and where nothing was typed reads as public, so a personal address on
     it will not taint; the SSN/record-header checks remain as a backstop.
     """
-    text = _stringify_for_scan(value)
+    text = security_module._stringify_for_scan(value)
     if not text:
         return set()
     classes: set[str] = set()
-    if _email_shaped_text(text):
+    if security_module._email_shaped_text(text):
         classes.add("communications")
-    if _SSN_RE.search(text):
+    if core._SSN_RE.search(text):
         classes.add("documents")
     if not (_browser_has_private_input(session_id) or _browser_result_has_private_context(value)):
         return classes
-    if _has_real_personal_phone(text) or _PRIVATE_FIELD_RE.search(text):
+    if _has_real_personal_phone(text) or core._PRIVATE_FIELD_RE.search(text):
         classes.add("contacts")
-    if any(not _email_is_ambient_business(addr) for addr in _EMAIL_ADDRESS_RE.findall(text)):
+    if any(not _email_is_ambient_business(addr) for addr in core._EMAIL_ADDRESS_RE.findall(text)):
         classes.add("contacts")
     return classes
 
@@ -383,23 +389,23 @@ def _doc_content_taint_classes(value: Any) -> set[str]:
     consumer-email / real-personal-phone backstops remain, so a skill that genuinely embeds
     someone's @gmail.com, mobile number, an SSN, or an iCal event still taints.
     """
-    text = _stringify_for_scan(value)
+    text = security_module._stringify_for_scan(value)
     if not text:
         return set()
     classes: set[str] = set()
-    if _SSN_RE.search(text):
+    if core._SSN_RE.search(text):
         classes.add("documents")
-    if _CALENDAR_CONTENT_RE.search(text):
+    if core._CALENDAR_CONTENT_RE.search(text):
         classes.add("calendar")
     if _has_real_personal_phone(text):
         classes.add("contacts")
-    if any(not _email_is_ambient_business(addr) for addr in _EMAIL_ADDRESS_RE.findall(text)):
+    if any(not _email_is_ambient_business(addr) for addr in core._EMAIL_ADDRESS_RE.findall(text)):
         classes.add("contacts")
     return classes
 
 
 def _is_local_system_tool(tool_name: str) -> bool:
-    return bool(_TERMINAL_TOOL_RE.match(str(tool_name or "").lower()))
+    return bool(core._TERMINAL_TOOL_RE.match(str(tool_name or "").lower()))
 
 
 def _terminal_command_for_args(args: Any) -> str:
@@ -412,31 +418,31 @@ def _terminal_command_result_is_metadata_only(command: str) -> bool:
     command = str(command or "").strip()
     if not command:
         return False
-    if _LOCAL_SYSTEM_NO_TAINT_DENY_RE.search(command):
+    if core._LOCAL_SYSTEM_NO_TAINT_DENY_RE.search(command):
         return False
     segments = [segment.strip() for segment in command.split("|")]
-    if not segments or not _LOCAL_SYSTEM_NO_TAINT_FIRST_RE.search(segments[0]):
+    if not segments or not core._LOCAL_SYSTEM_NO_TAINT_FIRST_RE.search(segments[0]):
         return False
-    return all(_LOCAL_SYSTEM_NO_TAINT_FILTER_RE.search(segment) for segment in segments[1:])
+    return all(core._LOCAL_SYSTEM_NO_TAINT_FILTER_RE.search(segment) for segment in segments[1:])
 
 
 def _terminal_command_is_safe_remote_read(command: str) -> bool:
     command = str(command or "").strip()
     if not command:
         return False
-    if not _REMOTE_READ_URL_RE.search(command) or not _REMOTE_READ_TOOL_RE.search(command):
+    if not core._REMOTE_READ_URL_RE.search(command) or not core._REMOTE_READ_TOOL_RE.search(command):
         return False
-    if _security_rule_enabled("private_network_reads") and any(_is_private_or_metadata_host(_safe_host_from_url(url)) for url in _extract_urls(command)):
+    if core._security_rule_enabled("private_network_reads") and any(_is_private_or_metadata_host(_safe_host_from_url(url)) for url in _extract_urls(command)):
         return False
-    if _REMOTE_READ_OUTBOUND_RE.search(command):
+    if core._REMOTE_READ_OUTBOUND_RE.search(command):
         return False
-    if _REMOTE_READ_EXECUTION_RE.search(command):
+    if core._REMOTE_READ_EXECUTION_RE.search(command):
         return False
-    if _SENSITIVE_LOCAL_PATH_RE.search(command):
+    if core._SENSITIVE_LOCAL_PATH_RE.search(command):
         return False
     if re.search(r">\s*(?!/(?:tmp|var/tmp)/)", command):
         return False
-    if re.search(r"\b(?:write_bytes|write_text|open)\b", command) and not _REMOTE_READ_TMP_WRITE_RE.search(command):
+    if re.search(r"\b(?:write_bytes|write_text|open)\b", command) and not core._REMOTE_READ_TMP_WRITE_RE.search(command):
         return False
     return True
 
@@ -647,7 +653,7 @@ def _record_local_system_result_policy(session_id: str | None, tool_name: str, a
         "remote_read": _terminal_command_is_safe_remote_read(_terminal_command_for_args(args)),
         "ts": state._now(),
     }
-    _record_shared_context(
+    shared_context._record_shared_context(
         session_id,
         tool_name,
         public_remote_read=bool(entry["remote_read"]),
@@ -663,7 +669,7 @@ def _record_local_system_result_policy(session_id: str | None, tool_name: str, a
 def _consume_local_system_result_policy(session_id: str | None, tool_name: str) -> dict[str, Any]:
     if not _is_local_system_tool(tool_name):
         return {}
-    shared = _consume_shared_context(session_id, tool_name)
+    shared = shared_context._consume_shared_context(session_id, tool_name)
     if shared:
         return {
             "tool_name": str(tool_name or "").lower(),
@@ -831,11 +837,11 @@ class ToolAction:
 
 
 def _is_mcp_write_tool(tool_name: str) -> bool:
-    return tool_name.startswith("mcp_") and bool(_MCP_WRITE_RE.search(tool_name))
+    return tool_name.startswith("mcp_") and bool(core._MCP_WRITE_RE.search(tool_name))
 
 
 def _is_mcp_read_tool(tool_name: str) -> bool:
-    return tool_name.startswith("mcp_") and bool(_MCP_READ_RE.search(tool_name))
+    return tool_name.startswith("mcp_") and bool(core._MCP_READ_RE.search(tool_name))
 
 
 def _mcp_read_sends_query(args: Any) -> bool:
@@ -845,7 +851,7 @@ def _mcp_read_sends_query(args: Any) -> bool:
         value = args.get(key)
         if isinstance(value, str) and value.strip():
             return True
-        if isinstance(value, (list, dict)) and _stringify_for_scan(value).strip():
+        if isinstance(value, (list, dict)) and security_module._stringify_for_scan(value).strip():
             return True
     return any(_url_sends_remote_text(url) for url in _extract_urls(args))
 
@@ -873,9 +879,9 @@ def _intrinsic_destination(value: Any, *, default: str = "network") -> str:
 
 
 def _intrinsic_has_local_secret_source(text: str) -> bool:
-    if _LOCAL_SECRET_READ_RE.search(text):
+    if core._LOCAL_SECRET_READ_RE.search(text):
         return True
-    if _SENSITIVE_LOCAL_PATH_RE.search(text) and re.search(
+    if core._SENSITIVE_LOCAL_PATH_RE.search(text) and re.search(
         r"\b(?:cat|head|tail|grep|rg|sed|awk|sqlite3|open|read_text|read_bytes|readFileSync|fs\.readFile)\b",
         text,
         re.I,
@@ -885,11 +891,11 @@ def _intrinsic_has_local_secret_source(text: str) -> bool:
 
 
 def _intrinsic_has_browser_private_source(text: str) -> bool:
-    return bool(_BROWSER_SECRET_READ_RE.search(text))
+    return bool(core._BROWSER_SECRET_READ_RE.search(text))
 
 
 def _intrinsic_has_network_sink(value: Any, text: str) -> bool:
-    if _NETWORK_SINK_RE.search(text):
+    if core._NETWORK_SINK_RE.search(text):
         return True
     if _extract_urls(value) and re.search(r"\b(?:post|put|patch|delete|send|share|publish|upload)\b", text, re.I):
         return True
@@ -939,10 +945,10 @@ def _intrinsic_mcp_risk(lower: str, args: Any, args_text: str) -> dict[str, Any]
 
 
 def _intrinsic_risk_for_tool(tool_name: str, args: Any) -> dict[str, Any] | None:
-    if not _security_rule_enabled("intrinsic_exfiltration"):
+    if not core._security_rule_enabled("intrinsic_exfiltration"):
         return None
     lower = str(tool_name or "").lower()
-    text = _stringify_for_scan(args)
+    text = security_module._stringify_for_scan(args)
     if not text:
         return None
     if lower in {"terminal", "execute_code", "code_execution", "shell"}:
@@ -974,7 +980,7 @@ def _arg_action(args: Any, default: str = "") -> str:
 
 
 def _is_message_send_call(tool_name: str, args: Any) -> bool:
-    if not _MESSAGE_TOOL_RE.search(tool_name):
+    if not core._MESSAGE_TOOL_RE.search(tool_name):
         return False
     return _arg_action(args, "send") != "list"
 
@@ -991,11 +997,11 @@ def _is_local_write_call(tool_name: str, args: Any) -> bool:
         return isinstance(args, dict) and "todos" in args
     if lower == "memory":
         return _arg_action(args) in {"add", "replace", "remove"}
-    if _MNEMOSYNE_WRITE_TOOL_RE.match(lower):
+    if core._MNEMOSYNE_WRITE_TOOL_RE.match(lower):
         return True
     if lower == "skill_manage":
         return _arg_action(args) in {"create", "patch", "edit", "delete", "write_file", "remove_file"}
-    return bool(_LOCAL_WRITE_TOOL_RE.match(lower))
+    return bool(core._LOCAL_WRITE_TOOL_RE.match(lower))
 
 
 def _computer_use_action(args: Any) -> str:
@@ -1029,15 +1035,15 @@ def _browser_console_is_provable_read(args: Any) -> bool:
     if not expression:
         return False
     # Any sink or side-effecting/credential construct disqualifies the read.
-    if _NETWORK_SINK_RE.search(expression) or _BROWSER_SIDE_EFFECT_RE.search(expression):
+    if core._NETWORK_SINK_RE.search(expression) or core._BROWSER_SIDE_EFFECT_RE.search(expression):
         return False
     # Every call site must be a recognized pure-read accessor (control keywords such
     # as ``if (`` / ``return (`` and nameless invocations like an IIFE are not calls).
-    for match in _BROWSER_CALL_NAME_RE.finditer(expression):
+    for match in core._BROWSER_CALL_NAME_RE.finditer(expression):
         name = match.group(1).lower()
-        if name in _BROWSER_NON_CALL_KEYWORDS:
+        if name in core._BROWSER_NON_CALL_KEYWORDS:
             continue
-        if name not in _BROWSER_SAFE_READ_CALL_NAMES:
+        if name not in core._BROWSER_SAFE_READ_CALL_NAMES:
             return False
     return True
 
@@ -1063,10 +1069,10 @@ def _safe_tool_destination(name: str) -> str:
 
 
 def _tool_override_taint_classes(tool_name: str) -> set[str]:
-    override = _tool_override_for(tool_name)
+    override = rules_mod._tool_override_for(tool_name)
     if not override:
         return set()
-    return {cls for cls in (override.get("taints") or []) if cls in _ALL_PRIVACY_CLASSES}
+    return {cls for cls in (override.get("taints") or []) if cls in core._ALL_PRIVACY_CLASSES}
 
 
 _KNOWN_BUILTIN_TOOL_NAMES = frozenset({
@@ -1093,19 +1099,19 @@ def _recognized_builtin_tool(lower: str, args: Any) -> bool:
     """
     if lower.startswith("mcp_") or lower.startswith("browser_"):
         return True
-    if _WEB_READ_TOOL_RE.match(lower):
+    if core._WEB_READ_TOOL_RE.match(lower):
         return True
     if lower in _KNOWN_BUILTIN_TOOL_NAMES:
         return True
     if (
-        _MESSAGE_TOOL_RE.search(lower)
-        or _TERMINAL_TOOL_RE.match(lower)
-        or _MODEL_EGRESS_TOOL_RE.match(lower)
-        or _WEB_EGRESS_TOOL_RE.search(lower)
-        or _LOCAL_WRITE_TOOL_RE.match(lower)
-        or _MNEMOSYNE_WRITE_TOOL_RE.match(lower)
-        or _KANBAN_WRITE_TOOL_RE.match(lower)
-        or _GENERIC_WRITE_TOOL_RE.search(lower)
+        core._MESSAGE_TOOL_RE.search(lower)
+        or core._TERMINAL_TOOL_RE.match(lower)
+        or core._MODEL_EGRESS_TOOL_RE.match(lower)
+        or core._WEB_EGRESS_TOOL_RE.search(lower)
+        or core._LOCAL_WRITE_TOOL_RE.match(lower)
+        or core._MNEMOSYNE_WRITE_TOOL_RE.match(lower)
+        or core._KANBAN_WRITE_TOOL_RE.match(lower)
+        or core._GENERIC_WRITE_TOOL_RE.search(lower)
     ):
         return True
     if _read_activity_for_tool(lower, args) is not None:
@@ -1158,7 +1164,7 @@ def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> To
     lower = name.lower()
 
     decided, override_action = _tool_override_action(
-        _tool_override_for(lower), lower, args, session_id
+        rules_mod._tool_override_for(lower), lower, args, session_id
     )
     if decided:
         return override_action
@@ -1176,11 +1182,11 @@ def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> To
             lambda: ToolAction("message_list", "messaging"),
         ),
         (
-            bool(_WEB_READ_TOOL_RE.match(lower)) and bool(_session_taint(session_id)) and _args_send_remote_text(args),
+            bool(core._WEB_READ_TOOL_RE.match(lower)) and bool(_session_taint(session_id)) and _args_send_remote_text(args),
             read_private_action,
         ),
         (
-            bool(_WEB_READ_TOOL_RE.match(lower)) and bool(_read_arg_classes(args)),
+            bool(core._WEB_READ_TOOL_RE.match(lower)) and bool(_read_arg_classes(args)),
             read_private_action,
         ),
         (lower == "browser_navigate", lambda: None),
@@ -1200,16 +1206,16 @@ def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> To
             lambda: ToolAction("computer_use", "computer"),
         ),
         (lower == "delegate_task", lambda: ToolAction("delegate_task", "subagent")),
-        (bool(_MODEL_EGRESS_TOOL_RE.match(lower)), lambda: ToolAction("model_api", lower)),
+        (bool(core._MODEL_EGRESS_TOOL_RE.match(lower)), lambda: ToolAction("model_api", lower)),
         (
             _is_cron_write_call(lower, args),
             lambda: ToolAction("cron_write", _safe_destination_from_args(args, default="cron")),
         ),
         (_is_local_write_call(lower, args), lambda: ToolAction("local_write", lower)),
-        (bool(_KANBAN_WRITE_TOOL_RE.match(lower)), lambda: ToolAction("kanban_write", "kanban")),
+        (bool(core._KANBAN_WRITE_TOOL_RE.match(lower)), lambda: ToolAction("kanban_write", "kanban")),
         (lower == "ha_call_service", lambda: ToolAction("homeassistant_write", "homeassistant")),
         (lower == "browser_cdp", lambda: ToolAction("browser_cdp", _browser_host(session_id))),
-        (bool(_TERMINAL_TOOL_RE.match(lower)), lambda: ToolAction("terminal_exec", "terminal")),
+        (bool(core._TERMINAL_TOOL_RE.match(lower)), lambda: ToolAction("terminal_exec", "terminal")),
         (
             _is_message_send_call(lower, args),
             lambda: ToolAction(
@@ -1222,11 +1228,11 @@ def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> To
         ),
         (lower == "send_message", lambda: None),
         (
-            bool(_WEB_EGRESS_TOOL_RE.search(lower)),
+            bool(core._WEB_EGRESS_TOOL_RE.search(lower)),
             lambda: ToolAction("web_api", _safe_destination_from_args(args, default=lower)),
         ),
         (
-            bool(_GENERIC_WRITE_TOOL_RE.search(lower)),
+            bool(core._GENERIC_WRITE_TOOL_RE.search(lower)),
             lambda: ToolAction("tool_write", lower.split("_", 1)[0] or lower),
         ),
     )
@@ -1237,7 +1243,7 @@ def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> To
     # the session is tainted, unless the operator reverted to legacy permissive mode.
     if _recognized_builtin_tool(lower, args):
         return None
-    if _unknown_tools_mode() == "gate" and _session_taint(session_id):
+    if rules_mod._unknown_tools_mode() == "gate" and _session_taint(session_id):
         return ToolAction("tool_unknown", _safe_tool_destination(lower))
     return None
 
@@ -1261,7 +1267,7 @@ def _read_activity_for_tool(tool_name: str, args: Any, session_id: str | None = 
         # A console eval that is provably a side-effect-free read only reads the DOM
         # back to the agent; log it as a read rather than gating it as egress.
         return ("browser_read", _browser_host(session_id))
-    if not _WEB_READ_TOOL_RE.match(lower):
+    if not core._WEB_READ_TOOL_RE.match(lower):
         return None
     destination = _safe_destination_from_args(args, default=lower)
     if lower.startswith("browser_"):

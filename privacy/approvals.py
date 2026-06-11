@@ -7,6 +7,15 @@ import secrets
 import sqlite3
 from typing import Any
 
+from . import llm
+from . import module as privacy_module
+from . import rules as rules_mod
+from . import tool_policy
+from .. import core
+from .. import state
+from ..integrations import cron_notifications
+from ..runtime import activity_store
+
 
 def _pending_approval_from_row(row: sqlite3.Row) -> dict[str, Any] | None:
     approval_id = str(row["id"] or "").strip()
@@ -15,17 +24,17 @@ def _pending_approval_from_row(row: sqlite3.Row) -> dict[str, Any] | None:
     data_classes = [
         cls.strip()
         for cls in str(row["data_classes"] or "").split(",")
-        if cls.strip() in _ALL_PRIVACY_CLASSES
+        if cls.strip() in core._ALL_PRIVACY_CLASSES
     ]
     return {
         "id": approval_id,
-        "session_id": _normalize_session_id(row["session_id"]),
+        "session_id": tool_policy._normalize_session_id(row["session_id"]),
         "owner_hash": str(row["owner_hash"] or ""),
         "tool_name": str(row["tool_name"] or ""),
         "action_family": str(row["action_family"] or ""),
         "destination": str(row["destination"] or ""),
-        "purpose": _normalize_rule_purpose(row["purpose"], allow_star=False) if "purpose" in row.keys() else "unknown",
-        "recipient_identity": _normalize_rule_recipient_identity(row["recipient_identity"], allow_star=False)
+        "purpose": tool_policy._normalize_rule_purpose(row["purpose"], allow_star=False) if "purpose" in row.keys() else "unknown",
+        "recipient_identity": tool_policy._normalize_rule_recipient_identity(row["recipient_identity"], allow_star=False)
         if "recipient_identity" in row.keys() else "none",
         "legacy_destination": str(row["legacy_destination"] or "") if "legacy_destination" in row.keys() else "",
         "data_classes": data_classes,
@@ -44,8 +53,8 @@ def _pending_approval_from_row(row: sqlite3.Row) -> dict[str, Any] | None:
 
 def _load_pending_approvals_from_store_unlocked() -> None:
     try:
-        _ensure_activity_db()
-        with _activity_connect() as conn:
+        activity_store._ensure_activity_db()
+        with activity_store._activity_connect() as conn:
             rows = conn.execute(
                 """
                 SELECT id, session_id, owner_hash, tool_name, action_family,
@@ -59,7 +68,7 @@ def _load_pending_approvals_from_store_unlocked() -> None:
                 (int(state._now()),),
             ).fetchall()
     except Exception as exc:
-        logger.debug("%s: failed to load pending approvals: %s", _PLUGIN_NAME, exc)
+        core.logger.debug("%s: failed to load pending approvals: %s", core._PLUGIN_NAME, exc)
         return
     for row in rows:
         approval = _pending_approval_from_row(row)
@@ -72,8 +81,8 @@ def _pending_approval_from_store_unlocked(approval_id: str) -> dict[str, Any] | 
     if not re.fullmatch(r"[0-9]{4}", approval_id):
         return None
     try:
-        _ensure_activity_db()
-        with _activity_connect() as conn:
+        activity_store._ensure_activity_db()
+        with activity_store._activity_connect() as conn:
             row = conn.execute(
                 """
                 SELECT id, session_id, owner_hash, tool_name, action_family,
@@ -87,15 +96,15 @@ def _pending_approval_from_store_unlocked(approval_id: str) -> dict[str, Any] | 
                 (approval_id,),
             ).fetchone()
     except Exception as exc:
-        logger.debug("%s: failed to load stored approval %s: %s", _PLUGIN_NAME, approval_id, exc)
+        core.logger.debug("%s: failed to load stored approval %s: %s", core._PLUGIN_NAME, approval_id, exc)
         return None
     return _pending_approval_from_row(row) if row else None
 
 
 def _save_pending_approval_to_store_unlocked(approval: dict[str, Any]) -> None:
     try:
-        _ensure_activity_db()
-        with _activity_connect() as conn:
+        activity_store._ensure_activity_db()
+        with activity_store._activity_connect() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO pending_approvals (
@@ -109,19 +118,19 @@ def _save_pending_approval_to_store_unlocked(approval: dict[str, Any]) -> None:
                 """,
                 (
                     str(approval.get("id") or ""),
-                    _normalize_session_id(approval.get("session_id")),
+                    tool_policy._normalize_session_id(approval.get("session_id")),
                     str(approval.get("owner_hash") or ""),
                     str(approval.get("tool_name") or ""),
                     str(approval.get("action_family") or ""),
                     str(approval.get("destination") or ""),
-                    _normalize_rule_purpose(approval.get("purpose", "unknown"), allow_star=False),
-                    _normalize_rule_recipient_identity(approval.get("recipient_identity", "none"), allow_star=False),
+                    tool_policy._normalize_rule_purpose(approval.get("purpose", "unknown"), allow_star=False),
+                    tool_policy._normalize_rule_recipient_identity(approval.get("recipient_identity", "none"), allow_star=False),
                     str(approval.get("legacy_destination") or ""),
                     ",".join(
                         sorted(
                             str(cls)
                             for cls in (approval.get("data_classes") or [])
-                            if str(cls) in _ALL_PRIVACY_CLASSES
+                            if str(cls) in core._ALL_PRIVACY_CLASSES
                         )
                     ),
                     str(approval.get("action_detail") or ""),
@@ -131,12 +140,12 @@ def _save_pending_approval_to_store_unlocked(approval: dict[str, Any]) -> None:
                     str(approval.get("cron_job_id") or ""),
                     str(approval.get("cron_job_name") or ""),
                     str(approval.get("reason") or "")[:1000],
-                    _normalize_destination_trust_label(approval.get("destination_trust")),
-                    _normalize_decision_step_label(approval.get("decision_step")),
+                    activity_store._normalize_destination_trust_label(approval.get("destination_trust")),
+                    activity_store._normalize_decision_step_label(approval.get("decision_step")),
                 ),
             )
     except Exception as exc:
-        logger.warning("%s: failed to save pending approval: %s", _PLUGIN_NAME, exc)
+        core.logger.warning("%s: failed to save pending approval: %s", core._PLUGIN_NAME, exc)
 
 
 def _delete_pending_approvals_from_store_unlocked(approval_ids: list[str] | set[str] | tuple[str, ...]) -> None:
@@ -144,11 +153,11 @@ def _delete_pending_approvals_from_store_unlocked(approval_ids: list[str] | set[
     if not ids:
         return
     try:
-        _ensure_activity_db()
-        with _activity_connect() as conn:
+        activity_store._ensure_activity_db()
+        with activity_store._activity_connect() as conn:
             conn.executemany("DELETE FROM pending_approvals WHERE id = ?", [(approval_id,) for approval_id in ids])
     except Exception as exc:
-        logger.warning("%s: failed to delete pending approvals: %s", _PLUGIN_NAME, exc)
+        core.logger.warning("%s: failed to delete pending approvals: %s", core._PLUGIN_NAME, exc)
 
 
 def _approval_id_compact(value: str) -> str:
@@ -156,11 +165,11 @@ def _approval_id_compact(value: str) -> str:
 
 
 def _recent_approval_ids() -> set[str]:
-    cutoff = int(state._now() - _APPROVAL_ID_REUSE_SECONDS)
+    cutoff = int(state._now() - core._APPROVAL_ID_REUSE_SECONDS)
     recent: set[str] = set()
     try:
-        _ensure_activity_db()
-        with _activity_connect() as conn:
+        activity_store._ensure_activity_db()
+        with activity_store._activity_connect() as conn:
             rows = conn.execute(
                 """
                 SELECT DISTINCT approval_id
@@ -171,13 +180,13 @@ def _recent_approval_ids() -> set[str]:
             ).fetchall()
             recent.update(str(row["approval_id"]) for row in rows if row["approval_id"])
     except Exception as exc:
-        logger.debug("%s: failed to load recent approval ids: %s", _PLUGIN_NAME, exc)
+        core.logger.debug("%s: failed to load recent approval ids: %s", core._PLUGIN_NAME, exc)
     return recent
 
 
 def _new_approval_id(shape: dict[str, Any] | None = None) -> str:
     with state._LOCK:
-        _prune_expired()
+        llm._prune_expired()
         _load_pending_approvals_from_store_unlocked()
         unavailable = set(state._PENDING_APPROVALS) | _recent_approval_ids()
     start = secrets.randbelow(10_000)
@@ -185,7 +194,7 @@ def _new_approval_id(shape: dict[str, Any] | None = None) -> str:
         candidate = f"{(start + offset) % 10_000:04d}"
         if candidate not in unavailable:
             return candidate
-    logger.warning("%s: exhausted 4-digit approval ID space; reusing a recent code", _PLUGIN_NAME)
+    core.logger.warning("%s: exhausted 4-digit approval ID space; reusing a recent code", core._PLUGIN_NAME)
     return f"{secrets.randbelow(10_000):04d}"
 
 
@@ -207,11 +216,11 @@ def _resolve_pending_approval_id(approval_id: str) -> str | None:
 
 
 def _is_cron_session_id(session_id: str | None) -> bool:
-    return bool(re.fullmatch(r"cron_[0-9a-f]{12}_\d{8}_\d{6}", _normalize_session_id(session_id), re.I))
+    return bool(re.fullmatch(r"cron_[0-9a-f]{12}_\d{8}_\d{6}", tool_policy._normalize_session_id(session_id), re.I))
 
 
 def _cron_job_id_from_session(session_id: str | None) -> str:
-    match = re.fullmatch(r"cron_([0-9a-f]{12})_\d{8}_\d{6}", _normalize_session_id(session_id), re.I)
+    match = re.fullmatch(r"cron_([0-9a-f]{12})_\d{8}_\d{6}", tool_policy._normalize_session_id(session_id), re.I)
     return match.group(1) if match else ""
 
 
@@ -232,14 +241,14 @@ def _configured_owner_hashes() -> set[str]:
         "TELEGRAM_ALLOWED_USERS",
         "TELEGRAM_GROUP_ALLOWED_USERS",
     ):
-        hashes.add(_hash_identity("telegram", sender_id))
+        hashes.add(tool_policy._hash_identity("telegram", sender_id))
     for sender_id in _configured_owner_values_from_env("DISCORD_ALLOWED_USERS"):
-        hashes.add(_hash_identity("discord", sender_id))
+        hashes.add(tool_policy._hash_identity("discord", sender_id))
     return hashes
 
 
 def _approval_owner_allowed(owner_hash: str, approval: dict[str, Any]) -> bool:
-    if approval.get("owner_hash") == owner_hash or owner_hash == _CLI_OWNER_HASH:
+    if approval.get("owner_hash") == owner_hash or owner_hash == core._CLI_OWNER_HASH:
         return True
     if _is_cron_session_id(approval.get("session_id")) and owner_hash in _configured_owner_hashes():
         return True
@@ -249,7 +258,7 @@ def _approval_owner_allowed(owner_hash: str, approval: dict[str, Any]) -> bool:
 def _create_pending_approval(shape: dict[str, Any]) -> dict[str, Any]:
     cron_job_id = _cron_job_id_from_session(shape.get("session_id"))
     try:
-        cron_job_name = _cron_job_name(cron_job_id) if cron_job_id else ""
+        cron_job_name = cron_notifications._cron_job_name(cron_job_id) if cron_job_id else ""
     except Exception:
         cron_job_name = ""
     approval = {
@@ -259,21 +268,21 @@ def _create_pending_approval(shape: dict[str, Any]) -> dict[str, Any]:
         "tool_name": shape["tool_name"],
         "action_family": shape["action_family"],
         "destination": shape["destination"],
-        "purpose": _normalize_rule_purpose(shape.get("purpose", "unknown"), allow_star=False),
-        "recipient_identity": _normalize_rule_recipient_identity(shape.get("recipient_identity", "none"), allow_star=False),
+        "purpose": tool_policy._normalize_rule_purpose(shape.get("purpose", "unknown"), allow_star=False),
+        "recipient_identity": tool_policy._normalize_rule_recipient_identity(shape.get("recipient_identity", "none"), allow_star=False),
         "legacy_destination": "",
         "data_classes": list(shape["data_classes"]),
         "action_detail": shape.get("action_detail") or "",
         "fingerprint": shape["fingerprint"],
         "created_at": int(state._now()),
-        "expires_at": int(state._now() + _APPROVAL_TTL_SECONDS),
+        "expires_at": int(state._now() + core._APPROVAL_TTL_SECONDS),
         "cron_job_id": cron_job_id,
         "cron_job_name": cron_job_name,
         "reason": "",
         # Resolved at decision time (doc 03 §3.2) so a pending block carries its trust
         # pill + decide() step into the dashboard. Metadata-only (enum label + step name).
-        "destination_trust": _normalize_destination_trust_label(shape.get("destination_trust")),
-        "decision_step": _normalize_decision_step_label(shape.get("decision_step")),
+        "destination_trust": activity_store._normalize_destination_trust_label(shape.get("destination_trust")),
+        "decision_step": activity_store._normalize_decision_step_label(shape.get("decision_step")),
     }
     with state._LOCK:
         _load_pending_approvals_from_store_unlocked()
@@ -360,7 +369,7 @@ def _rule_scope_label(rule: dict[str, Any]) -> str:
     if cron_job_id:
         cron_job_name = str(scope.get("cron_job_name") or rule.get("cron_job_name") or "").strip()
         try:
-            cron_job_name = cron_job_name or _cron_job_name(cron_job_id)
+            cron_job_name = cron_job_name or cron_notifications._cron_job_name(cron_job_id)
         except Exception:
             pass
         if cron_job_name:
@@ -375,7 +384,7 @@ def _rule_scope_label(rule: dict[str, Any]) -> str:
 
 def _rule_delete_owner_allowed(owner_hash: str, rule: dict[str, Any]) -> bool:
     scope = rule.get("scope") if isinstance(rule.get("scope"), dict) else {}
-    if owner_hash == _CLI_OWNER_HASH:
+    if owner_hash == core._CLI_OWNER_HASH:
         return True
     if scope.get("owner_hash") == owner_hash:
         return True
@@ -389,7 +398,7 @@ def _delete_persistent_rule(owner_hash: str, rule_id: str) -> tuple[bool, str, d
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", rule_id):
         return False, f"Invalid persistent rule id {rule_id or '(empty)'}.", None
 
-    rules = _persistent_privacy_rules()
+    rules = rules_mod._persistent_privacy_rules()
     removed: dict[str, Any] | None = None
     kept: list[dict[str, Any]] = []
     for rule in rules:
@@ -401,7 +410,7 @@ def _delete_persistent_rule(owner_hash: str, rule_id: str) -> tuple[bool, str, d
     if removed is None:
         return False, f"No matching privacy rule found for {rule_id}.", None
 
-    if not _save_persistent_privacy_rules(kept):
+    if not rules_mod._save_persistent_privacy_rules(kept):
         return False, "Failed to delete privacy rule; Hermes Guardian remains fail-closed.", None
 
     return True, f"Deleted privacy rule {rule_id}.", removed
@@ -422,7 +431,7 @@ def _owner_is_authenticated(owner_hash: str) -> bool:
     never trusted as authorization evidence for the LLM verifier.
     """
     return bool(owner_hash) and (
-        owner_hash == _CLI_OWNER_HASH or owner_hash in _configured_owner_hashes()
+        owner_hash == core._CLI_OWNER_HASH or owner_hash in _configured_owner_hashes()
     )
 
 
@@ -435,15 +444,15 @@ def _remember_user_request(event: Any) -> None:
     text = getattr(event, "text", "")
     if not isinstance(text, str) or not text.strip():
         return
-    owner_hash = _owner_hash_from_event(event)
+    owner_hash = tool_policy._owner_hash_from_event(event)
     if not _owner_is_authenticated(owner_hash):
         return
     # A new owner message starts a fresh turn: reset the cross-channel egress lockdown
     # so a denial in the previous turn does not persist into this one, and rotate the
     # turn_id so subsequent activity groups under this prompt.
-    _clear_turn_external_denials_for_owner(owner_hash)
-    _rotate_turn_id_for_owner(owner_hash)
-    sanitized = _redact_command_for_llm(text.strip())
+    privacy_module._clear_turn_external_denials_for_owner(owner_hash)
+    tool_policy._rotate_turn_id_for_owner(owner_hash)
+    sanitized = llm._redact_command_for_llm(text.strip())
     if not sanitized:
         return
     with state._LOCK:
@@ -459,7 +468,7 @@ def _recent_user_request_for_owner(owner_hash: str) -> str:
         if not entry:
             return ""
         timestamp, sanitized = entry
-        if state._now() - timestamp > _USER_REQUEST_TTL_SECONDS:
+        if state._now() - timestamp > core._USER_REQUEST_TTL_SECONDS:
             state._RECENT_OWNER_REQUESTS.pop(owner_hash, None)
             return ""
         return sanitized
@@ -476,27 +485,27 @@ def _cron_instruction_for_session(session_id: str | None) -> str:
     job_id = _cron_job_id_from_session(session_id)
     if not job_id:
         return ""
-    job = _cron_job_record(job_id)
+    job = cron_notifications._cron_job_record(job_id)
     instruction = str(job.get("prompt") or job.get("name") or "").strip()
     if not instruction:
         return ""
-    return _redact_command_for_llm(instruction)
+    return llm._redact_command_for_llm(instruction)
 
 
 def _pop_command_owner(raw_args: str) -> str:
     key = raw_args.strip()
     with state._LOCK:
-        _prune_expired()
+        llm._prune_expired()
         entries = state._RECENT_COMMAND_OWNERS.get(key) or []
         if entries:
             state._RECENT_COMMAND_OWNERS[key] = entries[1:]
             if not state._RECENT_COMMAND_OWNERS[key]:
                 state._RECENT_COMMAND_OWNERS.pop(key, None)
             return entries[0][1]
-    return _CLI_OWNER_HASH
+    return core._CLI_OWNER_HASH
 
 
 def _owner_session_ids(owner_hash: str) -> set[str]:
-    if owner_hash == _CLI_OWNER_HASH:
-        return set(state._SESSIONS) or {_GLOBAL_SESSION_ID}
+    if owner_hash == core._CLI_OWNER_HASH:
+        return set(state._SESSIONS) or {core._GLOBAL_SESSION_ID}
     return set(state._OWNER_SESSIONS.get(owner_hash) or [])

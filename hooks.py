@@ -6,6 +6,14 @@ import json
 import time
 from typing import Any
 
+from . import core
+from .privacy import action_details
+from .privacy import approvals
+from .privacy import module as privacy_module
+from .privacy import tool_policy
+from .runtime import activity_store
+from .security import module as security_module
+
 
 
 def _emit_fail_closed_activity(
@@ -17,19 +25,19 @@ def _emit_fail_closed_activity(
     args: Any = None,
 ) -> None:
     try:
-        _emit_activity(
+        activity_store._emit_activity(
             decision,
             session_id=session_id,
             tool_name=tool_name,
             reason=reason,
-            action_detail=_activity_action_detail(tool_name, args),
+            action_detail=action_details._activity_action_detail(tool_name, args),
         )
     except Exception:
         pass
 
 
 def _fail_closed_tool_result(reason: str) -> str:
-    return json.dumps(_safe_stub(reason=reason), ensure_ascii=False)
+    return json.dumps(security_module._safe_stub(reason=reason), ensure_ascii=False)
 
 
 def _timed_hook_check(hook: str, tool_name: str, fn: Any) -> Any:
@@ -39,7 +47,7 @@ def _timed_hook_check(hook: str, tool_name: str, fn: Any) -> Any:
     record is swallowed, and the check's own exceptions propagate unchanged after
     the duration is logged.
     """
-    _perf_begin_check()
+    activity_store._perf_begin_check()
     start = time.perf_counter()
     blocked = False
     try:
@@ -48,11 +56,11 @@ def _timed_hook_check(hook: str, tool_name: str, fn: Any) -> Any:
         return result
     finally:
         try:
-            _record_check_timing(
+            activity_store._record_check_timing(
                 hook,
                 duration_us=int((time.perf_counter() - start) * 1_000_000),
                 tool_name=tool_name,
-                llm_invoked=_perf_llm_invoked(),
+                llm_invoked=activity_store._perf_llm_invoked(),
                 blocked=blocked,
             )
         except Exception:
@@ -65,8 +73,8 @@ def _on_pre_llm_call_impl(
     sender_id: str = "",
     **_: Any,
 ) -> None:
-    owner_hash = _hash_identity(platform or "cli", sender_id or "")
-    state = _ensure_session(session_id, owner_hash)
+    owner_hash = tool_policy._hash_identity(platform or "cli", sender_id or "")
+    state = tool_policy._ensure_session(session_id, owner_hash)
     state["platform"] = str(platform or "")
     state["sender_id"] = str(sender_id or "")
     return None
@@ -88,7 +96,7 @@ def _on_pre_llm_call(
     except (KeyboardInterrupt, SystemExit):
         raise
     except Exception:
-        logger.exception("%s: pre_llm_call error", _PLUGIN_NAME)
+        core.logger.exception("%s: pre_llm_call error", core._PLUGIN_NAME)
         return None
 
 
@@ -98,10 +106,10 @@ def _on_pre_tool_call_impl(
     session_id: str = "",
     **_: Any,
 ) -> dict[str, str] | None:
-    security_block = _security_pre_tool_call(tool_name, args, session_id)
+    security_block = security_module._security_pre_tool_call(tool_name, args, session_id)
     if security_block:
         return security_block
-    return _privacy_pre_tool_call(tool_name, args, session_id)
+    return privacy_module._privacy_pre_tool_call(tool_name, args, session_id)
 
 
 def _on_pre_tool_call(
@@ -124,7 +132,7 @@ def _on_pre_tool_call(
     except (KeyboardInterrupt, SystemExit):
         raise
     except Exception:
-        logger.exception("%s: fail-closed pre_tool_call error", _PLUGIN_NAME)
+        core.logger.exception("%s: fail-closed pre_tool_call error", core._PLUGIN_NAME)
         reason = "guardian internal error; blocked fail-closed"
         _emit_fail_closed_activity(
             "security_blocked",
@@ -146,7 +154,7 @@ def _on_transform_tool_result_impl(
     status: str = "",
     **_: Any,
 ) -> str | None:
-    privacy_context = _privacy_observe_tool_result(
+    privacy_context = privacy_module._privacy_observe_tool_result(
         tool_name=tool_name,
         result=result,
         session_id=session_id,
@@ -154,7 +162,7 @@ def _on_transform_tool_result_impl(
     )
     if privacy_context is None:
         return None
-    return _security_transform_tool_result(
+    return security_module._security_transform_tool_result(
         tool_name=tool_name,
         result=result,
         parsed=privacy_context["parsed"],
@@ -187,7 +195,7 @@ def _on_transform_tool_result(
     except (KeyboardInterrupt, SystemExit):
         raise
     except Exception:
-        logger.exception("%s: fail-closed transform_tool_result error", _PLUGIN_NAME)
+        core.logger.exception("%s: fail-closed transform_tool_result error", core._PLUGIN_NAME)
         _emit_fail_closed_activity(
             "security_suppressed",
             session_id=session_id,
@@ -201,13 +209,13 @@ def _on_pre_gateway_dispatch_impl(event: Any = None, **_: Any) -> dict[str, Any]
     text = getattr(event, "text", "")
     if isinstance(text, str) and text.strip().lower().startswith("/guardian"):
         raw_args = text.strip()[len("/guardian"):].strip()
-        _remember_command_owner(raw_args, _owner_hash_from_event(event))
+        approvals._remember_command_owner(raw_args, tool_policy._owner_hash_from_event(event))
         return None
-    security_result = _security_pre_gateway_dispatch(event)
+    security_result = security_module._security_pre_gateway_dispatch(event)
     if security_result is None:
         # Only cache the request after the Security Module clears the message,
         # so sensitive content (reset codes, credentials) is never stored.
-        _remember_user_request(event)
+        approvals._remember_user_request(event)
     return security_result
 
 
@@ -221,9 +229,9 @@ def _on_pre_gateway_dispatch(event: Any = None, **kwargs: Any) -> dict[str, Any]
     except (KeyboardInterrupt, SystemExit):
         raise
     except Exception:
-        logger.exception("%s: pre_gateway_dispatch error", _PLUGIN_NAME)
+        core.logger.exception("%s: pre_gateway_dispatch error", core._PLUGIN_NAME)
         text = getattr(event, "text", "")
-        reason = _sensitive_reason(text) if isinstance(text, str) else None
+        reason = security_module._sensitive_reason(text) if isinstance(text, str) else None
         if reason:
             _emit_fail_closed_activity(
                 "security_blocked",
@@ -235,10 +243,10 @@ def _on_pre_gateway_dispatch(event: Any = None, **kwargs: Any) -> dict[str, Any]
 
 
 def _on_transform_llm_output_impl(response_text: str = "", **kwargs: Any) -> str | None:
-    security_output = _security_transform_llm_output(response_text)
+    security_output = security_module._security_transform_llm_output(response_text)
     if security_output is not None:
         return security_output
-    return _privacy_transform_llm_output(response_text=response_text, **kwargs)
+    return privacy_module._privacy_transform_llm_output(response_text=response_text, **kwargs)
 
 
 def _on_transform_llm_output(response_text: str = "", **kwargs: Any) -> str | None:
@@ -251,10 +259,10 @@ def _on_transform_llm_output(response_text: str = "", **kwargs: Any) -> str | No
     except (KeyboardInterrupt, SystemExit):
         raise
     except Exception:
-        logger.exception("%s: fail-closed transform_llm_output error", _PLUGIN_NAME)
+        core.logger.exception("%s: fail-closed transform_llm_output error", core._PLUGIN_NAME)
         session_id = str(kwargs.get("session_id") or "")
         reason = "guardian internal error; final response suppressed fail-closed"
-        if _session_taint(session_id) or _sensitive_reason(response_text):
+        if tool_policy._session_taint(session_id) or security_module._sensitive_reason(response_text):
             _emit_fail_closed_activity(
                 "security_suppressed",
                 session_id=session_id,

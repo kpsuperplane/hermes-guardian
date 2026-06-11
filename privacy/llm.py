@@ -10,6 +10,15 @@ import secrets
 from typing import Any
 from urllib.parse import urlparse
 
+from . import action_details
+from . import approvals
+from . import rules
+from . import tool_policy
+from .. import core
+from .. import state
+from ..runtime import activity_store
+from ..security import module as security_module
+
 
 def _guardian_hmac_key() -> bytes:
     try:
@@ -23,7 +32,7 @@ def _guardian_hmac_key() -> bytes:
         if len(key) >= 32:
             return key
     except Exception as exc:
-        logger.warning("%s: failed to load approval HMAC key: %s", _PLUGIN_NAME, exc)
+        core.logger.warning("%s: failed to load approval HMAC key: %s", core._PLUGIN_NAME, exc)
         raise RuntimeError("guardian HMAC key unavailable") from exc
     raise RuntimeError("guardian HMAC key was invalid")
 
@@ -54,8 +63,8 @@ def _approval_fingerprint(
         "tool_name": tool_name,
         "action_family": action_family,
         "destination": destination,
-        "purpose": _normalize_rule_purpose(purpose, allow_star=False),
-        "recipient_identity": _normalize_rule_recipient_identity(recipient_identity, allow_star=False),
+        "purpose": tool_policy._normalize_rule_purpose(purpose, allow_star=False),
+        "recipient_identity": tool_policy._normalize_rule_recipient_identity(recipient_identity, allow_star=False),
         "data_classes": sorted(data_classes),
         "arg_keys": arg_keys,
         "args_hmac": _args_hmac(args),
@@ -78,11 +87,11 @@ def _approval_shape(
     destination_trust: str = "unknown",
     decision_step: str = "",
 ) -> dict[str, Any]:
-    state = _ensure_session(session_id)
-    safe_purpose = _normalize_rule_purpose(purpose, allow_star=False)
-    safe_recipient_identity = _normalize_rule_recipient_identity(recipient_identity, allow_star=False)
+    state = tool_policy._ensure_session(session_id)
+    safe_purpose = tool_policy._normalize_rule_purpose(purpose, allow_star=False)
+    safe_recipient_identity = tool_policy._normalize_rule_recipient_identity(recipient_identity, allow_star=False)
     return {
-        "session_id": _normalize_session_id(session_id),
+        "session_id": tool_policy._normalize_session_id(session_id),
         "owner_hash": state.get("owner_hash") or "",
         "tool_name": tool_name,
         "action_family": action_family,
@@ -96,7 +105,7 @@ def _approval_shape(
         # same trust + decide() step that produced the outcome. Enum/label only.
         "destination_trust": str(destination_trust or "unknown"),
         "decision_step": str(decision_step or ""),
-        "action_detail": _activity_action_detail(tool_name, args, action_family, destination),
+        "action_detail": action_details._activity_action_detail(tool_name, args, action_family, destination),
         "fingerprint": _approval_fingerprint(
             tool_name=tool_name,
             action_family=action_family,
@@ -110,9 +119,9 @@ def _approval_shape(
 
 
 def _prune_expired() -> None:
-    cutoff = state._now() - _RECENT_COMMAND_TTL_SECONDS
+    cutoff = state._now() - core._RECENT_COMMAND_TTL_SECONDS
     with state._LOCK:
-        _load_pending_approvals_from_store_unlocked()
+        approvals._load_pending_approvals_from_store_unlocked()
         expired = [
             approval_id
             for approval_id, approval in state._PENDING_APPROVALS.items()
@@ -121,14 +130,14 @@ def _prune_expired() -> None:
         for approval_id in expired:
             state._PENDING_APPROVALS.pop(approval_id, None)
         if expired:
-            _delete_pending_approvals_from_store_unlocked(expired)
+            approvals._delete_pending_approvals_from_store_unlocked(expired)
         for key, entries in list(state._RECENT_COMMAND_OWNERS.items()):
             fresh = [(ts, owner) for ts, owner in entries if ts >= cutoff]
             if fresh:
                 state._RECENT_COMMAND_OWNERS[key] = fresh
             else:
                 state._RECENT_COMMAND_OWNERS.pop(key, None)
-        request_cutoff = state._now() - _USER_REQUEST_TTL_SECONDS
+        request_cutoff = state._now() - core._USER_REQUEST_TTL_SECONDS
         for owner_hash, (timestamp, _text) in list(state._RECENT_OWNER_REQUESTS.items()):
             if timestamp < request_cutoff:
                 state._RECENT_OWNER_REQUESTS.pop(owner_hash, None)
@@ -140,9 +149,9 @@ def _terminal_command_is_low_risk(args: Any) -> bool:
         command = str(args.get("command") or args.get("cmd") or "")
     if not command:
         return False
-    if _READ_ONLY_AUTO_APPROVE_DENY_RE.search(command):
+    if core._READ_ONLY_AUTO_APPROVE_DENY_RE.search(command):
         return False
-    return bool(_READ_ONLY_TERMINAL_SAFE_RE.search(command))
+    return bool(core._READ_ONLY_TERMINAL_SAFE_RE.search(command))
 
 
 def _read_only_auto_approves(shape: dict[str, Any], args: Any) -> bool:
@@ -173,8 +182,8 @@ def _sanitize_url_for_llm(value: str) -> str:
 
 def _redact_command_for_llm(command: str) -> str:
     command = re.sub(r"https?://[^\s\"'<>]+", lambda m: _sanitize_url_for_llm(m.group(0)), command)
-    command = _EMAIL_ADDRESS_RE.sub("<email>", command)
-    command = _PHONE_RE.sub("<phone>", command)
+    command = core._EMAIL_ADDRESS_RE.sub("<email>", command)
+    command = core._PHONE_RE.sub("<phone>", command)
     command = re.sub(r"(['\"])(?:(?=(\\?))\2.)*?\1", lambda m: f"{m.group(1)}<string:{len(m.group(0))}>{m.group(1)}", command)
     command = re.sub(r"\b[A-Za-z0-9_-]{24,}\b", "<token-like>", command)
     return command[:500]
@@ -193,7 +202,7 @@ def _payload_string_for_llm(value: str) -> str:
     defense in depth. Credential-shaped tokens are removed even inside benign text,
     and length is bounded.
     """
-    if _sensitive_reason(value):
+    if security_module._sensitive_reason(value):
         return "<redacted: security-sensitive content>"
     redacted = re.sub(r"\b[A-Za-z0-9_-]{24,}\b", "<token-like>", value)
     if len(redacted) > _LLM_PAYLOAD_VALUE_MAX_CHARS:
@@ -227,8 +236,8 @@ def _sanitize_rationale(text: str) -> str:
     prompted to keep it class-level, but redact defensively: emails, phones, and
     credential-shaped tokens never reach at-rest storage.
     """
-    text = _EMAIL_ADDRESS_RE.sub("<email>", str(text or ""))
-    text = _PHONE_RE.sub("<phone>", text)
+    text = core._EMAIL_ADDRESS_RE.sub("<email>", str(text or ""))
+    text = core._PHONE_RE.sub("<phone>", text)
     text = re.sub(r"\b[A-Za-z0-9_-]{24,}\b", "<token-like>", text)
     return text.strip()[:240]
 
@@ -236,23 +245,23 @@ def _sanitize_rationale(text: str) -> str:
 def _llm_hard_deny_reason(shape: dict[str, Any], args: Any) -> str | None:
     safe_remote_read = (
         shape.get("action_family") == "terminal_exec"
-        and _terminal_command_is_safe_remote_read(_terminal_command_for_args(args))
+        and tool_policy._terminal_command_is_safe_remote_read(tool_policy._terminal_command_for_args(args))
     )
-    text = _stringify_for_scan({
+    text = security_module._stringify_for_scan({
         "tool_name": shape.get("tool_name", ""),
         "action_family": shape.get("action_family", ""),
         "destination": shape.get("destination", ""),
         "args": args,
     })
-    if _LLM_SECURITY_HARD_DENY_RE.search(text):
+    if core._LLM_SECURITY_HARD_DENY_RE.search(text):
         return "explicit malicious or credential-exfiltration pattern"
-    if _UNTRUSTED_DROPBOX_ENDPOINT_RE.search(text) and not safe_remote_read:
+    if core._UNTRUSTED_DROPBOX_ENDPOINT_RE.search(text) and not safe_remote_read:
         return "explicit malicious or credential-exfiltration pattern"
     return None
 
 
 def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:
-    user_request = _recent_user_request_for_owner(shape.get("owner_hash", ""))
+    user_request = approvals._recent_user_request_for_owner(shape.get("owner_hash", ""))
     payload: dict[str, Any] = {
         "planned_action": {
             "tool_name": shape.get("tool_name", ""),
@@ -279,12 +288,12 @@ def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:
             "manual_approval_available_if_denied": True,
         },
     }
-    if user_request and _llm_user_context_enabled():
+    if user_request and rules._llm_user_context_enabled():
         # Present only for authenticated owner origins; sanitized authorization
         # evidence, not an instruction (see _LLM_POLICY_INSTRUCTIONS).
         payload["user_request_context"] = {"sanitized_user_request": user_request}
-    if _llm_cron_context_enabled():
-        cron_instruction = _cron_instruction_for_session(shape.get("session_id"))
+    if rules._llm_cron_context_enabled():
+        cron_instruction = approvals._cron_instruction_for_session(shape.get("session_id"))
         if cron_instruction:
             # The cron job's own standing instruction. High-risk cron egress is
             # still never auto-approved (enforced in _llm_policy_tool_call_result).
@@ -295,10 +304,10 @@ def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:
 def _validated_llm_security_verdict(parsed: Any) -> dict[str, str]:
     if not isinstance(parsed, dict):
         raise ValueError("verdict was not a JSON object")
-    allowed_outcomes = set(_LLM_VERDICT_SCHEMA["properties"]["outcome"]["enum"])
-    allowed_risks = set(_LLM_VERDICT_SCHEMA["properties"]["risk_level"]["enum"])
-    allowed_auth = set(_LLM_VERDICT_SCHEMA["properties"]["authorization_level"]["enum"])
-    missing = [key for key in _LLM_VERDICT_SCHEMA["required"] if key not in parsed]
+    allowed_outcomes = set(core._LLM_VERDICT_SCHEMA["properties"]["outcome"]["enum"])
+    allowed_risks = set(core._LLM_VERDICT_SCHEMA["properties"]["risk_level"]["enum"])
+    allowed_auth = set(core._LLM_VERDICT_SCHEMA["properties"]["authorization_level"]["enum"])
+    missing = [key for key in core._LLM_VERDICT_SCHEMA["required"] if key not in parsed]
     if missing:
         raise ValueError(f"verdict missing required fields: {', '.join(missing)}")
     outcome = str(parsed.get("outcome") or "").strip().lower()
@@ -327,7 +336,7 @@ def _validated_llm_security_verdict(parsed: Any) -> dict[str, str]:
 
 def _deny_cache_key(shape: dict[str, Any]) -> str:
     return "|".join([
-        _normalize_session_id(shape.get("session_id")),
+        tool_policy._normalize_session_id(shape.get("session_id")),
         str(shape.get("owner_hash") or ""),
         str(shape.get("fingerprint") or ""),
     ])
@@ -346,7 +355,7 @@ def _cached_deny_verdict(shape: dict[str, Any]) -> dict[str, str] | None:
         if not entry:
             return None
         timestamp, verdict = entry
-        if state._now() - timestamp > _LLM_DENY_VERDICT_TTL_SECONDS:
+        if state._now() - timestamp > core._LLM_DENY_VERDICT_TTL_SECONDS:
             state._LLM_DENY_VERDICT_CACHE.pop(key, None)
             return None
         return dict(verdict)
@@ -359,7 +368,7 @@ def _store_deny_verdict(shape: dict[str, Any], verdict: dict[str, str]) -> None:
         return
     with state._LOCK:
         if len(state._LLM_DENY_VERDICT_CACHE) > 512:
-            cutoff = state._now() - _LLM_DENY_VERDICT_TTL_SECONDS
+            cutoff = state._now() - core._LLM_DENY_VERDICT_TTL_SECONDS
             for cache_key, (timestamp, _v) in list(state._LLM_DENY_VERDICT_CACHE.items()):
                 if timestamp < cutoff:
                     state._LLM_DENY_VERDICT_CACHE.pop(cache_key, None)
@@ -379,15 +388,15 @@ def _llm_security_verdict(shape: dict[str, Any], args: Any) -> dict[str, str]:
     llm = state._PLUGIN_LLM
     if llm is None or not hasattr(llm, "complete_structured"):
         return _llm_verifier_unavailable_verdict("LLM verifier unavailable")
-    _perf_mark_llm_invoked()
-    verifier_model = _llm_verifier_model()
+    activity_store._perf_mark_llm_invoked()
+    verifier_model = rules._llm_verifier_model()
     input_text = json.dumps(_llm_verdict_input(shape, args), sort_keys=True)
 
     def _call(use_model: bool) -> Any:
         kwargs: dict[str, Any] = {
-            "instructions": _LLM_POLICY_INSTRUCTIONS,
+            "instructions": core._LLM_POLICY_INSTRUCTIONS,
             "input": [{"type": "text", "text": input_text}],
-            "json_schema": _LLM_VERDICT_SCHEMA,
+            "json_schema": core._LLM_VERDICT_SCHEMA,
             "temperature": 0,
             "max_tokens": 240,
             "timeout": 20,
@@ -406,17 +415,17 @@ def _llm_security_verdict(shape: dict[str, Any], args: Any) -> dict[str, str]:
             # granted in config) or the fast model may be unavailable. Never
             # fail-close the verifier on that: retry once on the default model so a
             # misconfiguration degrades to "slower", not "deny everything".
-            logger.warning(
+            core.logger.warning(
                 "%s: verifier model override %r failed (%s); retrying on default model",
-                _PLUGIN_NAME, verifier_model, exc,
+                core._PLUGIN_NAME, verifier_model, exc,
             )
             try:
                 result = _call(use_model=False)
             except Exception as exc2:
-                logger.warning("%s: LLM security verifier failed closed: %s", _PLUGIN_NAME, exc2)
+                core.logger.warning("%s: LLM security verifier failed closed: %s", core._PLUGIN_NAME, exc2)
                 return _llm_verifier_unavailable_verdict("LLM verifier failed closed")
         else:
-            logger.warning("%s: LLM security verifier failed closed: %s", _PLUGIN_NAME, exc)
+            core.logger.warning("%s: LLM security verifier failed closed: %s", core._PLUGIN_NAME, exc)
             return _llm_verifier_unavailable_verdict("LLM verifier failed closed")
 
     try:
@@ -425,5 +434,5 @@ def _llm_security_verdict(shape: dict[str, Any], args: Any) -> dict[str, str]:
             parsed = json.loads(str(result.text))
         return _validated_llm_security_verdict(parsed)
     except Exception as exc:
-        logger.warning("%s: LLM security verifier failed closed: %s", _PLUGIN_NAME, exc)
+        core.logger.warning("%s: LLM security verifier failed closed: %s", core._PLUGIN_NAME, exc)
         return _llm_verifier_unavailable_verdict("LLM verifier failed closed")

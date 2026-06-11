@@ -29,10 +29,14 @@ def _load_sibling_module(name: str) -> Any:
 
 def _load_core_module() -> Any:
     core_name = f"{__name__}.core"
-    # The `state` module is loaded by core via _load_relative_module, which caches it
-    # in sys.modules. Drop it alongside core so a fresh facade load gets fresh mutable
-    # process state (each test's load_plugin() must start from a clean slate), instead
-    # of leaking _SESSIONS/_PENDING_APPROVALS/etc. across loads.
+    # core anchors the logic tree under the canonical `_hermes_guardian` package and
+    # loads `state`, the reusable helpers, and every logic module as its submodules.
+    # Drop that whole package (and this façade's own core alias) so a fresh façade load
+    # gets fresh mutable process state — each test's load_plugin() must start from a
+    # clean slate, not leak _SESSIONS/_PENDING_APPROVALS/etc. across loads.
+    for name in list(sys.modules):
+        if name == "_hermes_guardian" or name.startswith("_hermes_guardian."):
+            sys.modules.pop(name, None)
     sys.modules.pop(f"{core_name}.state", None)
     sys.modules.pop(core_name, None)
     return _load_sibling_module("core")
@@ -87,10 +91,10 @@ _SYNC_SKIP_FROM_CORE: set[str] = set()
 _FACADE_CALLABLE_DENYLIST = {
     "_assert_core_logic_contract",
     "_core_logic_missing_required_symbols",
-    "_core_logic_path",
-    "_load_core_logic",
-    "_load_logic_module",
+    "_import_logic",
     "_load_relative_module",
+    "_propagate_to_owners",
+    "_reexport_logic_symbols",
 }
 
 

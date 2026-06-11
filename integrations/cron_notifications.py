@@ -10,17 +10,21 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from .. import core
+from .. import state
+from ..privacy import tool_policy
+
 
 _CRON_SESSION_RE = re.compile(r"^cron_([0-9a-f]{12})_\d{8}_\d{6}$", re.I)
 
 
 def _cron_job_id_from_session(session_id: str | None) -> str:
-    match = _CRON_SESSION_RE.match(_normalize_session_id(session_id))
+    match = _CRON_SESSION_RE.match(tool_policy._normalize_session_id(session_id))
     return match.group(1) if match else ""
 
 
 def _hermes_cli_path() -> str:
-    return state._env(_HERMES_CLI_ENV, "/root/.local/bin/hermes").strip() or "hermes"
+    return state._env(core._HERMES_CLI_ENV, "/root/.local/bin/hermes").strip() or "hermes"
 
 
 def _cron_job_record(job_id: str) -> dict[str, Any]:
@@ -51,7 +55,7 @@ def _cron_job_name(job_id: str) -> str:
                     break
         except Exception:
             name = ""
-    return _presentation.clip_text(
+    return core._presentation.clip_text(
         name,
         100,
         ellipsis="...",
@@ -78,7 +82,7 @@ def _safe_notify_targets(raw_targets: Any) -> list[str]:
 
 
 def _cron_notify_targets(job_id: str) -> list[str]:
-    raw = state._env(_CRON_NOTIFY_TO_ENV, _DEFAULT_CRON_NOTIFY_TO).strip()
+    raw = state._env(core._CRON_NOTIFY_TO_ENV, core._DEFAULT_CRON_NOTIFY_TO).strip()
     if raw.lower() in {"", "0", "false", "no", "off", "none"}:
         return []
     if raw.lower() in {"origin", "deliver", "delivery", "job"}:
@@ -102,7 +106,7 @@ def _cron_notification_message(
 ) -> str:
     job_id = _cron_job_id_from_session(session_id)
     job_name = _cron_job_name(job_id)
-    classes = sorted(str(cls) for cls in (data_classes or []) if str(cls) in _ALL_PRIVACY_CLASSES)
+    classes = sorted(str(cls) for cls in (data_classes or []) if str(cls) in core._ALL_PRIVACY_CLASSES)
     action = str(action_family or tool_name or "unknown").strip()
 
     lines = [
@@ -117,7 +121,7 @@ def _cron_notification_message(
     if destination:
         lines.append(
             "Destination: "
-            + _presentation.clip_text(destination, 120, ellipsis="...", fallback="")
+            + core._presentation.clip_text(destination, 120, ellipsis="...", fallback="")
         )
     trust_label = str(destination_trust or "").strip()
     if trust_label:
@@ -130,7 +134,7 @@ def _cron_notification_message(
     if reason:
         lines.append(
             "Reason: "
-            + _presentation.clip_text(reason, 180, ellipsis="...", fallback="")
+            + core._presentation.clip_text(reason, 180, ellipsis="...", fallback="")
         )
     if approval_id:
         lines.extend([
@@ -253,9 +257,9 @@ def _send_telegram_cron_notification_message(message: str, target: str, approval
         )
         return True
     except Exception as exc:
-        logger.debug(
+        core.logger.debug(
             "%s: telegram copy-button cron notification failed for %s: %s",
-            _PLUGIN_NAME,
+            core._PLUGIN_NAME,
             target,
             exc,
         )
@@ -306,7 +310,7 @@ def _notify_cron_failure_if_needed(
     if not targets:
         return
 
-    sid = _normalize_session_id(session_id)
+    sid = tool_policy._normalize_session_id(session_id)
     with state._LOCK:
         if sid in state._CRON_NOTIFICATIONS_SENT:
             return
@@ -330,9 +334,9 @@ def _notify_cron_failure_if_needed(
             try:
                 _send_cron_notification_message(message, target)
             except Exception as exc:
-                logger.debug(
+                core.logger.debug(
                     "%s: failed to send cron failure notification to %s: %s",
-                    _PLUGIN_NAME,
+                    core._PLUGIN_NAME,
                     target,
                     exc,
                 )
