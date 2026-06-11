@@ -50,6 +50,7 @@ def _ensure_session(session_id: str | None, owner_hash: str | None = None) -> di
                 "browser_host": "",
                 "browser_private_hosts": set(),
                 "local_system_result_policies": [],
+                "suggested_sources": set(),
                 "turn_id": "",
             },
         )
@@ -364,6 +365,22 @@ def _is_mcp_doc_read(tool_name: str) -> bool:
     from the name alone; provably-reference reads are split out by _is_reference_read."""
     lower = re.sub(r"[^a-z0-9_]+", "_", str(tool_name or "").strip().lower())
     return bool(_DOC_READ_TOOL_RE.search(lower))
+
+
+# Taint reason carried on the activity row for the conservative source-provenance default.
+# The ``source_default:`` prefix is what the activity deep-link maps to the Protection tab.
+_SOURCE_DEFAULT_REASON = "source_default:undeclared_mcp_read"
+
+
+def _mcp_server_prefix(tool_name: str) -> str:
+    """The server prefix of an MCP doc-read tool — the name up to the final read token
+    (``crm_read_resource`` -> ``crm``); '' if there is no prefix (a bare ``read_resource``).
+    A structural token only, never content; used to scope per-server suggestions/declarations."""
+    lower = re.sub(r"[^a-z0-9_]+", "_", str(tool_name or "").strip().lower())
+    match = _DOC_READ_TOOL_RE.search(lower)
+    if not match:
+        return ""
+    return lower[: match.start()].strip("_")
 
 
 def _web_content_taint_classes(value: Any, session_id: str | None) -> set[str]:
@@ -771,28 +788,29 @@ def _taint_classes_for_tool_result(
         policy = local_system_policy if local_system_policy is not None else _consume_local_system_result_policy(session_id, tool_name)
         classes.update(set(policy.get("taint") or []))
         return classes | override_taints
-    # A declared `source` is authoritative for MCP doc-reads — it overrides the name/content
-    # defaults below (e.g. relaxes a `…_read_document` the name rule would otherwise taint).
+    # Doc-reads are classified by *provenance*, never by name keywords. Provably-reference
+    # material (skill_view, skills-tree files) is always relaxed.
+    if _is_reference_read(tool_name, tool_args):
+        # Placeholder-tolerant relaxed scan, so sample contacts in skill docs don't
+        # false-positive (the 0818f09 fix).
+        return _doc_content_taint_classes(result_value) | override_taints
+    # An MCP doc-read (by name shape) follows its declaration if any, else fails closed.
     if _is_mcp_doc_read(tool_name):
         source = _tool_override_source(tool_name)
         if source == "reference":
             return _doc_content_taint_classes(result_value) | override_taints
         if source == "private":
             return _source_private_taint_classes(tool_name) | override_taints
+        # Undeclared, unknown provenance → conservative: always taint as personal documents,
+        # even when the content trips no signal (closes the 0818f09 FN). _is_source_default_read
+        # flags these rows (source_default reason → Protection picker / deep-link); the operator
+        # declares the server (source=reference|private) to change the classification.
+        return {"documents"} | override_taints
     classes = _classes_from_tool_name(tool_name)
     if classes:
         return classes | override_taints
     if _is_web_sourced_tool(tool_name):
         return _web_content_taint_classes(result_value, session_id) | override_taints
-    if _is_reference_read(tool_name, tool_args):
-        # Provably operator-installed reference material — the placeholder-tolerant relaxed
-        # scan, so sample contacts in skill docs don't false-positive (the 0818f09 fix).
-        return _doc_content_taint_classes(result_value) | override_taints
-    if _is_mcp_doc_read(tool_name):
-        # Undeclared MCP doc-read of unknown provenance. Phase-1 floor: the pre-0818f09 generic
-        # content scan. Phase 3 makes this conservative (taint + classification suggestion); it
-        # must NOT use the relaxed reference path, which is reserved for provably-reference reads.
-        return _classes_from_content(result_value) | override_taints
     return _classes_from_content(result_value) | override_taints
 
 
@@ -1161,6 +1179,33 @@ def _source_private_taint_classes(tool_name: str) -> set[str]:
     override = rules_mod._tool_override_for(tool_name) or {}
     declared = {cls for cls in (override.get("taints") or []) if cls in core._ALL_PRIVACY_CLASSES}
     return declared or {"documents"}
+
+
+def _is_source_default_read(tool_name: str, tool_args: Any = None) -> bool:
+    """True iff a read hits the conservative source-provenance default: an MCP doc-read (by
+    name shape) that is neither provably-reference nor declared. These are the undeclared,
+    unknown-provenance reads tainted as `documents` with the _SOURCE_DEFAULT_REASON — the
+    rows the Protection picker and the activity deep-link key off."""
+    if not _is_mcp_doc_read(tool_name):
+        return False
+    if _is_reference_read(tool_name, tool_args):
+        return False
+    return _tool_override_source(tool_name) not in ("reference", "private")
+
+
+def _mark_source_suggested(session_id: str | None, server: str) -> bool:
+    """True the first time ``server`` is seen for this session (so its classification
+    suggestion is recorded once per server per session); False on later reads."""
+    server = str(server or "").strip()
+    if not server:
+        return False
+    with state._LOCK:
+        session = _ensure_session(session_id)
+        seen = session.setdefault("suggested_sources", set())
+        if server in seen:
+            return False
+        seen.add(server)
+        return True
 
 
 _KNOWN_BUILTIN_TOOL_NAMES = frozenset({

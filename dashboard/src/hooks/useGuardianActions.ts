@@ -10,6 +10,7 @@ import type {
   Policy,
   Rule,
   RuleForm,
+  SourceSuggestion,
   ToastVariant,
   ToolOverride,
 } from "@/types";
@@ -82,6 +83,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     Object.assign({}, DEFAULT_OVERRIDE_FORM),
   );
   const [overrideFormError, setOverrideFormError] = useState("");
+  const [sourceSuggestions, setSourceSuggestions] = useState<SourceSuggestion[]>([]);
 
   function saveMode(nextMode: string) {
     const mode = text(nextMode, privacyMode);
@@ -324,6 +326,40 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       .then((result) => {
         showToast(result.message || "Deleted.");
         return load();
+      })
+      .catch((err) => {
+        showToast(errText(err), "error");
+      });
+  }
+
+  function loadSourceSuggestions() {
+    return api("/tools/source-suggestions")
+      .then((value: { suggestions?: SourceSuggestion[] }) => {
+        setSourceSuggestions((value && value.suggestions) || []);
+      })
+      .catch(() => {
+        setSourceSuggestions([]);
+      });
+  }
+
+  function classifySource(server: string, mode: "reference" | "private") {
+    const body: { server: string; source: string; confirm?: string } = { server, source: mode };
+    if (mode === "reference") {
+      if (
+        !window.confirm(
+          "Treat reads from '" +
+            server +
+            "' as reference material? Their content will be scanned leniently (placeholder-tolerant).",
+        )
+      ) {
+        return;
+      }
+      body.confirm = "source-reference";
+    }
+    api("/tools/source", { method: "POST", body: JSON.stringify(body) })
+      .then((result) => {
+        showToast(result.message || "Source classified.");
+        return Promise.all([loadSourceSuggestions(), load()]);
       })
       .catch((err) => {
         showToast(errText(err), "error");
@@ -581,6 +617,9 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     submitOverride,
     toggleOverride,
     deleteOverride,
+    sourceSuggestions,
+    loadSourceSuggestions,
+    classifySource,
     // rules
     openCreate,
     openEdit,

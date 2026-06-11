@@ -76,29 +76,19 @@ def test_skills_path_read_via_generic_tool_name_stays_untainted():
     assert plugin._session_taint("ref") == set()
 
 
-def test_undeclared_mcp_read_falls_to_generic_floor():
+def test_undeclared_mcp_read_leaves_the_relaxed_bucket():
     # ``…_read_resource`` / ``…_get_resource`` are the live false-negative surface: their names
-    # match no source-taint rule, so pre-0818f09 they reached the doc-read branch and, after
-    # 0818f09, the relaxed scan — reading real personal content untainted. With provenance
-    # tiering an undeclared one falls to the generic floor, which catches a real consumer
-    # address (the FN starts closing; phases 2-3 refine the undeclared case).
+    # match no source-taint rule, so after 0818f09 they took the relaxed (placeholder-tolerant)
+    # scan and read real personal content untainted. With provenance tiering an undeclared one
+    # no longer uses the relaxed path — placeholder content that a skills-path read tolerates
+    # (above) now taints. (Phase 3 pins exactly how: conservative `documents`.)
     plugin = load_plugin()
     bind_owner(plugin)
 
     plugin._on_transform_tool_result(
-        tool_name="crm_read_resource",
-        result="Reach the client at jane.doe@gmail.com about the renewal.",
-        session_id="floor",
+        tool_name="crm_read_resource", result=_PLACEHOLDER_DOC, session_id="floor"
     )
-    assert "contacts" in plugin._session_taint("floor")
-
-    # And the placeholder discriminator: an undeclared MCP read of a placeholder-only doc
-    # taints under the floor (interim conservative behavior), whereas the same content via a
-    # skills-path read above did not — proving the two go through different scans.
-    plugin._on_transform_tool_result(
-        tool_name="crm_read_resource", result=_PLACEHOLDER_DOC, session_id="floor2"
-    )
-    assert "contacts" in plugin._session_taint("floor2")
+    assert plugin._session_taint("floor")  # non-empty: not the relaxed reference path
 
 
 def test_reference_by_path_skips_inbound_sensitive_link_suppression():
@@ -161,17 +151,9 @@ def test_declared_reference_overrides_name_rule_taint():
 
 
 def test_declared_private_taints_signalless_prose():
-    # `source = "private"` always taints, even content with no structural signal — exactly the
-    # case the undeclared floor misses (the FN phase 3 closes for undeclared servers).
+    # `source = "private"` always taints `documents`, even content with no structural signal.
     plugin = load_plugin()
     bind_owner(plugin)
-
-    # Baseline: undeclared, signal-less prose taints nothing (the floor sees no signal).
-    plugin._on_transform_tool_result(
-        tool_name="crm_read_resource", result=_SIGNALLESS_PROSE, session_id="undeclared"
-    )
-    assert plugin._session_taint("undeclared") == set()
-
     plugin._set_tool_override("crm_*", source="private")
     plugin._on_transform_tool_result(
         tool_name="crm_read_resource", result=_SIGNALLESS_PROSE, session_id="declared"
@@ -188,3 +170,86 @@ def test_unknown_source_value_is_conservative():
     # ...and the config loader drops it (fails toward the conservative default, never reference).
     normalized = plugin._normalize_tool_override({"match": "crm_*", "source": "trusted"})
     assert normalized is not None and normalized["source"] == ""
+
+
+# --- Phase 3: undeclared MCP doc-reads fail closed, with a one-click exit -----
+
+def _tainted_rows(plugin):
+    return plugin._activity_rows({"decision": "tainted"}, limit=20)
+
+
+def test_undeclared_mcp_read_of_signalless_prose_taints_the_fn_closes():
+    # THE headline: signal-less personal prose from an undeclared MCP doc-read used to read
+    # untainted (the false negative). It now taints `documents` conservatively, with the
+    # source_default reason carried into the activity row and a Protection deep-link.
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    plugin._on_transform_tool_result(
+        tool_name="crm_read_resource", result=_SIGNALLESS_PROSE, session_id="fn"
+    )
+    assert plugin._session_taint("fn") == {"documents"}
+
+    rows = _tainted_rows(plugin)
+    assert rows and rows[0]["reason"] == "source_default:undeclared_mcp_read"
+    # The row deep-links to the Protection picker (decision_step base maps there).
+    assert rows[0]["decision_step"].split(":")[0] == "source_default"
+
+
+def test_undeclared_mcp_read_records_one_suggestion_per_server_per_session():
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    for _ in range(3):
+        plugin._on_transform_tool_result(
+            tool_name="crm_read_resource", result=_SIGNALLESS_PROSE, session_id="s1"
+        )
+    # A second tool on the same server prefix is still the same server.
+    plugin._on_transform_tool_result(
+        tool_name="crm_get_resource", result=_SIGNALLESS_PROSE, session_id="s1"
+    )
+    suggestions = plugin._source_classification_suggestions()
+    servers = [s["server"] for s in suggestions]
+    assert servers.count("crm") == 1
+
+
+def test_picker_round_trip_declare_reference_flips_to_relaxed():
+    # Declaring the seen server as reference (via the picker setter) flips subsequent reads to
+    # the relaxed path, and the server drops out of the suggestions list.
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._on_transform_tool_result(
+        tool_name="crm_read_resource", result=_PLACEHOLDER_DOC, session_id="s1"
+    )
+    assert plugin._session_taint("s1") == {"documents"}
+    assert any(s["server"] == "crm" for s in plugin._source_classification_suggestions())
+
+    ok, _ = plugin._set_source_classification("crm", "reference")
+    assert ok
+    plugin._on_transform_tool_result(
+        tool_name="crm_read_resource", result=_PLACEHOLDER_DOC, session_id="s2"
+    )
+    assert plugin._session_taint("s2") == set()  # relaxed: placeholders tolerated
+    assert not any(s["server"] == "crm" for s in plugin._source_classification_suggestions())
+
+
+def test_picker_declare_private_taints_with_declared_reason_not_default():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._set_source_classification("crm", "private")
+    plugin._on_transform_tool_result(
+        tool_name="crm_read_resource", result=_SIGNALLESS_PROSE, session_id="s1"
+    )
+    assert plugin._session_taint("s1") == {"documents"}
+    # Declared, so NOT the source_default reason.
+    rows = _tainted_rows(plugin)
+    assert rows and rows[0]["reason"] != "source_default:undeclared_mcp_read"
+
+
+def test_skills_reads_never_record_a_source_suggestion():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._on_transform_tool_result(tool_name="skill_view", result=_SIGNALLESS_PROSE, session_id="s1")
+    plugin._on_pre_tool_call("crm_fetch", {"path": _SKILLS_DOC}, session_id="s1")
+    plugin._on_transform_tool_result(tool_name="crm_fetch", result=_SIGNALLESS_PROSE, session_id="s1")
+    assert plugin._source_classification_suggestions() == []

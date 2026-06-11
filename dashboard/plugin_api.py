@@ -145,6 +145,11 @@ def _require_dashboard_confirmation(action: str, body: dict[str, Any]) -> None:
     if action == "tool_override" and str(body.get("egress") or "").strip().lower() == "ignore":
         if _confirmation_value(body) != "tool-ignore":
             raise HTTPException(status_code=400, detail="ignore tool override requires confirmation")
+    if action == "source_classify" and str(body.get("source") or "").strip().lower() == "reference":
+        # Declaring a source as reference relaxes scanning of its reads, so confirm that
+        # weakening direction (private only tightens and needs no token).
+        if _confirmation_value(body) != "source-reference":
+            raise HTTPException(status_code=400, detail="declaring a source as reference requires confirmation")
     if action == "llm_cron_context" and _body_bool(body, "enabled"):
         if _confirmation_value(body) != "cron-context-on":
             raise HTTPException(status_code=400, detail="enabling cron context requires confirmation")
@@ -375,6 +380,18 @@ async def delete_tool_override(request: Request, override_id: str) -> JSONRespon
     return _json_mutation_result(
         _guardian()._dashboard_tool_override_delete_action(override_id),
     )
+
+
+@router.get("/tools/source-suggestions")
+async def source_classification_suggestions() -> dict[str, Any]:
+    return _guardian()._dashboard_source_suggestions()
+
+
+@router.post("/tools/source")
+async def classify_source(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    _require_dashboard_confirmation("source_classify", body)
+    return _json_mutation_result(_guardian()._dashboard_source_classify_action(body))
 
 
 # --- Destinations & Trust panel (doc 03 §3.1) --------------------------------

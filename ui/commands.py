@@ -65,6 +65,7 @@ _GUARDIAN_HELP_LINES = [
     "  protection              show security, tool overrides, language packs",
     "  protection security enable|disable <rule_id>",
     "  protection tool set|delete|enable|disable ...",
+    "  protection source suggest|set <server> reference|private",
     "  protection unknown-tools gate|allow",
     "  protection persist-prompts on|off",
     "  protection language-packs enable|disable <pack_id>",
@@ -566,6 +567,8 @@ def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
         return _guardian_tool_command(owner_hash, ["tool", *tokens[2:]])
     if sub == "tools":
         return _guardian_tools_command()
+    if sub == "source":
+        return _guardian_source_command(owner_hash, tokens)
     if sub in {"unknown-tools", "unknown_tools"}:
         return _guardian_privacy_command(owner_hash, ["privacy", "unknown-tools", *tokens[2:]])
     if sub in {"persist-prompts", "persist_prompts"}:
@@ -585,9 +588,39 @@ def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
         "/guardian protection security enable|disable <rule_id> | "
         "/guardian protection tool set|delete|enable|disable ... | "
         "/guardian protection unknown-tools gate|allow | "
+        "/guardian protection source suggest|set <server> reference|private | "
         "/guardian protection persist-prompts on|off | "
         "/guardian protection language-packs enable|disable <pack_id>"
     )
+
+
+def _guardian_source_command(owner_hash: str, tokens: list[str]) -> str:
+    """SOURCE group: classify the doc-read provenance of an MCP server seen by Guardian.
+
+    `suggest` lists servers whose undeclared doc-reads were tainted conservatively; `set`
+    declares one as reference material or personal data (a prefix-scoped tool override).
+    """
+    sub = tokens[2].lower() if len(tokens) > 2 else ""
+    usage = (
+        "Usage: /guardian protection source suggest | "
+        "/guardian protection source set <server> reference|private"
+    )
+    if sub == "suggest":
+        suggestions = rules_mod._source_classification_suggestions()
+        if not suggestions:
+            return "No undeclared MCP doc-read sources seen yet."
+        lines = ["🛡️ **Sources seen** · `/guardian protection source set <server> reference|private`"]
+        for item in suggestions:
+            lines.append(f"- `{item['server']}` ({item['hits']}×)")
+        return "\n".join(lines)
+    if sub == "set" and len(tokens) >= 5:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        server = tokens[3]
+        mode = tokens[4].lower()
+        ok, message = rules_mod._set_source_classification(server, mode)
+        return message
+    return usage
 
 
 def _guardian_protection_overview() -> str:

@@ -262,6 +262,18 @@ def _dashboard_tool_override_delete_action(match_or_id: str) -> tuple[dict[str, 
     return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, status
 
 
+def _dashboard_source_suggestions() -> dict[str, Any]:
+    """Undeclared MCP doc-read servers Guardian has seen ("Sources seen" picker)."""
+    return {"suggestions": rules_mod._source_classification_suggestions()}
+
+
+def _dashboard_source_classify_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    server = payload.get("server") or payload.get("prefix") or ""
+    mode = payload.get("source") or payload.get("mode") or ""
+    ok, message = rules_mod._set_source_classification(str(server), str(mode))
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
+
+
 # --- Destinations & Trust panel actions (doc 03 §3.1) ------------------------
 # Mirror the slash commands; mutations go through the same admin-token + confirmation
 # guards in dashboard/plugin_api.py (destination-trust edits require confirmation like

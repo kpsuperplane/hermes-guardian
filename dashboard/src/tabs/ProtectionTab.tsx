@@ -1,7 +1,15 @@
-import { React } from "@/sdk";
+import { React, useEffect } from "@/sdk";
 import { Button } from "@/components/Button";
+import { Mono } from "@/components/Mono";
 import { text } from "@/lib/format";
-import type { LanguagePack, Performance, PerfStats, Policy, ToolOverride } from "@/types";
+import type {
+  LanguagePack,
+  Performance,
+  PerfStats,
+  Policy,
+  SourceSuggestion,
+  ToolOverride,
+} from "@/types";
 
 const UNKNOWN_TOOL_MODES = ["gate", "allow"];
 
@@ -17,6 +25,10 @@ export interface ProtectionTabProps {
   unknownTools: string;
   unknownToolsSaving: boolean;
   onChangeUnknownTools: (mode: string) => void;
+  // "Sources seen" picker: undeclared MCP doc-read servers awaiting classification
+  sourceSuggestions: SourceSuggestion[];
+  onLoadSourceSuggestions: () => void;
+  onClassifySource: (server: string, mode: "reference" | "private") => void;
   // Language packs
   languagePacksSaving: boolean;
   onPatchLanguagePack: (packId: string, enabled: boolean) => void;
@@ -378,6 +390,50 @@ function Diagnostics(props: {
   );
 }
 
+// --- Sources seen (source-provenance picker, doc: source provenance §3) ------
+function SourcesSeen(props: {
+  suggestions: SourceSuggestion[];
+  onLoad: () => void;
+  onClassify: (server: string, mode: "reference" | "private") => void;
+}) {
+  // Load once when the tab mounts; classifying a source refreshes the list itself.
+  useEffect(() => {
+    props.onLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (!props.suggestions.length) return null;
+  return (
+    <div className="hermes-guardian-card">
+      <div className="hermes-guardian-card-title">Sources seen</div>
+      <div className="hermes-guardian-muted hermes-guardian-section-description">
+        Guardian saw document reads from these MCP servers and tainted them conservatively
+        because their provenance is undeclared. Classify each: reference material is scanned
+        leniently (placeholder-tolerant); personal data always taints.
+      </div>
+      <div className="hermes-guardian-grid">
+        {props.suggestions.map((item) => (
+          <div key={item.server} className="hermes-guardian-rule-head">
+            <div className="hermes-guardian-rule-main">
+              <div className="hermes-guardian-rule-title">
+                <Mono>{text(item.server)}</Mono>
+              </div>
+              <div className="hermes-guardian-muted">{(item.hits || 0) + " read(s) seen"}</div>
+            </div>
+            <div className="hermes-guardian-actions">
+              <Button variant="secondary" onClick={() => props.onClassify(item.server, "reference")}>
+                Reference material
+              </Button>
+              <Button variant="secondary" onClick={() => props.onClassify(item.server, "private")}>
+                Personal data
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ProtectionTab(props: ProtectionTabProps) {
   return (
     <div className="hermes-guardian-grid">
@@ -391,6 +447,11 @@ export function ProtectionTab(props: ProtectionTabProps) {
         unknownTools={props.unknownTools}
         unknownToolsSaving={props.unknownToolsSaving}
         onChangeUnknownTools={props.onChangeUnknownTools}
+      />
+      <SourcesSeen
+        suggestions={props.sourceSuggestions}
+        onLoad={props.onLoadSourceSuggestions}
+        onClassify={props.onClassifySource}
       />
       <LanguagePacks
         policy={props.policy}

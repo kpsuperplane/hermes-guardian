@@ -777,7 +777,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
         # can offer "trust this" (recent-blocks source). Flags/values are stripped.
         suggestion = tool_policy._command_prefix_for_suggestion(tool_policy._terminal_command_for_args(args))
         if suggestion:
-            activity_store._record_command_suggestion(suggestion)
+            activity_store._record_suggestion("command", suggestion)
 
     # decision == APPROVE: gate for human approval (doc 02 §3 step 6).
     # Cross-channel turn lockdown (channel-shopping defense): if a private export of
@@ -838,6 +838,7 @@ def _privacy_observe_tool_result(
     # Provenance verdict, computed once here (the only place with the call's args) and reused
     # on the security inbound path so both sides agree on what "reference material" is.
     is_reference_read = tool_policy._is_reference_read(tool_name, tool_args)
+    source_default = tool_policy._is_source_default_read(tool_name, tool_args)
     taint_classes = tool_policy._taint_classes_for_tool_result(
         tool_name,
         parsed,
@@ -849,14 +850,32 @@ def _privacy_observe_tool_result(
     if taint_classes:
         tool_policy._taint_session(session_id, taint_classes)
         # Provenance retired (doc 02 §4): the read taints the session ambiently; there is
-        # no read-time fingerprint index. ``decide`` reasons over this ambient taint.
+        # no read-time fingerprint index. ``decide`` reasons over this ambient taint. An
+        # undeclared MCP doc-read carries the source_default reason so the operator can see
+        # *why* it was tainted (and the activity row deep-links to the Protection picker).
+        reason = (
+            tool_policy._SOURCE_DEFAULT_REASON
+            if source_default
+            else tool_policy._taint_reason_for_tool_result(tool_name, taint_classes)
+        )
         activity_store._emit_activity(
             "tainted",
             session_id=session_id,
             tool_name=tool_name,
             data_classes=taint_classes,
-            reason=tool_policy._taint_reason_for_tool_result(tool_name, taint_classes),
+            reason=reason,
+            # The conservative-default taint row deep-links to the Protection picker so the
+            # operator can classify the server one click away (see deepLinks.ts).
+            decision_step=(tool_policy._SOURCE_DEFAULT_REASON if source_default else ""),
         )
+
+    # First time this session sees an undeclared MCP doc-read from a server, surface a
+    # one-click classification suggestion (server prefix only, never content). Declaring the
+    # server (reference|private) via the Protection picker silences it and sets the behavior.
+    if tool_policy._is_mcp_doc_read(tool_name) and not is_reference_read and not tool_policy._tool_override_source(tool_name):
+        server = tool_policy._mcp_server_prefix(tool_name)
+        if server and tool_policy._mark_source_suggested(session_id, server):
+            activity_store._record_suggestion("source", server)
 
     if str(tool_name or "").lower().startswith("browser_"):
         url = tool_policy._extract_url(parsed)

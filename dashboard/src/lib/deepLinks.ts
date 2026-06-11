@@ -55,6 +55,13 @@ function segmentsForStep(base: string): DeepLinkSegment[] | null {
       { text: " → approval required", tab: "review" },
     ];
   }
+  if (base === "source_default") {
+    // Conservative taint from an undeclared MCP doc-read — classify the server in Protection.
+    return [
+      { text: "undeclared source — tainted conservatively", tab: "protection" },
+      { text: " → classify the server" },
+    ];
+  }
   return null;
 }
 

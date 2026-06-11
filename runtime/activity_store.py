@@ -205,19 +205,26 @@ def _ensure_activity_db() -> None:
                 )
                 conn.execute("CREATE INDEX IF NOT EXISTS check_timings_ts_idx ON check_timings(ts)")
                 conn.execute("CREATE INDEX IF NOT EXISTS check_timings_hook_idx ON check_timings(hook)")
-                # Trusted-destinations picker (recent-blocks source): safe command prefixes
-                # (program + script/subcommand only, never flag values) for terminal commands
-                # that gated. Shared across the gateway/dashboard processes via this DB.
+                # Classification-picker candidates, by kind (doc: source provenance §3):
+                #   kind="command" → safe terminal command prefixes that gated (Trusted-
+                #     destinations picker; program + script/subcommand only, never flag values).
+                #   kind="source"  → MCP server prefixes whose doc-reads hit the conservative
+                #     source-default (Protection "Sources seen" picker; server prefix only,
+                #     never content).
+                # Shared across the gateway/dashboard processes via this DB.
                 conn.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS command_suggestions (
-                        prefix TEXT PRIMARY KEY,
+                    CREATE TABLE IF NOT EXISTS suggestions (
+                        kind TEXT NOT NULL,
+                        prefix TEXT NOT NULL,
                         last_ts INTEGER NOT NULL,
-                        hits INTEGER NOT NULL DEFAULT 1
+                        hits INTEGER NOT NULL DEFAULT 1,
+                        PRIMARY KEY (kind, prefix)
                     )
                     """
                 )
-                conn.execute("CREATE INDEX IF NOT EXISTS command_suggestions_ts_idx ON command_suggestions(last_ts)")
+                conn.execute("CREATE INDEX IF NOT EXISTS suggestions_ts_idx ON suggestions(last_ts)")
+                conn.execute("DROP TABLE IF EXISTS command_suggestions")
             state._ACTIVITY_DB_INITIALIZED = True
         except Exception as exc:
             core.logger.debug("%s: failed to initialize activity db: %s", core._PLUGIN_NAME, exc)
@@ -250,40 +257,42 @@ def _normalize_decision_step_label(value: Any) -> str:
     return text[:60]
 
 
-def _record_command_suggestion(prefix: str) -> None:
-    """Remember a safe command prefix that just gated (Trusted-destinations picker)."""
+def _record_suggestion(kind: str, prefix: str) -> None:
+    """Remember a classification-picker candidate of ``kind`` (command | source). The
+    prefix is a structural token (a command prefix or an MCP server prefix), never content."""
     text = str(prefix or "").strip()
-    if not text:
+    kind_text = str(kind or "").strip()
+    if not text or not kind_text:
         return
     _ensure_activity_db()
     try:
         with _activity_connect() as conn:
             conn.execute(
                 """
-                INSERT INTO command_suggestions (prefix, last_ts, hits) VALUES (?, ?, 1)
-                ON CONFLICT(prefix) DO UPDATE SET last_ts=excluded.last_ts, hits=hits+1
+                INSERT INTO suggestions (kind, prefix, last_ts, hits) VALUES (?, ?, ?, 1)
+                ON CONFLICT(kind, prefix) DO UPDATE SET last_ts=excluded.last_ts, hits=hits+1
                 """,
-                (text[:400], int(state._now())),
+                (kind_text[:32], text[:400], int(state._now())),
             )
     except Exception as exc:
-        core.logger.debug("%s: failed to record command suggestion: %s", core._PLUGIN_NAME, exc)
+        core.logger.debug("%s: failed to record %s suggestion: %s", core._PLUGIN_NAME, kind_text, exc)
 
 
-def _recent_command_suggestions(limit: int = 20) -> list[dict[str, Any]]:
-    """Recently gated command prefixes, newest first (Trusted-destinations picker)."""
+def _recent_suggestions(kind: str, limit: int = 20) -> list[dict[str, Any]]:
+    """Recently recorded picker candidates of ``kind``, newest first."""
     _ensure_activity_db()
     try:
         with _activity_connect() as conn:
             rows = conn.execute(
-                "SELECT prefix, last_ts, hits FROM command_suggestions ORDER BY last_ts DESC LIMIT ?",
-                (max(1, min(int(limit or 20), 100)),),
+                "SELECT prefix, last_ts, hits FROM suggestions WHERE kind=? ORDER BY last_ts DESC LIMIT ?",
+                (str(kind or "").strip(), max(1, min(int(limit or 20), 100))),
             ).fetchall()
         return [
             {"prefix": str(row["prefix"]), "last_ts": int(row["last_ts"]), "hits": int(row["hits"])}
             for row in rows
         ]
     except Exception as exc:
-        core.logger.debug("%s: failed to read command suggestions: %s", core._PLUGIN_NAME, exc)
+        core.logger.debug("%s: failed to read %s suggestions: %s", core._PLUGIN_NAME, kind, exc)
         return []
 
 

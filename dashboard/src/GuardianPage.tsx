@@ -220,6 +220,9 @@ export function GuardianPage() {
           unknownTools={unknownTools}
           unknownToolsSaving={actions.unknownToolsSaving}
           onChangeUnknownTools={actions.saveUnknownTools}
+          sourceSuggestions={actions.sourceSuggestions}
+          onLoadSourceSuggestions={actions.loadSourceSuggestions}
+          onClassifySource={actions.classifySource}
           languagePacksSaving={actions.languagePacksSaving}
           onPatchLanguagePack={actions.patchLanguagePack}
           onSetAllLanguagePacks={actions.setAllLanguagePacks}

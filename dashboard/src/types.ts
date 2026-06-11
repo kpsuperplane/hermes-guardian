@@ -85,6 +85,12 @@ export interface ToolOverride {
   enabled?: boolean;
 }
 
+export interface SourceSuggestion {
+  server: string;
+  hits?: number;
+  last_ts?: number;
+}
+
 export interface RecentBlock {
   id?: string;
   activity_id?: string;

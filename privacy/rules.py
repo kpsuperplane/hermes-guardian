@@ -1663,7 +1663,7 @@ def _trusted_destination_suggestions(limit: int = 60) -> list[dict[str, Any]]:
     trusted = {e["value"] for e in _trusted_recipients_snapshot() if e["kind"] == "command"}
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for row in activity_store._recent_command_suggestions(limit=20):
+    for row in activity_store._recent_suggestions("command", limit=20):
         value = str(row.get("prefix") or "")
         if not value or value in trusted or value in seen:
             continue
@@ -1684,6 +1684,42 @@ def _trusted_destination_suggestions(limit: int = 60) -> list[dict[str, Any]]:
         if len(out) >= limit:
             break
     return out[:limit]
+
+
+def _source_classification_suggestions(limit: int = 40) -> list[dict[str, Any]]:
+    """MCP server prefixes whose doc-reads hit the conservative source-default and are not yet
+    declared (Protection "Sources seen" picker). Newest first; already-declared servers drop
+    out once the operator classifies them. Server prefixes only — never content."""
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in activity_store._recent_suggestions("source", limit=max(1, min(int(limit or 40), 100))):
+        server = str(row.get("prefix") or "")
+        if not server or server in seen:
+            continue
+        seen.add(server)
+        # A declaration scopes the whole server via a prefix match; a representative read tool
+        # resolves it. Already-classified servers no longer need a suggestion.
+        if tool_policy._tool_override_source(f"{server}_read_resource"):
+            continue
+        out.append({
+            "server": server,
+            "last_ts": int(row.get("last_ts") or 0),
+            "hits": int(row.get("hits") or 0),
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _set_source_classification(server: str, mode: str) -> tuple[bool, str]:
+    """Declare an MCP server's doc-reads as `reference` or `private` from the picker — a
+    prefix-scoped tool override (``<server>_*``). Mirrors the trusted-destination picker flow."""
+    name = re.sub(r"[^a-z0-9_]+", "_", str(server or "").strip().lower()).strip("_")
+    if not name:
+        return False, "Provide an MCP server prefix (e.g. crm)."
+    if str(mode or "").strip().lower() not in _TOOL_OVERRIDE_SOURCES:
+        return False, "Mode must be one of: reference, private."
+    return _set_tool_override(f"{name}_*", source=str(mode).strip().lower())
 
 
 def _add_trusted_command(command: str, *, classes: Any = None, note: str = "") -> tuple[bool, str]:
