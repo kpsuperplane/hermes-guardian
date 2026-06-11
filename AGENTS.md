@@ -92,9 +92,11 @@ runtime state unless the task explicitly requires it.
 
 - `plugin.yaml`: Hermes plugin manifest. Keep hook names aligned with
   `core.register`.
-- `__init__.py`: Hermes-facing facade. It loads `core.py` by absolute path and
-  bridges private globals/functions so tests and Hermes imports can monkeypatch
-  state.
+- `__init__.py`: Hermes-facing facade. A thin by-reference re-export layer: it
+  loads `core.py` by absolute path, then re-exports the public surface (the
+  entrypoints, handlers/helpers, the logic modules, and the `state` module) so
+  Hermes and the tests can reach them. No sync bridge — `state` is the single
+  source of truth.
 - `core.py`: composition root. It defines the shared constants, regexes, and
   policy text, binds the `state` module and reusable helpers, imports the logic
   modules in dependency order, and exposes `register(ctx)`.
@@ -136,11 +138,16 @@ mutual-import cycles (rules↔llm, approvals↔cron_notifications, …).
 
 `core.py` defines the shared constants/regexes/policy text, binds `state` and the
 three reusable helpers (`_presentation`, `_security`, `_language`), then imports
-the logic modules at the BOTTOM (after all constants exist) and re-exports their
-public names onto itself so the façade's `dir(_CORE)` bridge still reaches every
-handler/helper as `core.<name>`. Core's module type propagates an attribute set
-on `core.<name>` down to the logic module that defines it, so patching
-`plugin._CORE.<name>` in tests still intercepts the live call path.
+the logic modules at the BOTTOM (after all constants exist) and imports the
+specific entrypoints `register(ctx)` and the module-load-time wiring need
+(`from .hooks import ...`, `from .ui.commands import _handle_guardian_command`,
+…). There is no shared namespace and no sync bridge: each name has ONE home.
+`state` owns all mutable process state, the on-disk paths, and the clock/env
+helpers; rebinding `state.<name>` (or `plugin.state.<name>` from a test) is seen
+by every reader because they all reference the same `state` module. Tests/Hermes
+monkeypatch a function by patching the module that DEFINES it (the live call path
+goes through that module object, e.g. `plugin.policy.decide`,
+`plugin.rules._foo`), not the façade.
 
 When editing this code:
 
@@ -155,8 +162,10 @@ When editing this code:
   `from ..privacy import rules as rules_mod`).
 - Keep reusable standalone modules importable on their own:
   `security/scanner.py`, `language_packs/runtime.py`, `ui/presentation.py`.
-- If a function must be monkeypatched through the façade in tests, ensure
-  `__init__.py` can bridge it correctly.
+- To monkeypatch a function in tests, patch the module that DEFINES it (e.g.
+  `monkeypatch.setattr(plugin.rules, "_foo", ...)`); patch state/paths/clock via
+  `plugin.state.<name>`. The façade re-exports by reference, so patching the
+  façade name alone does not reach the live call path.
 - Dashboard API loading must continue to work outside the plugin current working
   directory; see `tests/test_hooks_registration.py`.
 
