@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import re
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+
 def _activity_rows(filters: dict[str, str], *, limit: int = 200) -> list[dict[str, Any]]:
     _ensure_activity_db()
     clauses, params = _activity_filter_clauses(filters)

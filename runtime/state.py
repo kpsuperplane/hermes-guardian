@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+
 def _on_session_reset(session_id: str = "", old_session_id: str = "", **_: Any) -> None:
     with _LOCK:
         _load_pending_approvals_from_store_unlocked()

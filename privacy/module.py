@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
+
 
 def _emit_read_activity_if_applicable(tool_name: str, args: Any, session_id: str | None) -> bool:
     read_activity = _read_activity_for_tool(tool_name, args, session_id)

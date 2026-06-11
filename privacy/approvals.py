@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import re
+import secrets
+import sqlite3
+from typing import Any
+
+
 def _pending_approval_from_row(row: sqlite3.Row) -> dict[str, Any] | None:
     approval_id = str(row["id"] or "").strip()
     if not re.fullmatch(r"[0-9]{4}", approval_id):

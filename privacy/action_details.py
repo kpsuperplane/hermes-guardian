@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import re
+from typing import Any
+
+
 def _redact_action_detail_text(text: str) -> str:
     text = str(text or "")
     reason = _sensitive_reason(text)

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import re
+import sqlite3
+from typing import Any
+
+
 def _activity_connect() -> sqlite3.Connection:
     _ACTIVITY_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(_ACTIVITY_DB_PATH), timeout=2.0)

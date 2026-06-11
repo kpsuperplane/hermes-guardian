@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+
 _SHARED_CONTEXT_TTL_SECONDS = 120
 _SHARED_CONTEXT: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
