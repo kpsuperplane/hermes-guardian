@@ -18,9 +18,9 @@ from support import *  # noqa: F403
 
 
 def _write_config(plugin, data: dict) -> None:
-    plugin._PERSISTENT_RULES_PATH.write_text(json.dumps(data))
-    plugin._PERSISTENT_RULES_CACHE = None
-    plugin._PERSISTENT_RULES_MTIME = None
+    plugin.state._PERSISTENT_RULES_PATH.write_text(json.dumps(data))
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_MTIME = None
 
 
 # --- 1. v4 partial load: a file with only some blocks fills the rest from defaults. ---
@@ -77,12 +77,12 @@ def test_malformed_self_block_drops_to_safe_subset():
 
 def test_wholly_corrupt_document_falls_back_to_strict():
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH.write_text("{ this is not valid json")
-    plugin._PERSISTENT_RULES_CACHE = None
-    plugin._PERSISTENT_RULES_MTIME = None
+    plugin.state._PERSISTENT_RULES_PATH.write_text("{ this is not valid json")
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_MTIME = None
     config = plugin._load_privacy_config()
     assert config["privacy"]["mode"] == "strict"
-    assert plugin._PERSISTENT_RULES_ERROR is True
+    assert plugin.state._PERSISTENT_RULES_ERROR is True
 
 
 # --- 3. Non-narrowable sharing: removing a builtin subtype has no effect. -------------

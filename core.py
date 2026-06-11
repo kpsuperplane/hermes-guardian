@@ -29,7 +29,6 @@ import subprocess
 import sys
 import threading
 import time
-import types
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -640,11 +639,18 @@ _REGISTERED_HOOKS = (
 
 
 def _core_logic_missing_required_symbols() -> tuple[str, ...]:
-    return tuple(
-        name
-        for name in _CORE_LOGIC_REQUIRED_SYMBOLS
-        if name not in globals() or not callable(globals()[name])
-    )
+    # Single source of truth: each required handler/helper lives on one real logic
+    # module (or, for the entrypoints register() wires, is bound on core itself).
+    # The symbol is "loaded" iff it resolves to a callable on core or on any loaded
+    # logic module — there is no re-export onto core to satisfy this check anymore.
+    def _loaded(name: str) -> bool:
+        for ns in (globals(), *(vars(m) for m in _LOADED_LOGIC_MODULES)):
+            value = ns.get(name)
+            if callable(value):
+                return True
+        return False
+
+    return tuple(name for name in _CORE_LOGIC_REQUIRED_SYMBOLS if not _loaded(name))
 
 
 def _assert_core_logic_contract() -> None:
@@ -709,70 +715,10 @@ _m_commands = _import_logic("ui.commands")
 _m_hooks = _import_logic("hooks")
 _m_runtime_state = _import_logic("runtime.state")
 
-# Entrypoints that register()/the facade/the module-load wiring below reference at
-# core scope. Binding them onto core also keeps them reachable as `core.<name>`
-# attributes for the facade's dir(_CORE) bridge and _CORE_LOGIC_REQUIRED_SYMBOLS.
-_apply_language_pack_config = rules._apply_language_pack_config
-_load_privacy_config = rules._load_privacy_config
-_security_rule_enabled = rules._security_rule_enabled
-_on_pre_tool_call = _m_hooks._on_pre_tool_call
-_on_transform_tool_result = _m_hooks._on_transform_tool_result
-_on_pre_gateway_dispatch = _m_hooks._on_pre_gateway_dispatch
-_on_transform_llm_output = _m_hooks._on_transform_llm_output
-_on_pre_llm_call = _m_hooks._on_pre_llm_call
-_on_session_reset = _m_runtime_state._on_session_reset
-_on_session_end = _m_runtime_state._on_session_end
-_handle_guardian_command = _m_commands._handle_guardian_command
-_guardian_cli_setup = _m_commands._guardian_cli_setup
-
-
-# name -> the logic module(s) that define it, for monkeypatch propagation (below).
-_LOGIC_SYMBOL_OWNERS: dict[str, list[Any]] = {}
-
-
-def _reexport_logic_symbols() -> None:
-    """Mirror every logic module's public top-level name onto core.
-
-    The facade exposes Hermes-/test-facing entrypoints by bridging core's
-    attributes (it iterates ``dir(_CORE)``). Re-exporting the logic modules'
-    public names lets the facade and the suite reach every handler/helper as
-    ``core.<name>``. Later modules win on rebind (the ``_CORE_LOGIC_MODULES`` order,
-    per ``_CORE_LOGIC_ALLOWED_REBINDS``). Core's own constants/helpers are never
-    overwritten — its globals already hold them and take precedence.
-
-    Each re-exported name also records its owning module(s) so that patching
-    ``core.<name>`` propagates the patch down to the module that defines it (the
-    logic modules now call each other by module-object attribute, so a patch must
-    reach the real definition to be observed). See ``_propagate_to_owners``.
-    """
-    g = globals()
-    for module in _LOGIC_MODULES_IN_LOAD_ORDER:
-        for name in getattr(module, "__dict__", {}):
-            if name.startswith("__"):
-                continue
-            value = module.__dict__[name]
-            _LOGIC_SYMBOL_OWNERS.setdefault(name, [])
-            if module not in _LOGIC_SYMBOL_OWNERS[name]:
-                _LOGIC_SYMBOL_OWNERS[name].append(module)
-            if name in _CORE_OWNED_NAMES:
-                continue
-            g[name] = value
-
-
-def _propagate_to_owners(name: str, value: Any) -> None:
-    """Mirror an attribute set on core down to the logic module(s) that own it.
-
-    Tests and Hermes patch ``core.<name>``; the logic modules resolve that name as
-    ``<owning_module>.<name>`` at call time, so the patch must also land there.
-    """
-    for module in _LOGIC_SYMBOL_OWNERS.get(name, ()):  # pragma: no branch
-        try:
-            setattr(module, name, value)
-        except Exception:
-            pass
-
-
-_LOGIC_MODULES_IN_LOAD_ORDER = (
+# The loaded logic modules, in dependency/load order. Used only to verify the load
+# contract (_core_logic_missing_required_symbols) by resolving required handler
+# symbols against the modules that own them — not to re-export anything onto core.
+_LOADED_LOGIC_MODULES = (
     _m_shared_context,
     _m_security_module,
     _m_activity_store,
@@ -793,31 +739,30 @@ _LOGIC_MODULES_IN_LOAD_ORDER = (
     _m_hooks,
     _m_runtime_state,
 )
-# Names core defines itself (constants, regexes, state binding, helpers). These must
-# not be clobbered by a logic module's re-exported import of the same name (e.g. a
-# logic module importing `state` or `re`).
-_CORE_OWNED_NAMES = frozenset(globals())
-_reexport_logic_symbols()
+
+# Entrypoints that register() and the module-load wiring below reference at core
+# scope: explicit imports of the specific names from their owning logic modules.
+# (They also satisfy _CORE_LOGIC_REQUIRED_SYMBOLS and are re-exported by the façade.)
+_apply_language_pack_config = rules._apply_language_pack_config
+_load_privacy_config = rules._load_privacy_config
+_security_rule_enabled = rules._security_rule_enabled
+_on_pre_tool_call = _m_hooks._on_pre_tool_call
+_on_transform_tool_result = _m_hooks._on_transform_tool_result
+_on_pre_gateway_dispatch = _m_hooks._on_pre_gateway_dispatch
+_on_transform_llm_output = _m_hooks._on_transform_llm_output
+_on_pre_llm_call = _m_hooks._on_pre_llm_call
+_on_session_reset = _m_runtime_state._on_session_reset
+_on_session_end = _m_runtime_state._on_session_end
+_handle_guardian_command = _m_commands._handle_guardian_command
+_guardian_cli_setup = _m_commands._guardian_cli_setup
 
 
-class _CoreModule(types.ModuleType):
-    """core's module type: setting a re-exported name also patches its owner module.
-
-    The logic modules are real and call each other through module-object
-    attributes. Tests/Hermes patch ``core.<name>``; this propagates the patch to
-    the module that actually defines ``<name>`` so the live call path observes it.
-    """
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        super().__setattr__(name, value)
-        owners = globals().get("_LOGIC_SYMBOL_OWNERS")
-        if owners and name in owners:
-            globals()["_propagate_to_owners"](name, value)
-
-
-sys.modules[__name__].__class__ = _CoreModule
-sys.modules[f"{_PKG}.core"].__class__ = _CoreModule
-
+# The logic modules are genuine submodules reachable through the canonical package
+# (and re-exported onto the thin façade for tests/Hermes). They reference each other
+# and core's own helpers/constants by module-object attribute at call time, so there
+# is no re-export onto core and no patch-propagation shim: a test patches the OWNING
+# module (e.g. `plugin.policy.decide`, `plugin.rules._save_persistent_privacy_rules`)
+# and the live call path — which goes through that same module object — observes it.
 
 _assert_core_logic_contract()
 try:

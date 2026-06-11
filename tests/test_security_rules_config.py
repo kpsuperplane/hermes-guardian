@@ -20,8 +20,8 @@ def test_security_rules_default_enabled_in_policy_snapshot():
 
 def test_security_rule_can_be_saved_in_json(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
 
     ok, message = plugin._set_security_rule("account_security_content", False)
 
@@ -37,9 +37,9 @@ def test_security_rule_can_be_saved_in_json(tmp_path):
 
 def test_security_rule_can_be_disabled_by_direct_json_edit(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
-    plugin._PERSISTENT_RULES_MTIME = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_MTIME = None
     # v4 five-block schema: review.mode + protection.security toggle map.
     (tmp_path / "rules.json").write_text(json.dumps({
         "version": 4,
@@ -61,8 +61,8 @@ def test_security_rule_can_be_disabled_by_direct_json_edit(tmp_path):
 
 def test_privacy_saves_preserve_security_rules(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
 
     assert plugin._set_security_rule("sensitive_links", False)[0]
     assert plugin._set_privacy_mode("read-only")[0]

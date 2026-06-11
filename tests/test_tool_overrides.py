@@ -178,8 +178,8 @@ def test_overrides_survive_other_config_mutations():
 def test_overrides_round_trip_through_file():
     plugin = load_plugin()
     plugin._set_tool_override("widget_*", egress="gate", note="custom server")
-    plugin._PERSISTENT_RULES_CACHE = None
-    plugin._PERSISTENT_RULES_MTIME = None
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_MTIME = None
 
     reloaded = plugin._tool_overrides_snapshot()
     assert len(reloaded) == 1

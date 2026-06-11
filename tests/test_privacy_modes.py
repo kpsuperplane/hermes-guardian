@@ -132,7 +132,7 @@ def test_env_helper_ignores_old_privacy_egress_guard_names(monkeypatch):
 
     monkeypatch.setenv("PRIVACY_EGRESS_GUARD_ALLOWLIST", "mcp:notion")
 
-    assert plugin._env("HERMES_GUARDIAN_ALLOWLIST", "") == ""
+    assert plugin.state._env("HERMES_GUARDIAN_ALLOWLIST", "") == ""
 
 
 @pytest.mark.parametrize(

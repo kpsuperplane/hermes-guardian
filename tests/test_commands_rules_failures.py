@@ -17,8 +17,8 @@ from support import *  # noqa: F403
 
 def test_guardian_rule_delete_slash_alias_removes_persistent_rule(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
     save_privacy_config(plugin, rules=[
         privacy_rule(
             rule_id="rule_delete_me",
@@ -64,8 +64,8 @@ def test_guardian_status_surfaces_concrete_risk_banners():
 
 def test_guardian_rule_add_defaults_platform_slash_to_caller_scope(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
     command = "sharing rule add allow action=message_send destination=friend classes=communications"
 
     plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian {command}", user_id="owner"))
@@ -100,8 +100,8 @@ def test_guardian_rule_add_accepts_contextual_fields_and_rules_display_them():
 
 def test_guardian_rule_add_rejects_invalid_classes_and_malformed_args(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
 
     response = plugin._handle_guardian_command(
         "sharing rule add allow action=message_send destination=friend classes=emial"
@@ -117,8 +117,8 @@ def test_guardian_rule_add_rejects_invalid_classes_and_malformed_args(tmp_path):
 
 def test_non_owner_slash_cannot_create_global_or_cron_rule(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
     global_command = "sharing rule add allow action=message_send destination=friend classes=communications owner=*"
     cron_command = "sharing rule add allow action=message_send destination=friend classes=communications cron=aaaaaaaaaaaa"
 
@@ -134,8 +134,8 @@ def test_non_owner_slash_cannot_create_global_or_cron_rule(tmp_path):
 
 def test_guardian_rule_move_requires_target_rule_permission(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
     kevin_owner = plugin._hash_identity("telegram", "owner")
     other_owner = plugin._hash_identity("telegram", "other")
     save_privacy_config(plugin, rules=[
@@ -154,8 +154,8 @@ def test_guardian_rule_move_requires_target_rule_permission(tmp_path):
 
 def test_guardian_rules_command_uses_readable_card_format(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
     save_privacy_config(plugin, rules=[
         privacy_rule(
             rule_id="rule_everywhere",
@@ -325,7 +325,7 @@ def test_guardian_history_labels_terminal_taint_as_result():
 def test_guardian_history_command_uses_configured_timezone(monkeypatch):
     plugin = load_plugin()
     monkeypatch.setenv("HERMES_GUARDIAN_HISTORY_TIMEZONE", "America/Los_Angeles")
-    monkeypatch.setattr(plugin, "_now", lambda: 1780775049)
+    monkeypatch.setattr(plugin.state, "_now", lambda: 1780775049)
 
     plugin._emit_activity(
         "allowed",

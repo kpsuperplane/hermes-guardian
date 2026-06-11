@@ -30,7 +30,7 @@ def test_lockdown_gates_a_rerouted_export_through_another_channel():
     plugin._taint_session("s1", {"contacts"})
 
     # Attempt 1 (messaging channel): the verifier denies -> gated, arming the lockdown.
-    plugin._PLUGIN_LLM = _fake_llm("deny", "high")
+    plugin.state._PLUGIN_LLM = _fake_llm("deny", "high")
     first = plugin._on_pre_tool_call(
         "send_message", {"to": "stranger@example.com", "text": "hi"}, session_id="s1"
     )
@@ -38,7 +38,7 @@ def test_lockdown_gates_a_rerouted_export_through_another_channel():
 
     # Attempt 2 (a DIFFERENT channel: browser form-fill into an external page). The
     # verifier WOULD allow it, but the cross-channel lockdown gates the re-route anyway.
-    plugin._PLUGIN_LLM = _fake_llm("allow", "low")
+    plugin.state._PLUGIN_LLM = _fake_llm("allow", "low")
     plugin._set_browser_host("s1", "https://docs.google.com/forms/d/e/abc/viewform")
     second = plugin._on_pre_tool_call(
         "browser_type", {"ref": "1", "text": "private calendar event details"}, session_id="s1"
@@ -55,7 +55,7 @@ def test_external_export_auto_allows_without_a_prior_denial():
     save_privacy_config(plugin, mode="llm")
     bind_owner(plugin, session_id="s2")
     plugin._taint_session("s2", {"contacts"})
-    plugin._PLUGIN_LLM = _fake_llm("allow", "low")
+    plugin.state._PLUGIN_LLM = _fake_llm("allow", "low")
     plugin._set_browser_host("s2", "https://docs.google.com/forms/d/e/abc/viewform")
 
     result = plugin._on_pre_tool_call(
@@ -74,13 +74,13 @@ def test_lockdown_is_scoped_to_the_denied_policy_classes():
     # Arm the lockdown for browser_private only (a private browser input gated to external).
     plugin._set_browser_host("s1", "https://example.com/form")
     plugin._mark_browser_private_input("s1")
-    plugin._PLUGIN_LLM = _fake_llm("deny", "high")
+    plugin.state._PLUGIN_LLM = _fake_llm("deny", "high")
     assert plugin._on_pre_tool_call("browser_press", {"key": "Enter"}, session_id="s1") is not None
 
     # An unrelated personal_private export on a fresh session is unaffected.
     bind_owner(plugin, session_id="s3")
     plugin._taint_session("s3", {"contacts"})
-    plugin._PLUGIN_LLM = _fake_llm("allow", "low")
+    plugin.state._PLUGIN_LLM = _fake_llm("allow", "low")
     assert (
         plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hi"}, session_id="s3")
         is None
@@ -94,7 +94,7 @@ def test_new_user_input_clears_the_turn_lockdown(monkeypatch):
     bind_owner(plugin)
     plugin._taint_session("s1", {"contacts"})
 
-    plugin._PLUGIN_LLM = _fake_llm("deny", "high")
+    plugin.state._PLUGIN_LLM = _fake_llm("deny", "high")
     assert (
         plugin._on_pre_tool_call("send_message", {"to": "stranger@example.com", "text": "hi"}, session_id="s1")
         is not None
@@ -104,7 +104,7 @@ def test_new_user_input_clears_the_turn_lockdown(monkeypatch):
     plugin._on_pre_gateway_dispatch(gateway_event("subscribe me to the newsletter", user_id="owner"))
 
     # The same export the lockdown would have gated now reaches the (allowing) verifier.
-    plugin._PLUGIN_LLM = _fake_llm("allow", "low")
+    plugin.state._PLUGIN_LLM = _fake_llm("allow", "low")
     plugin._set_browser_host("s1", "https://docs.google.com/forms/d/e/abc/viewform")
     assert (
         plugin._on_pre_tool_call("browser_type", {"ref": "1", "text": "alice@example.com"}, session_id="s1")

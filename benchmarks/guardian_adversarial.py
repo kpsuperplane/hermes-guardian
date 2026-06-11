@@ -34,7 +34,7 @@ def _load_plugin(temp_dir: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    state = {
+    overrides = {
         "_PERSISTENT_RULES_PATH": temp_dir / "guardian-rules.json",
         "_PERSISTENT_RULES_CACHE": module._default_privacy_config(),
         "_PERSISTENT_RULES_MTIME": None,
@@ -44,10 +44,10 @@ def _load_plugin(temp_dir: Path):
         "_GUARDIAN_HMAC_KEY_PATH": temp_dir / ".guardian-hmac-key",
         "_LAST_ACTIVITY_PRUNE": 0.0,
     }
-    for key, value in state.items():
-        setattr(module, key, value)
-        setattr(module._CORE, key, value)
-    module._apply_language_pack_config(module._PERSISTENT_RULES_CACHE)
+    # Single source of truth: rebind on the `state` module so the engine observes it.
+    for key, value in overrides.items():
+        setattr(module.state, key, value)
+    module._apply_language_pack_config(module.state._PERSISTENT_RULES_CACHE)
     return module
 
 

@@ -29,8 +29,8 @@ def _allow_llm():
 
 def test_verifier_model_default_empty_and_set_clear(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
     assert plugin._llm_verifier_model() == ""
 
     assert plugin._set_llm_verifier_model("gpt-5.4-mini")[0]
@@ -57,7 +57,7 @@ def test_verifier_model_is_passed_to_completion():
     save_privacy_config(plugin, mode="llm")
     plugin._set_llm_verifier_model("gpt-5.4-mini")
     fake = _deny_llm("medium")
-    plugin._PLUGIN_LLM = fake
+    plugin.state._PLUGIN_LLM = fake
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -90,14 +90,14 @@ def test_rejected_model_override_falls_back_instead_of_failing_closed():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     plugin._set_llm_verifier_model("gpt-5.4-mini")
-    plugin._PLUGIN_LLM = FlakyLLM()
+    plugin.state._PLUGIN_LLM = FlakyLLM()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
     result = plugin._on_pre_tool_call("send_message", {"to": "a", "text": "hi"}, session_id="s1")
 
     # Two attempts: override (rejected) then default (allowed) -> action allowed.
-    assert len(plugin._PLUGIN_LLM.calls) == 2
+    assert len(plugin.state._PLUGIN_LLM.calls) == 2
     assert result is None
 
 
@@ -107,7 +107,7 @@ def test_repeated_denied_action_hits_cache():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake = _deny_llm()
-    plugin._PLUGIN_LLM = fake
+    plugin.state._PLUGIN_LLM = fake
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -122,7 +122,7 @@ def test_allow_verdicts_are_not_cached():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake = _allow_llm()
-    plugin._PLUGIN_LLM = fake
+    plugin.state._PLUGIN_LLM = fake
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -138,7 +138,7 @@ def test_cache_does_not_serve_across_different_actions():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake = _deny_llm()
-    plugin._PLUGIN_LLM = fake
+    plugin.state._PLUGIN_LLM = fake
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -208,7 +208,7 @@ def test_expired_cache_entry_is_reevaluated(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake = _deny_llm()
-    plugin._PLUGIN_LLM = fake
+    plugin.state._PLUGIN_LLM = fake
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
     args = {"to": "a", "text": "hi"}

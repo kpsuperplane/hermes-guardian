@@ -28,8 +28,8 @@ def test_defaults_user_on_cron_off():
 
 def test_settings_persist_and_preserve_other_privacy_config(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
 
     assert plugin._set_llm_user_context(False)[0]
     assert plugin._set_llm_cron_context(True)[0]
@@ -57,9 +57,9 @@ def test_normalization_coerces_loose_values(tmp_path):
         "version": 4,
         "review": {"mode": "llm", "owner_context": "off", "cron_context": "yes"},
     }))
-    plugin._PERSISTENT_RULES_PATH = path
-    plugin._PERSISTENT_RULES_CACHE = None
-    plugin._PERSISTENT_RULES_MTIME = None
+    plugin.state._PERSISTENT_RULES_PATH = path
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_MTIME = None
 
     assert plugin._llm_user_context_enabled() is False
     assert plugin._llm_cron_context_enabled() is True
@@ -74,9 +74,9 @@ def test_invalid_context_value_is_rejected_to_fail_closed(tmp_path):
         "version": 4,
         "review": {"mode": "llm", "cron_context": {"unexpected": "object"}},
     }))
-    plugin._PERSISTENT_RULES_PATH = path
-    plugin._PERSISTENT_RULES_CACHE = None
-    plugin._PERSISTENT_RULES_MTIME = None
+    plugin.state._PERSISTENT_RULES_PATH = path
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_MTIME = None
 
     # Invalid config falls back to strict; cron context stays off (fail-closed).
     assert plugin._privacy_policy() == "strict"

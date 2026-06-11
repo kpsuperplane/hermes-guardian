@@ -18,8 +18,8 @@ def test_language_packs_default_enabled_in_policy_snapshot():
 
 def test_disabling_spanish_language_pack_updates_scanner_and_json(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
 
     assert plugin._sensitive_reason("Restablecer tu contraseña ahora") == "password reset"
 
@@ -37,9 +37,9 @@ def test_disabling_spanish_language_pack_updates_scanner_and_json(tmp_path):
 
 def test_language_pack_can_be_disabled_by_direct_json_edit(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
-    plugin._PERSISTENT_RULES_MTIME = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_MTIME = None
     # v4 five-block schema: only English enabled in protection.language_packs.
     (tmp_path / "rules.json").write_text(json.dumps({
         "version": 4,
@@ -59,8 +59,8 @@ def test_language_pack_can_be_disabled_by_direct_json_edit(tmp_path):
 
 def test_privacy_and_security_saves_preserve_language_pack_config(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
 
     assert plugin._set_language_pack("es", False)[0]
     assert plugin._set_privacy_mode("read-only")[0]

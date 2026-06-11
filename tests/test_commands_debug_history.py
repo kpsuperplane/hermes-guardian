@@ -168,7 +168,7 @@ def test_guardian_activity_lists_each_check_within_a_turn(monkeypatch):
     plugin = load_plugin()
     monkeypatch.setenv("HERMES_GUARDIAN_HISTORY_TIMEZONE", "America/Los_Angeles")
     now = {"value": 1780775040}
-    monkeypatch.setattr(plugin, "_now", lambda: now["value"])
+    monkeypatch.setattr(plugin.state, "_now", lambda: now["value"])
 
     for index, offset in enumerate((0, 12, 24), start=1):
         now["value"] = 1780775040 + offset

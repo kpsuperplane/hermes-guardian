@@ -16,7 +16,7 @@ def test_pre_tool_call_internal_error_blocks_fail_closed(monkeypatch):
     def boom(*_args, **_kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(plugin._CORE, "_privacy_pre_tool_call", boom)
+    monkeypatch.setattr(plugin.privacy_module, "_privacy_pre_tool_call", boom)
 
     result = plugin._on_pre_tool_call("send_message", {"to": "x", "text": "hi"}, session_id="s1")
 
@@ -31,7 +31,7 @@ def test_transform_tool_result_internal_error_suppresses_fail_closed(monkeypatch
     def boom(*_args, **_kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(plugin._CORE, "_privacy_observe_tool_result", boom)
+    monkeypatch.setattr(plugin.privacy_module, "_privacy_observe_tool_result", boom)
 
     result = plugin._on_transform_tool_result("mcp_gmail_read", '{"body":"secret"}', session_id="s1")
     parsed = json.loads(result)

@@ -75,13 +75,13 @@ def test_3_external_private_no_rule_approve_deny_block_allow_allow():
     # Deny rule -> BLOCK.
     deny = privacy_rule(rule_id="r_deny", effect="deny", action_family="*",
                         destination="*", data_classes=["personal_private"])
-    plugin._PERSISTENT_RULES_CACHE["privacy"]["rules"] = [deny]
+    plugin.state._PERSISTENT_RULES_CACHE["privacy"]["rules"] = [deny]
     assert plugin._decide(cap, {"communications"}, "unknown", "strict") == plugin._DECISION_BLOCK
 
     # Allow rule -> ALLOW.
     allow = privacy_rule(rule_id="r_allow", effect="allow", action_family="*",
                          destination="*", data_classes=["personal_private"])
-    plugin._PERSISTENT_RULES_CACHE["privacy"]["rules"] = [allow]
+    plugin.state._PERSISTENT_RULES_CACHE["privacy"]["rules"] = [allow]
     assert plugin._decide(cap, {"communications"}, "unknown", "strict") == plugin._DECISION_ALLOW
 
 
@@ -216,7 +216,7 @@ def test_10_corpus_parity_replay_zero_floor_breaches():
         if rec.get("taint"):
             plugin._taint_session(session_id, set(rec["taint"]))
         # Set the mode the record was captured under.
-        plugin._PERSISTENT_RULES_CACHE["privacy"]["mode"] = rec["mode"]
+        plugin.state._PERSISTENT_RULES_CACHE["privacy"]["mode"] = rec["mode"]
 
         old = _replay_old_outcome_bucket(rec["decision"])
 

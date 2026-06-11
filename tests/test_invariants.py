@@ -24,13 +24,13 @@ def test_invariant_1_credential_to_self_still_hard_blocks_and_skips_privacy(monk
 
     # Spy: if the privacy engine were consulted after a security block, decide would run.
     consulted = {"decide": False}
-    original_decide = plugin._CORE._decide
+    original_decide = plugin.policy.decide
 
     def _spy_decide(*args, **kwargs):
         consulted["decide"] = True
         return original_decide(*args, **kwargs)
 
-    monkeypatch.setattr(plugin._CORE, "_decide", _spy_decide)
+    monkeypatch.setattr(plugin.policy, "decide", _spy_decide)
 
     # Destination is the user's OWN note store (self), payload is a credential/reset code.
     result = plugin._on_pre_tool_call(
@@ -133,14 +133,14 @@ def test_invariant_4_conservative_ambient_default_never_allows_on_absence():
 # --- Invariant 5: Corrupt config -> strict (charter §5 #2; doc 04 §8 #5) -------------
 def test_invariant_5_corrupt_config_loads_as_strict_not_permissive():
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH.write_text("{ not valid json at all ")
-    plugin._PERSISTENT_RULES_CACHE = None
-    plugin._PERSISTENT_RULES_MTIME = None
+    plugin.state._PERSISTENT_RULES_PATH.write_text("{ not valid json at all ")
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_MTIME = None
 
     config = plugin._load_privacy_config()
 
     assert config["privacy"]["mode"] == "strict"
-    assert plugin._PERSISTENT_RULES_ERROR is True
+    assert plugin.state._PERSISTENT_RULES_ERROR is True
     # A corrupt store falls back to STRICT mode and only the floor-safe BUILTIN self
     # destinations (the user's own stores) — it must NOT inject any operator-supplied
     # permissive self IDENTITIES or HOSTS (those are the actual outward leak vectors;

@@ -1,12 +1,26 @@
-"""Hermes Guardian plugin façade."""
+"""Hermes Guardian plugin façade.
+
+Thin re-export layer. The real implementation lives in ``core`` (the entrypoints
+and load-time wiring) and in the genuine logic submodules under the canonical
+``_hermes_guardian`` package. This façade loads ``core``, then re-exports the
+public surface — by reference, with no per-call sync wrappers — so Hermes and the
+test-suite can reach ``register``, the hook/command/CLI callbacks, every
+handler/helper, the logic modules themselves, and the ``state`` module.
+
+There is a SINGLE SOURCE OF TRUTH: all mutable process state, the on-disk paths,
+and the clock/env helpers live in the ``state`` module (exposed here as
+``plugin.state``). The functions are the real objects. So there is nothing to
+sync: rebinding ``plugin.state.<name>`` is observed by the engine, and in-place
+container mutations through ``plugin.<container>`` act on the shared ``state``
+object.
+"""
 
 from __future__ import annotations
 
 import importlib.util
 import sys
-import types
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 
 def _load_sibling_module(name: str) -> Any:
@@ -43,132 +57,38 @@ def _load_core_module() -> Any:
 
 
 _CORE = _load_core_module()
-_STATE = _CORE.state
-
-# Mutable process state, the state-dir paths, and the clock/env helpers live in the
-# self-contained `state` module bound on core as `core.state`. Tests and Hermes patch
-# these names on the facade, so they are bridged to/from `core.state` rather than core.
-# Limited to the names that moved out of core (not state.py's private load-time copies
-# of _PLUGIN_NAME/_PLUGIN_ROOT/_STATE_FILENAMES/logger).
-_STATE_KEYS = [
-    "_STATE_DIR",
-    "_UNSAFE_DIAGNOSTICS_FLAG",
-    "_PERSISTENT_RULES_PATH",
-    "_ACTIVITY_DB_PATH",
-    "_GUARDIAN_HMAC_KEY_PATH",
-    "_PERSISTENT_RULES_MTIME",
-    "_LOCK",
-    "_SESSIONS",
-    "_OWNER_SESSIONS",
-    "_PENDING_APPROVALS",
-    "_ONCE_APPROVALS",
-    "_SESSION_APPROVALS",
-    "_RECENT_COMMAND_OWNERS",
-    "_RECENT_OWNER_REQUESTS",
-    "_TURN_DENIED_EXTERNAL",
-    "_PERSISTENT_RULES_CACHE",
-    "_PERSISTENT_RULES_ERROR",
-    "_ACTIVITY_DB_INITIALIZED",
-    "_LAST_ACTIVITY_PRUNE",
-    "_PLUGIN_LLM",
-    "_CRON_NOTIFICATIONS_SENT",
-    "_CHECK_TIMING_STATE",
-    "_LLM_DENY_VERDICT_CACHE",
-    "_now",
-    "_env",
-]
-_STATE_VALUE_KEYS = [name for name in _STATE_KEYS if not callable(getattr(_STATE, name))]
-
-_SYNC_STATE_KEYS = [
-    name
-    for name in dir(_CORE)
-    if name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
-    and not isinstance(getattr(_CORE, name), (types.ModuleType, type, type(lambda: None)))
-]
-
-_SYNC_TO_CORE_KEYS = set(_SYNC_STATE_KEYS)
-_SYNC_SKIP_FROM_CORE: set[str] = set()
-_FACADE_CALLABLE_DENYLIST = {
-    "_assert_core_logic_contract",
-    "_core_logic_missing_required_symbols",
-    "_import_logic",
-    "_load_relative_module",
-    "_propagate_to_owners",
-    "_reexport_logic_symbols",
-}
+state = _CORE.state
 
 
-def _sync_to_core() -> None:
-    for name in _SYNC_TO_CORE_KEYS:
-        if name in globals():
-            try:
-                setattr(_CORE, name, globals()[name])
-            except Exception:
-                pass
-    for name in _STATE_KEYS:
-        if name in globals():
-            try:
-                setattr(_STATE, name, globals()[name])
-            except Exception:
-                pass
+def _is_public(name: str) -> bool:
+    # Re-export the plugin's own underscore-prefixed handlers/helpers/constants too;
+    # only Python dunders stay private. (callable names like `register` are public.)
+    return not (name.startswith("__") and name.endswith("__"))
 
 
-def _sync_from_core() -> None:
-    for name in _SYNC_STATE_KEYS:
-        if name in _SYNC_SKIP_FROM_CORE:
+def _reexport(module: Any) -> None:
+    """Bind every public top-level name of ``module`` onto this façade by reference."""
+    g = globals()
+    for name in vars(module):
+        if not _is_public(name):
             continue
-        try:
-            globals()[name] = getattr(_CORE, name)
-        except Exception:
-            pass
-    for name in _STATE_VALUE_KEYS:
-        try:
-            globals()[name] = getattr(_STATE, name)
-        except Exception:
-            pass
+        g[name] = getattr(module, name)
 
 
-def _make_bridge(name: str) -> Callable[..., Any]:
-    core_fn = getattr(_CORE, name)
+# Build the public surface by reference. Mirror the engine's own precedence: the
+# logic modules contribute their public handlers/helpers first (in load order, so a
+# legitimately re-bound name resolves to its last owner), then `state` and `core`
+# win — they own the canonical mutable state and the registered entrypoints.
+for _dotted in _CORE._CORE_LOGIC_MODULES:
+    _logic_module = sys.modules.get(f"_hermes_guardian.{_dotted.replace('/', '.')}")
+    if _logic_module is not None:
+        _reexport(_logic_module)
 
-    def _bridge(*args: Any, **kwargs: Any) -> Any:
-        _sync_to_core()
-        result = core_fn(*args, **kwargs)
-        _sync_from_core()
-        return result
+# `state` is the single source of truth: re-export its names by reference so reads
+# (and in-place container mutations) go through the shared objects, and expose the
+# module itself so tests rebind scalars/paths/clock as `plugin.state.<name> = ...`.
+_reexport(state)
 
-    _bridge.__name__ = name
-    _bridge.__doc__ = getattr(core_fn, "__doc__", None)
-    return _bridge
-
-
-for _name in dir(_CORE):
-    if not _name.startswith("_") or (_name.startswith("__") and _name.endswith("__")):
-        continue
-    _value = getattr(_CORE, _name)
-    if callable(_value):
-        if _name in _FACADE_CALLABLE_DENYLIST:
-            continue
-        if isinstance(_value, type):
-            globals()[_name] = _value
-            continue
-        globals()[_name] = _make_bridge(_name)
-    else:
-        globals()[_name] = _value
-
-# Expose the moved state names on the facade. Values are copied (and re-synced from
-# core.state after every bridged call); the helpers (_now/_env) are exposed as plain
-# attributes so monkeypatching them on the facade reaches core.state via _sync_to_core.
-for _name in _STATE_KEYS:
-    globals()[_name] = getattr(_STATE, _name)
-
-# Expose the state module itself so tests/tools can reach its load-time helpers
-# (_resolve_state_dir, _migrate_legacy_state) and the real moved state directly.
-state = _STATE
-
-
-if hasattr(_CORE, "register") and callable(getattr(_CORE, "register")):
-    globals()["register"] = _make_bridge("register")
-
-
-_sync_from_core()
+# core owns the entrypoints (`register`, the hook callbacks, the command/CLI
+# handlers) and the plugin-level constants; it wins over the logic re-exports.
+_reexport(_CORE)

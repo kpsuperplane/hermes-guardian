@@ -17,7 +17,7 @@ def _deny_llm():
 def test_pre_tool_call_records_timing_with_llm_flag():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
-    plugin._PLUGIN_LLM = _deny_llm()
+    plugin.state._PLUGIN_LLM = _deny_llm()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -78,7 +78,7 @@ def test_timing_does_not_break_check_result():
     save_privacy_config(plugin, mode="strict")
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
-    plugin._CORE._record_check_timing = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    plugin.activity_store._record_check_timing = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
 
     result = plugin._on_pre_tool_call("send_message", {"to": "x", "text": "hi"}, session_id="s1")
 

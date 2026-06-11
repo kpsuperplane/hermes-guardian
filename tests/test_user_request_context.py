@@ -50,7 +50,7 @@ def test_authenticated_owner_request_is_attached_and_enables_allow(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake_llm = _allow_llm()
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
 
     plugin._on_pre_gateway_dispatch(gateway_event(_NEWSLETTER_REQUEST, user_id="owner"))
     bind_owner(plugin)
@@ -72,7 +72,7 @@ def test_unauthenticated_sender_request_is_not_attached(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake_llm = _deny_llm()
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
 
     plugin._on_pre_gateway_dispatch(gateway_event(_NEWSLETTER_REQUEST, user_id="stranger"))
     bind_owner(plugin, user_id="stranger")
@@ -91,7 +91,7 @@ def test_non_owner_in_group_cannot_authorize_for_owner(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake_llm = _deny_llm()
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
 
     plugin._on_pre_gateway_dispatch(gateway_event(_NEWSLETTER_REQUEST, user_id="attacker"))
     bind_owner(plugin)  # session owned by owner
@@ -120,7 +120,7 @@ def test_cached_request_redacts_pii_before_storage(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake_llm = _allow_llm()
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
 
     plugin._on_pre_gateway_dispatch(
         gateway_event("sign me up with alice@example.com for the newsletter", user_id="owner")
@@ -140,7 +140,7 @@ def test_user_request_is_never_persisted(monkeypatch):
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
-    plugin._PLUGIN_LLM = _deny_llm()
+    plugin.state._PLUGIN_LLM = _deny_llm()
 
     plugin._on_pre_gateway_dispatch(gateway_event(_NEWSLETTER_REQUEST, user_id="owner"))
     bind_owner(plugin)
@@ -161,7 +161,7 @@ def test_stale_request_beyond_ttl_is_ignored(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake_llm = _deny_llm()
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
 
     plugin._on_pre_gateway_dispatch(gateway_event(_NEWSLETTER_REQUEST, user_id="owner"))
     owner_hash = plugin._hash_identity("telegram", "owner")
@@ -186,7 +186,7 @@ def test_user_context_setting_off_suppresses_attachment(monkeypatch):
     save_privacy_config(plugin, mode="llm")
     plugin._set_llm_user_context(False)
     fake_llm = _deny_llm()
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
 
     plugin._on_pre_gateway_dispatch(gateway_event(_NEWSLETTER_REQUEST, user_id="owner"))
     bind_owner(plugin)
@@ -210,7 +210,7 @@ def _bind_cron(plugin):
 
 def _stub_cron_record(plugin, monkeypatch, prompt=_CRON_INSTRUCTION):
     monkeypatch.setattr(
-        plugin._CORE,
+        plugin.cron_notifications,
         "_cron_job_record",
         lambda _job_id: {"id": "aaaaaaaaaaaa", "prompt": prompt},
     )
@@ -221,7 +221,7 @@ def test_cron_context_off_by_default_not_attached(monkeypatch):
     save_privacy_config(plugin, mode="llm")
     _stub_cron_record(plugin, monkeypatch)
     fake_llm = _deny_llm()
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
 
     _bind_cron(plugin)
     _submit_form(plugin, session_id=_CRON_SESSION)
@@ -242,7 +242,7 @@ def test_cron_context_on_attaches_job_instruction(monkeypatch):
         "authorization_level": "unknown",
         "rationale": "needs manual approval",
     })
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
 
     _bind_cron(plugin)
     _submit_form(plugin, session_id=_CRON_SESSION)
@@ -261,7 +261,7 @@ def test_cron_high_risk_stays_manual_even_with_cron_context(monkeypatch):
     plugin._set_llm_cron_context(True)
     _stub_cron_record(plugin, monkeypatch)
     # Even an explicit, high-risk allow must not auto-approve on cron.
-    plugin._PLUGIN_LLM = _allow_llm()
+    plugin.state._PLUGIN_LLM = _allow_llm()
 
     _bind_cron(plugin)
     result = _submit_form(plugin, session_id=_CRON_SESSION)
@@ -278,7 +278,7 @@ def test_cron_context_low_risk_can_auto_approve(monkeypatch):
     save_privacy_config(plugin, mode="llm")
     plugin._set_llm_cron_context(True)
     _stub_cron_record(plugin, monkeypatch)
-    plugin._PLUGIN_LLM = FakeSecurityLlm({
+    plugin.state._PLUGIN_LLM = FakeSecurityLlm({
         "outcome": "allow",
         "risk_level": "medium",
         "authorization_level": "substantive",

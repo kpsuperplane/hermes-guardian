@@ -21,9 +21,9 @@ def test_cron_block_sends_one_sanitized_home_channel_notification(monkeypatch):
     cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
 
     monkeypatch.setenv("HERMES_GUARDIAN_CRON_NOTIFY_TO", "telegram")
-    monkeypatch.setattr(plugin._CORE, "_cron_job_name", lambda _job_id: "Example Availability Check")
+    monkeypatch.setattr(plugin.cron_notifications, "_cron_job_name", lambda _job_id: "Example Availability Check")
     monkeypatch.setattr(
-        plugin._CORE,
+        plugin.cron_notifications,
         "_send_cron_notification_message",
         lambda message, target: sent.append((message, target)),
     )
@@ -70,7 +70,7 @@ def test_cron_notification_defaults_to_job_delivery_targets(monkeypatch):
     cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
 
     monkeypatch.setattr(
-        plugin._CORE,
+        plugin.cron_notifications,
         "_cron_job_record",
         lambda _job_id: {
             "id": "aaaaaaaaaaaa",
@@ -79,7 +79,7 @@ def test_cron_notification_defaults_to_job_delivery_targets(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        plugin._CORE,
+        plugin.cron_notifications,
         "_send_cron_notification_message",
         lambda message, target: sent.append((message, target)),
     )
@@ -104,12 +104,12 @@ def test_cron_notification_uses_telegram_copy_button_sender(monkeypatch):
     sent = []
 
     monkeypatch.setattr(
-        plugin._CORE,
+        plugin.cron_notifications,
         "_send_telegram_cron_notification_message",
         lambda message, target, approval_id: sent.append((message, target, approval_id)) or True,
     )
     monkeypatch.setattr(
-        plugin._CORE.subprocess,
+        plugin.cron_notifications.subprocess,
         "run",
         lambda *args, **kwargs: pytest.fail("telegram copy-button sender should avoid CLI fallback"),
     )
@@ -165,9 +165,9 @@ def test_cron_notification_falls_back_to_cli_when_telegram_copy_sender_fails(mon
     plugin = load_plugin()
     calls = []
 
-    monkeypatch.setattr(plugin._CORE, "_send_telegram_cron_notification_message", lambda *_args: False)
+    monkeypatch.setattr(plugin.cron_notifications, "_send_telegram_cron_notification_message", lambda *_args: False)
     monkeypatch.setattr(
-        plugin._CORE.subprocess,
+        plugin.cron_notifications.subprocess,
         "run",
         lambda command, **kwargs: calls.append((command, kwargs)),
     )
@@ -190,7 +190,7 @@ def test_cron_notification_can_be_disabled(monkeypatch):
 
     monkeypatch.setenv("HERMES_GUARDIAN_CRON_NOTIFY_TO", "off")
     monkeypatch.setattr(
-        plugin._CORE,
+        plugin.cron_notifications,
         "_send_cron_notification_message",
         lambda message, target: sent.append((message, target)),
     )
@@ -214,7 +214,7 @@ def test_non_cron_block_does_not_send_cron_notification(monkeypatch):
 
     monkeypatch.setenv("HERMES_GUARDIAN_CRON_NOTIFY_TO", "telegram")
     monkeypatch.setattr(
-        plugin._CORE,
+        plugin.cron_notifications,
         "_send_cron_notification_message",
         lambda message, target: sent.append((message, target)),
     )

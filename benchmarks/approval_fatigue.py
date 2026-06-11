@@ -112,7 +112,7 @@ def _load_plugin(temp_dir: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    state = {
+    overrides = {
         "_PERSISTENT_RULES_PATH": temp_dir / "guardian-rules.json",
         "_PERSISTENT_RULES_CACHE": module._default_privacy_config(),
         "_PERSISTENT_RULES_MTIME": None,
@@ -122,10 +122,10 @@ def _load_plugin(temp_dir: Path):
         "_GUARDIAN_HMAC_KEY_PATH": temp_dir / ".guardian-hmac-key",
         "_LAST_ACTIVITY_PRUNE": 0.0,
     }
-    for key, value in state.items():
-        setattr(module, key, value)
-        setattr(module._CORE, key, value)
-    module._apply_language_pack_config(module._PERSISTENT_RULES_CACHE)
+    # Single source of truth: rebind on the `state` module so the engine observes it.
+    for key, value in overrides.items():
+        setattr(module.state, key, value)
+    module._apply_language_pack_config(module.state._PERSISTENT_RULES_CACHE)
     return module
 
 
@@ -408,16 +408,16 @@ def run_benchmark(*, modes: tuple[str, ...] = MODES) -> dict[str, Any]:
         with tempfile.TemporaryDirectory(prefix=f"hermes-guardian-{mode}-") as temp_name:
             plugin = _load_plugin(Path(temp_name))
             fake_llm = DeterministicFakeLlm()
-            plugin._PLUGIN_LLM = fake_llm
+            plugin.state._PLUGIN_LLM = fake_llm
             _save_privacy_config(plugin, mode)
 
             sent_notifications: list[tuple[str, str]] = []
-            plugin._CORE._cron_job_record = (
+            plugin.cron_notifications._cron_job_record = (
                 lambda _job_id: {"name": "Benchmark cron digest", "deliver": ["benchmark"]}
             )
-            plugin._CORE._cron_job_name = lambda _job_id: "Benchmark cron digest"
-            plugin._CORE._cron_notify_targets = lambda _job_id: ["benchmark"]
-            plugin._CORE._send_cron_notification_message = (
+            plugin.cron_notifications._cron_job_name = lambda _job_id: "Benchmark cron digest"
+            plugin.cron_notifications._cron_notify_targets = lambda _job_id: ["benchmark"]
+            plugin.cron_notifications._send_cron_notification_message = (
                 lambda message, target: sent_notifications.append((str(message), str(target)))
             )
 

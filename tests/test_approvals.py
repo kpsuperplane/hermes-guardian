@@ -78,7 +78,7 @@ def test_block_message_carries_metadata_plus_anti_circumvention_directive():
 def test_pending_approval_id_is_four_digit_even_with_llm_available():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="strict")
-    plugin._PLUGIN_LLM = FakeSecurityLlm({"code": "unused"})
+    plugin.state._PLUGIN_LLM = FakeSecurityLlm({"code": "unused"})
     bind_owner(plugin)
     plugin._taint_session("s1", {"local_system"})
 
@@ -91,13 +91,13 @@ def test_pending_approval_id_is_four_digit_even_with_llm_available():
     approval_id = first_pending_id(plugin)
 
     assert re.fullmatch(r"\d{4}", approval_id)
-    assert plugin._PLUGIN_LLM.calls == []
+    assert plugin.state._PLUGIN_LLM.calls == []
 
 
 def test_approval_id_generation_does_not_call_llm_with_tool_metadata():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="strict")
-    plugin._PLUGIN_LLM = FakeSecurityLlm({"code": "unused"})
+    plugin.state._PLUGIN_LLM = FakeSecurityLlm({"code": "unused"})
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -107,7 +107,7 @@ def test_approval_id_generation_does_not_call_llm_with_tool_metadata():
         session_id="s1",
     )
 
-    assert plugin._PLUGIN_LLM.calls == []
+    assert plugin.state._PLUGIN_LLM.calls == []
 
 
 def test_approval_accepts_four_digit_id():
@@ -130,7 +130,7 @@ def test_approval_id_generation_avoids_recent_four_digit_codes(monkeypatch):
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
-    monkeypatch.setattr(plugin._CORE.secrets, "randbelow", lambda _limit: 1234)
+    monkeypatch.setattr(plugin.approvals.secrets, "randbelow", lambda _limit: 1234)
     plugin._emit_activity(
         "blocked",
         session_id="old",
@@ -151,9 +151,9 @@ def test_approval_id_generation_reuses_codes_after_seven_days(monkeypatch):
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
-    monkeypatch.setattr(plugin._CORE.secrets, "randbelow", lambda _limit: 1234)
-    current_time = plugin._now()
-    monkeypatch.setattr(plugin, "_now", lambda: current_time - plugin._APPROVAL_ID_REUSE_SECONDS - 1)
+    monkeypatch.setattr(plugin.approvals.secrets, "randbelow", lambda _limit: 1234)
+    current_time = plugin.state._now()
+    monkeypatch.setattr(plugin.state, "_now", lambda: current_time - plugin._APPROVAL_ID_REUSE_SECONDS - 1)
     plugin._emit_activity(
         "blocked",
         session_id="old",
@@ -164,7 +164,7 @@ def test_approval_id_generation_reuses_codes_after_seven_days(monkeypatch):
         reason="requires approval",
         approval_id="1234",
     )
-    monkeypatch.setattr(plugin, "_now", lambda: current_time)
+    monkeypatch.setattr(plugin.state, "_now", lambda: current_time)
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
 
@@ -190,8 +190,8 @@ def test_approval_session_allows_same_destination_only_same_session():
 
 def test_approval_always_persists_narrow_rule(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -222,7 +222,7 @@ def test_approval_always_save_failure_keeps_pending_approval(monkeypatch):
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
     plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always"))
-    monkeypatch.setattr(plugin._CORE, "_save_persistent_privacy_rules", lambda _rules: False)
+    monkeypatch.setattr(plugin.rules, "_save_persistent_privacy_rules", lambda _rules: False)
 
     response = plugin._handle_guardian_command(f"approve {approval_id} always")
 
@@ -291,10 +291,10 @@ def test_cron_approval_can_be_approved_from_separate_process(monkeypatch, tmp_pa
     activity_path = tmp_path / "activity.sqlite3"
     rules_path = tmp_path / "rules.json"
     creator = load_plugin()
-    creator._ACTIVITY_DB_PATH = activity_path
-    creator._ACTIVITY_DB_INITIALIZED = False
-    creator._PERSISTENT_RULES_PATH = rules_path
-    creator._PERSISTENT_RULES_CACHE = {"rules": []}
+    creator.state._ACTIVITY_DB_PATH = activity_path
+    creator.state._ACTIVITY_DB_INITIALIZED = False
+    creator.state._PERSISTENT_RULES_PATH = rules_path
+    creator.state._PERSISTENT_RULES_CACHE = {"rules": []}
     cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     creator._on_pre_llm_call(session_id=cron_session, platform="cron", sender_id="scheduler")
@@ -304,10 +304,10 @@ def test_cron_approval_can_be_approved_from_separate_process(monkeypatch, tmp_pa
     approval_id = first_pending_id(creator)
 
     approver = load_plugin()
-    approver._ACTIVITY_DB_PATH = activity_path
-    approver._ACTIVITY_DB_INITIALIZED = False
-    approver._PERSISTENT_RULES_PATH = rules_path
-    approver._PERSISTENT_RULES_CACHE = {"rules": []}
+    approver.state._ACTIVITY_DB_PATH = activity_path
+    approver.state._ACTIVITY_DB_INITIALIZED = False
+    approver.state._PERSISTENT_RULES_PATH = rules_path
+    approver.state._PERSISTENT_RULES_CACHE = {"rules": []}
     approver._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always", user_id="owner"))
     response = approver._handle_guardian_command(f"approve {approval_id} always")
 
@@ -328,10 +328,10 @@ def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
     activity_path = tmp_path / "activity.sqlite3"
     rules_path = tmp_path / "rules.json"
     creator = load_plugin()
-    creator._ACTIVITY_DB_PATH = activity_path
-    creator._ACTIVITY_DB_INITIALIZED = False
-    creator._PERSISTENT_RULES_PATH = rules_path
-    creator._PERSISTENT_RULES_CACHE = None
+    creator.state._ACTIVITY_DB_PATH = activity_path
+    creator.state._ACTIVITY_DB_INITIALIZED = False
+    creator.state._PERSISTENT_RULES_PATH = rules_path
+    creator.state._PERSISTENT_RULES_CACHE = None
     bind_owner(creator, session_id="s1", user_id="owner")
     creator._taint_session("s1", {"communications"})
 
@@ -339,10 +339,10 @@ def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
     approval_id = first_pending_id(creator)
 
     approver = load_plugin()
-    approver._ACTIVITY_DB_PATH = activity_path
-    approver._ACTIVITY_DB_INITIALIZED = False
-    approver._PERSISTENT_RULES_PATH = rules_path
-    approver._PERSISTENT_RULES_CACHE = None
+    approver.state._ACTIVITY_DB_PATH = activity_path
+    approver.state._ACTIVITY_DB_INITIALIZED = False
+    approver.state._PERSISTENT_RULES_PATH = rules_path
+    approver.state._PERSISTENT_RULES_CACHE = None
     approver._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} once", user_id="owner"))
     response = approver._handle_guardian_command(f"approve {approval_id} once")
 
@@ -355,10 +355,10 @@ def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
     assert rule["fingerprint"]
 
     runner = load_plugin()
-    runner._ACTIVITY_DB_PATH = activity_path
-    runner._ACTIVITY_DB_INITIALIZED = False
-    runner._PERSISTENT_RULES_PATH = rules_path
-    runner._PERSISTENT_RULES_CACHE = None
+    runner.state._ACTIVITY_DB_PATH = activity_path
+    runner.state._ACTIVITY_DB_INITIALIZED = False
+    runner.state._PERSISTENT_RULES_PATH = rules_path
+    runner.state._PERSISTENT_RULES_CACHE = None
     bind_owner(runner, session_id="s1", user_id="owner")
     runner._taint_session("s1", {"communications"})
 
@@ -370,9 +370,9 @@ def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
 
 def test_cron_always_approval_is_scoped_to_same_cron_job(monkeypatch, tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
-    plugin._CORE._cron_job_name = lambda job_id: "Example Availability Check" if job_id == "aaaaaaaaaaaa" else ""
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.cron_notifications._cron_job_name = lambda job_id: "Example Availability Check" if job_id == "aaaaaaaaaaaa" else ""
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     first_run = "cron_aaaaaaaaaaaa_20260607_030107"
     second_run = "cron_aaaaaaaaaaaa_20260607_090812"

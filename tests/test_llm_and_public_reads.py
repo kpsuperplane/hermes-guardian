@@ -24,7 +24,7 @@ def test_llm_privacy_allows_model_approved_guardian(monkeypatch):
         "authorization_level": "substantive",
         "rationale": "read-only local inspection",
     })
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     plugin._taint_session("s1", {"memory"})
 
@@ -69,7 +69,7 @@ def test_llm_privacy_denial_falls_back_to_manual_approval(monkeypatch):
         "authorization_level": "unknown",
         "rationale": "private data may leave for untrusted destination",
     })
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -92,7 +92,7 @@ def test_llm_verifier_input_carries_real_payload_with_pseudonymous_planned_actio
         "authorization_level": "unknown",
         "rationale": "needs manual approval",
     })
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -122,7 +122,7 @@ def test_llm_verifier_input_carries_real_argument_content():
         "authorization_level": "unknown",
         "rationale": "needs manual approval",
     })
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     plugin._taint_session("s1", {"documents"})
     raw_note = "project codename blue lantern launch window is friday"
@@ -215,7 +215,7 @@ def test_llm_privacy_hard_block_skips_model_and_pending_approval(monkeypatch):
         "authorization_level": "explicit",
         "rationale": "should not be called",
     })
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     plugin._taint_session("s1", {"memory"})
 
@@ -240,7 +240,7 @@ def test_llm_privacy_allows_safe_remote_read_from_paste_endpoint_to_verifier(mon
         "authorization_level": "explicit",
         "rationale": "user requested loading a public URL",
     })
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     plugin._taint_session("s1", {"local_system"})
 
@@ -275,7 +275,7 @@ def test_llm_privacy_still_hard_blocks_outbound_paste_endpoint(monkeypatch):
         "authorization_level": "explicit",
         "rationale": "should not be called",
     })
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -294,7 +294,7 @@ def test_llm_privacy_still_hard_blocks_outbound_paste_endpoint(monkeypatch):
 def test_llm_privacy_without_llm_fails_closed_to_manual_approval(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
-    plugin._PLUGIN_LLM = None
+    plugin.state._PLUGIN_LLM = None
     bind_owner(plugin)
     plugin._taint_session("s1", {"memory"})
 

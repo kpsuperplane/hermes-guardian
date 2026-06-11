@@ -174,7 +174,7 @@ def test_sensitive_finding_includes_match_and_context():
 def test_unsafe_diagnostic_logging_is_opt_in(monkeypatch, caplog):
     plugin = load_plugin()
     text = "Your verification code is 123456"
-    monkeypatch.setattr(plugin, "_UNSAFE_DIAGNOSTICS_FLAG", Path("/tmp/missing-unsafe-diagnostic-flag"))
+    monkeypatch.setattr(plugin.state, "_UNSAFE_DIAGNOSTICS_FLAG", Path("/tmp/missing-unsafe-diagnostic-flag"))
     monkeypatch.delenv("HERMES_GUARDIAN_UNSAFE_DIAGNOSTICS", raising=False)
     monkeypatch.delenv("SECURITY_SENSITIVE_FILTER_UNSAFE_DIAGNOSTICS", raising=False)
 

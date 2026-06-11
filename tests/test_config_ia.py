@@ -28,11 +28,11 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 def _write_file(plugin, data) -> None:
     """Write a raw on-disk policy document and invalidate the cache."""
     if isinstance(data, str):
-        plugin._PERSISTENT_RULES_PATH.write_text(data)
+        plugin.state._PERSISTENT_RULES_PATH.write_text(data)
     else:
-        plugin._PERSISTENT_RULES_PATH.write_text(json.dumps(data))
-    plugin._PERSISTENT_RULES_CACHE = None
-    plugin._PERSISTENT_RULES_MTIME = None
+        plugin.state._PERSISTENT_RULES_PATH.write_text(json.dumps(data))
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_MTIME = None
 
 
 def _full_v4_document() -> dict:
@@ -222,7 +222,7 @@ def test_partial_file_only_whats_yours_fills_defaults():
     # protection blocks default.
     assert config["retention"]["max_rows"] == plugin._DEFAULT_RETENTION_MAX_ROWS
     # not a fail-closed load: a valid partial file is honored, not rejected.
-    assert plugin._PERSISTENT_RULES_ERROR is False
+    assert plugin.state._PERSISTENT_RULES_ERROR is False
 
 
 # --- 3a. Malformed sharing.rules -> empty rules + a logged warning (not fatal). -
@@ -241,7 +241,7 @@ def test_malformed_sharing_rules_drop_to_empty_and_log(caplog):
     assert config["privacy"]["rules"] == []
     assert config["privacy"]["mode"] == "llm"
     # This is a tolerated block-level malformation, NOT a whole-file failure.
-    assert plugin._PERSISTENT_RULES_ERROR is False
+    assert plugin.state._PERSISTENT_RULES_ERROR is False
 
 
 # --- 3b. A wholly corrupt file -> strict (fail closed). ------------------------
@@ -250,7 +250,7 @@ def test_corrupt_file_falls_back_to_strict():
     _write_file(plugin, "{ this is not valid json")
     config = plugin._load_privacy_config()
     assert config["privacy"]["mode"] == "strict"
-    assert plugin._PERSISTENT_RULES_ERROR is True
+    assert plugin.state._PERSISTENT_RULES_ERROR is True
 
 
 # --- 4. An OLD-shape file fails closed cleanly to strict (no silent half-load). -
@@ -269,7 +269,7 @@ def test_old_shape_file_fails_closed_to_strict(caplog):
     config = plugin._load_privacy_config()
     # No partial/ambiguous parse: the old document is rejected outright -> strict.
     assert config["privacy"]["mode"] == "strict"
-    assert plugin._PERSISTENT_RULES_ERROR is True
+    assert plugin.state._PERSISTENT_RULES_ERROR is True
     # The legacy allow rule did NOT survive (no silent half-load of old keys).
     assert config["privacy"]["rules"] == []
     # A clear, re-author-prompting log line was emitted.
@@ -301,9 +301,9 @@ def test_builtin_outward_sharing_not_narrowable_from_config():
 # --- 6. Round-trip: a mutation persists the v4 shape and reloads identically. ---
 def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
-    plugin._PERSISTENT_RULES_MTIME = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_MTIME = None
 
     # Drive a representative mutation across several blocks via the normal mutators.
     assert plugin._set_privacy_mode("read-only")[0]
@@ -326,8 +326,8 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
 
     # Capture the in-memory structure, then reload it cold from the v4 file.
     before = plugin._load_privacy_config()
-    plugin._PERSISTENT_RULES_CACHE = None
-    plugin._PERSISTENT_RULES_MTIME = None
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_MTIME = None
     after = plugin._load_privacy_config()
 
     # The internal structure the engine consumes is identical across the round-trip.
@@ -338,4 +338,4 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     assert {r["id"]: r["enabled"] for r in after["security"]["rules"]}["sensitive_links"] is False
     assert after["privacy"]["unknown_tools"] == "allow"
     assert "crosspost" in after["outward_sharing"]["extra"]
-    assert plugin._PERSISTENT_RULES_ERROR is False
+    assert plugin.state._PERSISTENT_RULES_ERROR is False

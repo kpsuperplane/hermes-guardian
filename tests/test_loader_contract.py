@@ -88,16 +88,26 @@ def test_core_logic_has_no_unallowlisted_duplicate_defs():
 def test_core_logic_required_symbols_are_loaded():
     plugin = load_plugin()
 
+    # Single source of truth: each required handler/helper resolves to a callable on
+    # core itself (the entrypoints register() wires) or on one of the real logic
+    # modules that owns it — there is no re-export onto core to satisfy this.
     assert plugin._CORE._core_logic_missing_required_symbols() == ()
+    namespaces = (vars(plugin._CORE), *(vars(m) for m in plugin._CORE._LOADED_LOGIC_MODULES))
     for name in plugin._CORE._CORE_LOGIC_REQUIRED_SYMBOLS:
-        assert callable(getattr(plugin._CORE, name))
+        assert any(callable(ns.get(name)) for ns in namespaces), name
 
 
-def test_facade_keeps_loader_helpers_private():
-    plugin = load_plugin()
+def test_facade_and_core_have_no_sync_bridge_machinery():
+    # The Phase 3 transitional shims are gone: the façade is a by-reference re-export
+    # with no per-call state-sync wrappers, and core no longer subclasses ModuleType to
+    # propagate patches. Tests patch the OWNING module/state directly instead.
+    facade_src = (ROOT / "__init__.py").read_text(encoding="utf-8")
+    for forbidden in ("_make_bridge", "_sync_to_core", "_sync_from_core"):
+        assert forbidden not in facade_src, f"facade still has sync bridge: {forbidden}"
 
-    for name in plugin._FACADE_CALLABLE_DENYLIST:
-        assert not hasattr(plugin, name)
+    core_src = (ROOT / "core.py").read_text(encoding="utf-8")
+    for forbidden in ("_CoreModule", "_reexport_logic_symbols", "_propagate_to_owners"):
+        assert forbidden not in core_src, f"core still has re-export shim: {forbidden}"
 
 
 def test_core_has_no_exec_based_logic_loader():
@@ -130,37 +140,38 @@ def test_logic_modules_import_without_cycle_errors():
     assert plugin._CORE._core_logic_missing_required_symbols() == ()
 
 
-def test_core_monkeypatch_propagates_to_owning_module():
-    # Patching core.<name> for a re-exported logic symbol must reach the module that
-    # actually defines it, since the logic modules call each other by module attribute.
+def test_facade_reexports_modules_by_reference():
+    # The façade is thin: the logic modules and `state` are re-exported BY REFERENCE,
+    # so `plugin.<module>` is the identical object the live call path uses. Patching it
+    # (no propagation shim) is therefore observed by the engine.
     plugin = load_plugin()
-    rules_mod = sys.modules["_hermes_guardian.privacy.rules"]
-    original = plugin._CORE._security_rule_enabled
-    sentinel = object()
-    try:
-        setattr(plugin._CORE, "_security_rule_enabled", sentinel)
-        assert rules_mod._security_rule_enabled is sentinel
-    finally:
-        setattr(plugin._CORE, "_security_rule_enabled", original)
+    assert plugin.state is sys.modules["_hermes_guardian.state"]
+    assert plugin.policy is sys.modules["_hermes_guardian.privacy.policy"]
+    assert plugin.rules is sys.modules["_hermes_guardian.privacy.rules"]
+    assert plugin.privacy_module is sys.modules["_hermes_guardian.privacy.module"]
 
 
-def test_facade_monkeypatches_sync_to_core_for_bridged_calls(monkeypatch):
+def test_state_rebind_is_observed_by_the_engine(monkeypatch):
+    # Single source of truth: rebinding a scalar/clock on `plugin.state` is seen by the
+    # engine directly — there is no façade-to-core sync to perform.
     plugin = load_plugin()
 
-    monkeypatch.setattr(plugin, "_now", lambda: 123.0)
+    monkeypatch.setattr(plugin.state, "_now", lambda: 123.0)
 
     plugin._on_pre_llm_call(session_id="s1", platform="telegram", sender_id="owner")
 
     assert plugin._CORE.state._now() == 123.0
 
 
-def test_core_monkeypatches_are_seen_by_facade_hook_bridges(monkeypatch):
+def test_patching_owning_module_is_seen_by_the_live_call_path(monkeypatch):
+    # With the propagation shim gone, a function patch must target the module that OWNS
+    # the symbol the live path calls (here hooks.py calls privacy_module._privacy_pre_tool_call).
     plugin = load_plugin()
 
     def boom(*_args, **_kwargs):
         raise RuntimeError("patched privacy failure")
 
-    monkeypatch.setattr(plugin._CORE, "_privacy_pre_tool_call", boom)
+    monkeypatch.setattr(plugin.privacy_module, "_privacy_pre_tool_call", boom)
 
     result = plugin._on_pre_tool_call("send_message", {"to": "x", "text": "hi"}, session_id="s1")
 

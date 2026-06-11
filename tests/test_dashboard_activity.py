@@ -65,7 +65,7 @@ def test_activity_rows_and_datatables_include_contextual_metadata():
 def test_datatables_payload_paginates_and_counts(monkeypatch):
     plugin = load_plugin()
     now = {"value": 1000}
-    monkeypatch.setattr(plugin, "_now", lambda: now["value"])
+    monkeypatch.setattr(plugin.state, "_now", lambda: now["value"])
 
     for index in range(30):
         now["value"] = 1000 + index
@@ -139,7 +139,7 @@ def test_datatables_payload_search_and_filters_sanitized_metadata():
 def test_datatables_payload_sort_whitelist_and_invalid_sort_fallback(monkeypatch):
     plugin = load_plugin()
     now = {"value": 1000}
-    monkeypatch.setattr(plugin, "_now", lambda: now["value"])
+    monkeypatch.setattr(plugin.state, "_now", lambda: now["value"])
 
     for index, tool in enumerate(["zeta", "alpha"]):
         now["value"] = 1000 + index
@@ -274,7 +274,7 @@ def test_activity_grouping_keeps_distinct_or_old_calls_separate():
 def test_dashboard_payload_groups_quick_activity(monkeypatch):
     plugin = load_plugin()
     now = {"value": 1000}
-    monkeypatch.setattr(plugin, "_now", lambda: now["value"])
+    monkeypatch.setattr(plugin.state, "_now", lambda: now["value"])
 
     for offset in (0, 5, 10):
         now["value"] = 1000 + offset

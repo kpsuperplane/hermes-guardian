@@ -15,19 +15,21 @@ def load_plugin():
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
-    module._PERSISTENT_RULES_PATH = Path("/tmp/hermes-guardian-test-rules.json")
-    module._PERSISTENT_RULES_PATH.unlink(missing_ok=True)
-    module._PERSISTENT_RULES_CACHE = module._default_privacy_config()
-    module._apply_language_pack_config(module._PERSISTENT_RULES_CACHE)
-    module._PERSISTENT_RULES_MTIME = None
-    module._PERSISTENT_RULES_ERROR = False
-    module._ACTIVITY_DB_PATH = Path(f"/tmp/hermes-guardian-test-activity-{id(module)}.sqlite3")
+    # Mutable state, the on-disk paths, and the clock/env helpers are the single
+    # source of truth in `module.state`; rebind them there so the engine observes it.
+    module.state._PERSISTENT_RULES_PATH = Path("/tmp/hermes-guardian-test-rules.json")
+    module.state._PERSISTENT_RULES_PATH.unlink(missing_ok=True)
+    module.state._PERSISTENT_RULES_CACHE = module._default_privacy_config()
+    module._apply_language_pack_config(module.state._PERSISTENT_RULES_CACHE)
+    module.state._PERSISTENT_RULES_MTIME = None
+    module.state._PERSISTENT_RULES_ERROR = False
+    module.state._ACTIVITY_DB_PATH = Path(f"/tmp/hermes-guardian-test-activity-{id(module)}.sqlite3")
     test_name = os.environ.get("PYTEST_CURRENT_TEST", "default").split(" ", 1)[0]
     test_digest = hashlib.sha256(test_name.encode("utf-8")).hexdigest()[:16]
-    module._GUARDIAN_HMAC_KEY_PATH = Path(f"/tmp/hermes-guardian-test-hmac-{test_digest}.key")
-    for path in [module._ACTIVITY_DB_PATH, module._ACTIVITY_DB_PATH.with_suffix(".sqlite3-wal"), module._ACTIVITY_DB_PATH.with_suffix(".sqlite3-shm")]:
+    module.state._GUARDIAN_HMAC_KEY_PATH = Path(f"/tmp/hermes-guardian-test-hmac-{test_digest}.key")
+    for path in [module.state._ACTIVITY_DB_PATH, module.state._ACTIVITY_DB_PATH.with_suffix(".sqlite3-wal"), module.state._ACTIVITY_DB_PATH.with_suffix(".sqlite3-shm")]:
         path.unlink(missing_ok=True)
-    module._ACTIVITY_DB_INITIALIZED = False
+    module.state._ACTIVITY_DB_INITIALIZED = False
     return module
 
 

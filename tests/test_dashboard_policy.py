@@ -47,9 +47,9 @@ def test_dashboard_static_renders_risk_banners():
 
 def test_policy_snapshot_includes_cron_rule_scope(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
-    plugin._CORE._cron_job_name = lambda job_id: "Example Availability Check" if job_id == "aaaaaaaaaaaa" else ""
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.cron_notifications._cron_job_name = lambda job_id: "Example Availability Check" if job_id == "aaaaaaaaaaaa" else ""
     save_privacy_config(plugin, rules=[
         privacy_rule(
             rule_id="rule_test",
@@ -73,8 +73,8 @@ def test_policy_snapshot_includes_cron_rule_scope(tmp_path):
 
 def test_policy_snapshot_includes_persistent_rule_metadata(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
     save_privacy_config(plugin, rules=[
         privacy_rule(
             rule_id="rule_delete_me",
@@ -99,8 +99,8 @@ def test_policy_snapshot_includes_persistent_rule_metadata(tmp_path):
 
 def test_policy_snapshot_includes_rule_form_suggestions(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
     rule = privacy_rule(
         rule_id="rule_suggest",
         action_family="mcp_write",
@@ -161,8 +161,8 @@ def test_dashboard_policy_exposes_contextual_rule_and_pending_fields():
 
 def test_dashboard_rule_delete_action_removes_persistent_rule(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
     save_privacy_config(plugin, rules=[
         privacy_rule(
             rule_id="rule_delete_me",
@@ -193,7 +193,7 @@ def test_dashboard_rule_delete_action_removes_persistent_rule(tmp_path):
 def test_policy_snapshot_includes_five_recent_unresolved_blocks(monkeypatch):
     plugin = load_plugin()
     now = {"value": 1000}
-    monkeypatch.setattr(plugin, "_now", lambda: now["value"])
+    monkeypatch.setattr(plugin.state, "_now", lambda: now["value"])
     approval_ids = []
 
     for index in range(6):
@@ -218,8 +218,8 @@ def test_policy_snapshot_includes_five_recent_unresolved_blocks(monkeypatch):
 
 def test_policy_snapshot_marks_pending_block_covered_by_new_allow_rule(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -251,8 +251,8 @@ def test_policy_snapshot_marks_pending_block_covered_by_new_allow_rule(tmp_path)
 
 def test_policy_snapshot_does_not_mark_pending_block_covered_by_new_deny_rule(tmp_path):
     plugin = load_plugin()
-    plugin._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
-    plugin._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
+    plugin.state._PERSISTENT_RULES_CACHE = None
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -280,7 +280,7 @@ def test_policy_snapshot_does_not_mark_pending_block_covered_by_new_deny_rule(tm
 def test_policy_snapshot_marks_stored_expired_approval_as_dismissible(monkeypatch):
     plugin = load_plugin()
     now = {"value": 1000}
-    monkeypatch.setattr(plugin, "_now", lambda: now["value"])
+    monkeypatch.setattr(plugin.state, "_now", lambda: now["value"])
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -324,7 +324,7 @@ def test_policy_snapshot_omits_orphaned_historical_approval_blocks():
 def test_dashboard_dismiss_action_handles_stored_expired_approval(monkeypatch):
     plugin = load_plugin()
     now = {"value": 1000}
-    monkeypatch.setattr(plugin, "_now", lambda: now["value"])
+    monkeypatch.setattr(plugin.state, "_now", lambda: now["value"])
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -475,7 +475,7 @@ def test_datatables_payload_exposes_full_long_reason():
 def test_activity_presentation_helpers_keep_datatables_and_history_consistent(monkeypatch):
     plugin = load_plugin()
     monkeypatch.setenv("HERMES_GUARDIAN_HISTORY_TIMEZONE", "America/Los_Angeles")
-    monkeypatch.setattr(plugin, "_now", lambda: 1780775049)
+    monkeypatch.setattr(plugin.state, "_now", lambda: 1780775049)
 
     plugin._emit_activity(
         "blocked",

@@ -110,7 +110,7 @@ def _run_scenario(
     plugin = load_plugin()
     save_privacy_config(plugin, mode=mode)
     if use_deny_llm:
-        plugin._PLUGIN_LLM = _deny_llm()
+        plugin.state._PLUGIN_LLM = _deny_llm()
     bind_owner(plugin, session_id=session_id)
     if provenance_read is not None:
         provenance_read(plugin, session_id)

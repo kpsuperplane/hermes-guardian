@@ -116,7 +116,7 @@ def test_register_wires_expected_hooks_and_command():
     assert ctx.cli_commands[0][0] == "guardian"
     assert ctx.cli_commands[0][1] == "Manage Hermes Guardian"
     assert ctx.cli_commands[0][3] is None
-    assert plugin._PLUGIN_LLM is ctx.llm
+    assert plugin.state._PLUGIN_LLM is ctx.llm
 
 
 def test_dashboard_plugin_api_loader_imports_plugin_without_package_split_breakage():

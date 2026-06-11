@@ -134,11 +134,11 @@ def test_persist_prompts_round_trips_v4():
     ok, _ = plugin._set_persist_prompts(True)
     assert ok and plugin._persist_prompts_enabled() is True
     # It serializes under protection.runtime in the on-disk v4 file...
-    on_disk = json.loads(plugin._PERSISTENT_RULES_PATH.read_text())
+    on_disk = json.loads(plugin.state._PERSISTENT_RULES_PATH.read_text())
     assert on_disk["protection"]["runtime"]["persist_prompts"] is True
     # ...and survives a cold reload.
-    plugin._PERSISTENT_RULES_CACHE = None
-    plugin._PERSISTENT_RULES_MTIME = None
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_MTIME = None
     assert plugin._persist_prompts_enabled() is True
 
 

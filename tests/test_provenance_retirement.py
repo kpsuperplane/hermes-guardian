@@ -52,7 +52,7 @@ def test_llm_mode_verifier_holds_verbatim_laundering_send():
         "authorization_level": "unknown",
         "rationale": "payload carries calendar content the send was not authorized for",
     })
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     _read_private_calendar(plugin)
 
@@ -80,7 +80,7 @@ def test_llm_mode_verifier_is_actually_consulted_on_this_flow():
         "authorization_level": "unknown",
         "rationale": "payload carries calendar content the send was not authorized for",
     })
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     _read_private_calendar(plugin)
 
@@ -115,7 +115,7 @@ def test_llm_mode_verifier_can_allow_when_payload_is_consistent_with_intent():
         "authorization_level": "explicit",
         "rationale": "bare email address consistent with the subscription intent",
     })
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     _read_private_calendar(plugin)
 
@@ -144,7 +144,7 @@ def test_strict_mode_routes_verbatim_laundering_to_manual_review():
         "authorization_level": "explicit",
         "rationale": "must not be consulted in strict mode",
     })
-    plugin._PLUGIN_LLM = fake_llm
+    plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     _read_private_calendar(plugin)
 

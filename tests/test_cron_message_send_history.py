@@ -18,7 +18,7 @@ def test_cron_message_send_block_recorded_in_dashboard_history(monkeypatch):
 
     # Incident conditions: llm mode (default) with the verifier unavailable.
     assert plugin._privacy_policy() == "llm"
-    plugin._PLUGIN_LLM = None  # -> "LLM verifier unavailable"
+    plugin.state._PLUGIN_LLM = None  # -> "LLM verifier unavailable"
 
     # Pin the notify target so the test is hermetic: the default "origin"
     # policy resolves targets from the host's ~/.hermes/cron/jobs.json, which
@@ -27,12 +27,12 @@ def test_cron_message_send_block_recorded_in_dashboard_history(monkeypatch):
 
     sent: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        plugin._CORE,
+        plugin.cron_notifications,
         "_cron_job_name",
         lambda _job_id: "Example Availability Check",
     )
     monkeypatch.setattr(
-        plugin._CORE,
+        plugin.cron_notifications,
         "_send_cron_notification_message",
         lambda message, target: sent.append((message, target)),
     )
