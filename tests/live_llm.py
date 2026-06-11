@@ -18,9 +18,11 @@ Two backends are supported, selected from the environment:
   ``provider.require_parameters`` so routing only lands on a provider that enforces
   the schema.
 
-Either way ``GUARDIAN_LLM_TEST_MODEL`` names the model. The suite self-skips when
-no backend key is configured. Standard-library only (``urllib``), matching the
-plugin's no-runtime-dependency policy; imported solely by
+Either way ``GUARDIAN_LLM_TEST_MODEL`` names the model. The live suite is opt-in
+(``--run-llm`` / ``GUARDIAN_RUN_LLM``); once opted in, a missing backend key FAILS
+the run (see ``live_llm_or_fail``) rather than skipping, so an unconfigured
+environment can't masquerade as a pass. Standard-library only (``urllib``), matching
+the plugin's no-runtime-dependency policy; imported solely by
 ``test_llm_verifier_live.py``.
 """
 
@@ -360,20 +362,30 @@ def live_models() -> list[str]:
     return [m.strip() for m in raw.split(",") if m.strip()]
 
 
-def live_llm_or_skip(model: str | None = None) -> LiveSecurityLlm:
-    """Return a live adapter for ``model``, or skip if no backend is configured.
+def live_llm_or_fail(model: str | None = None) -> LiveSecurityLlm:
+    """Return a live adapter for ``model``, or FAIL if no backend is configured.
 
     Configuration comes from the environment (set as CI secrets / repo variables):
     ``GUARDIAN_LLM_TEST_MODEL`` (one model, or a comma-separated list) plus one
     backend key — ``GEMINI_API_KEY`` / ``GOOGLE_API_KEY`` (Google AI Studio) or
     ``OPENROUTER_API_KEY`` (OpenRouter). Google is preferred when both are present.
     Pass ``model`` to pick one from a multi-model list; defaults to the first.
+
+    Reaching this call means the live suite was explicitly opted into (``--run-llm``
+    / ``GUARDIAN_RUN_LLM`` — otherwise the conftest hook deselects every ``llm`` test
+    before the body runs). So missing credentials are a configuration ERROR, not a
+    reason to silently pass: the verifier never gets exercised, and a green skip would
+    hide that. Fail loudly with the env vars to set instead.
     """
     backend = _select_backend()
     chosen = model or (live_models()[0] if live_models() else None)
     if backend is None or not chosen:
-        pytest.skip(
-            "live LLM verifier tests require GUARDIAN_LLM_TEST_MODEL plus one of "
-            "GEMINI_API_KEY / GOOGLE_API_KEY (Google AI Studio) or OPENROUTER_API_KEY"
+        pytest.fail(
+            "live LLM verifier tests were requested (--run-llm / GUARDIAN_RUN_LLM) but "
+            "no backend is configured. Set GUARDIAN_LLM_TEST_MODEL plus one of "
+            "GEMINI_API_KEY / GOOGLE_API_KEY (Google AI Studio) or OPENROUTER_API_KEY "
+            "(OpenRouter). Locally, a gitignored repo-root .env works; in CI set them as "
+            "repository secrets/variables.",
+            pytrace=False,
         )
     return LiveSecurityLlm(model=chosen, backend=backend)

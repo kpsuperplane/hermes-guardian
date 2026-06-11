@@ -23,8 +23,10 @@ Multi-model: ``GUARDIAN_LLM_TEST_MODEL`` may be a comma-separated list; the test
 parametrized per model, so the same scenarios validate the prompt across models.
 
 Marked ``@pytest.mark.llm`` and DESELECTED by default (``addopts = -m 'not llm'``).
-Self-skips unless a backend is configured (see ``live_llm`` for credentials). There
-is no retry: any API error (including upstream 5xx) fails the run by design.
+Once opted in (``--run-llm`` / ``GUARDIAN_RUN_LLM``), a missing backend FAILS rather
+than skips (see ``live_llm_or_fail`` for credentials) — an unconfigured environment
+can't pass as green. There is no retry: any API error (including upstream 5xx) fails
+the run by design.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ import json
 import pytest
 
 from support import *  # noqa: F403
-from live_llm import live_llm_or_skip, live_models, StructuredOutputUnsupported
+from live_llm import live_llm_or_fail, live_models, StructuredOutputUnsupported
 
 pytestmark = pytest.mark.llm
 
@@ -315,7 +317,7 @@ def _batch_schema(verdict_schema: dict) -> dict:
 @pytest.mark.parametrize("model", _MODELS or [None])
 def test_verifier_judgment_batch(model):
     """One call: the real verifier prompt + schema must judge every scenario correctly."""
-    adapter = live_llm_or_skip(model)
+    adapter = live_llm_or_fail(model)
     plugin = load_plugin()
 
     cases = {"cases": [{"id": s["id"], **s["input"]} for s in SCENARIOS]}

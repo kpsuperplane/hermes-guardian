@@ -11,7 +11,8 @@ name: LLM Verifier (live)
 #   - variable GUARDIAN_LLM_TEST_MODEL  model id for the chosen backend, e.g.
 #                                        gemini-2.5-flash (Google) or openai/gpt-4o-mini.
 #                                        May be a comma-separated list to test several.
-# If no backend key is set the job still succeeds: the tests self-skip.
+# This job opts into the live tests (--run-llm), so if no backend key/model is set it
+# FAILS with a message naming the env vars to add — it does not silently self-skip.
 
 on:
   push:
