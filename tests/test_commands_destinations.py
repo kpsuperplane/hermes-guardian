@@ -30,7 +30,15 @@ def test_self_add_remove_round_trip_and_resolution_flip():
     assert plugin._trust_label_for_debug(trust) != "self"
 
 
-def test_trusted_destination_command_suggest_trust_and_remove():
+def test_trusted_destination_command_suggest_trust_and_remove(tmp_path, monkeypatch):
+    # Make suggestions deterministic and host-independent: point HERMES_HOME at a temp
+    # skills tree with one script, so the suggest scan finds exactly one wildcard
+    # suggestion regardless of what (if anything) is installed on the running host.
+    scripts = tmp_path / "skills" / "productivity" / "google-workspace" / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "setup.py").write_text("# fake skill script\n")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
     plugin = load_plugin()
     plugin._on_pre_gateway_dispatch(gateway_event("/guardian sharing destination suggest", user_id="owner"))
 

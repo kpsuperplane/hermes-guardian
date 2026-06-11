@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import os
+
 from support import *  # noqa: F403
 
 _H = "${HERMES_HOME:-$HOME/.hermes}"
 _GWS = f"python {_H}/skills/productivity/google-workspace/scripts/setup.py"
+# The expanded Hermes home, resolved exactly like the matcher does, so path
+# assertions hold on any host (not just one where $HOME is /root).
+_HERMES_HOME = os.environ.get("HERMES_HOME") or os.path.join(
+    os.environ.get("HOME") or os.path.expanduser("~"), ".hermes"
+)
 
 
 # --- Command matching (pure) -------------------------------------------------
@@ -32,7 +39,7 @@ def test_trusted_command_wildcard_is_skills_dir_only_and_traversal_safe():
     wild = f"python {_H}/skills/productivity/google-workspace/scripts/*"
     assert m(wild, f"{_GWS} --auth-url")
     # expanded absolute path form resolves to the same dir
-    assert m(wild, "python /root/.hermes/skills/productivity/google-workspace/scripts/gws_bridge.py --check")
+    assert m(wild, f"python {_HERMES_HOME}/skills/productivity/google-workspace/scripts/gws_bridge.py --check")
     # wildcard outside the skills tree never matches
     assert not m("python /tmp/evil/*", "python /tmp/evil/x.py")
     # path traversal cannot escape the skills dir
