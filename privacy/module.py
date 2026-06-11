@@ -834,12 +834,14 @@ def _privacy_observe_tool_result(
         else {}
     )
     public_remote_read = bool(local_system_policy.get("remote_read"))
+    tool_args = tool_policy._consume_pending_tool_args(session_id, tool_name)
     taint_classes = tool_policy._taint_classes_for_tool_result(
         tool_name,
         parsed,
         status=status,
         session_id=session_id,
         local_system_policy=local_system_policy,
+        tool_args=tool_args,
     )
     if taint_classes:
         tool_policy._taint_session(session_id, taint_classes)

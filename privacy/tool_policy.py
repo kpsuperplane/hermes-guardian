@@ -698,12 +698,34 @@ def _consume_local_system_result_policy(session_id: str | None, tool_name: str) 
     return {}
 
 
+def _stash_pending_tool_args(session_id: str | None, tool_name: str, args: Any) -> None:
+    """Remember the most recent tool call's input args for the session, so the
+    post-result taint resolver can see them (the result hook is not handed the args).
+    Single-slot, last-write-wins; consumed and cleared by _consume_pending_tool_args."""
+    sid = _normalize_session_id(session_id)
+    with state._LOCK:
+        state._PENDING_TOOL_ARGS[sid] = {"tool_name": str(tool_name or ""), "args": args}
+
+
+def _consume_pending_tool_args(session_id: str | None, tool_name: str) -> Any:
+    """Return and clear the args stashed for this session iff they belong to
+    ``tool_name`` (guards against a missing pre-hook or interleaved calls); else None.
+    Always clears the slot so a stale entry never lingers."""
+    sid = _normalize_session_id(session_id)
+    with state._LOCK:
+        entry = state._PENDING_TOOL_ARGS.pop(sid, None)
+    if not entry or entry.get("tool_name") != str(tool_name or ""):
+        return None
+    return entry.get("args")
+
+
 def _taint_classes_for_tool_result(
     tool_name: str,
     result_value: Any,
     status: str = "",
     session_id: str | None = None,
     local_system_policy: dict[str, Any] | None = None,
+    tool_args: Any = None,
 ) -> set[str]:
     if str(status or "").lower() == "error":
         return set()

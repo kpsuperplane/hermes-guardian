@@ -106,6 +106,10 @@ def _on_pre_tool_call_impl(
     session_id: str = "",
     **_: Any,
 ) -> dict[str, str] | None:
+    # Stash the call's args so the post-result hook (not handed args) can resolve taint
+    # against them — e.g. a doc read's target path. Single-slot per session; harmless if
+    # the call is later blocked (the result hook only fires for calls that ran).
+    tool_policy._stash_pending_tool_args(session_id, tool_name, args)
     security_block = security_module._security_pre_tool_call(tool_name, args, session_id)
     if security_block:
         return security_block

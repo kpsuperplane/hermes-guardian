@@ -89,6 +89,11 @@ _RECENT_OWNER_REQUESTS: dict[str, tuple[float, str]] = {}
 # regardless of which tool/channel is used. Turn-scoped: cleared on the next user
 # input (per owner) and on session reset. Volatile, never persisted.
 _TURN_DENIED_EXTERNAL: dict[str, set[str]] = {}
+# Volatile, session-keyed single-slot stash of the most recent tool call's input
+# args, written in the pre-tool-call hook and consumed in the post-result hook (which
+# is not itself handed the original args). Lets the taint resolver see e.g. a read's
+# target path. Last-write-wins; cleared on consume and on session reset; never persisted.
+_PENDING_TOOL_ARGS: dict[str, dict[str, Any]] = {}
 _PERSISTENT_RULES_CACHE: dict[str, Any] | None = None
 _PERSISTENT_RULES_ERROR = False
 _ACTIVITY_DB_INITIALIZED = False
