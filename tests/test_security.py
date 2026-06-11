@@ -162,6 +162,26 @@ def test_secret_assignment_ignores_path_and_handle_variables():
     assert plugin._sensitive_reason("DB_PASSWORD = 'hunter2hunter2'") == "password assignment"
 
 
+def test_secret_assignment_ignores_expression_values():
+    plugin = load_plugin()
+
+    # When the assigned value is an expression — a call/subscript that *derives* a secret
+    # (reads a file, an env var, parses JSON) — it's not a hardcoded credential. Regression:
+    # ``secret = json.loads(secret_path.read_text())`` used to hard-block the agent's OAuth
+    # token-exchange script. The paren/bracket in the value marks it as non-literal.
+    for line in (
+        "secret = json.loads(secret_path.read_text())",
+        "api_key = os.environ['OPENAI_KEY']",
+        "token = resp.json()['access_token']",
+        "client_secret = secret.get('installed')",
+    ):
+        assert plugin._sensitive_reason(line) is None, line
+
+    # A literal value (quoted or bare) is still caught.
+    assert plugin._sensitive_reason("api_secret = 'rawliteralsecret123'") == "secret assignment"
+    assert plugin._sensitive_reason("PASSWORD = hunter2hunter2") == "password assignment"
+
+
 def test_inbound_result_still_suppresses_account_security_content():
     plugin = load_plugin()
 
