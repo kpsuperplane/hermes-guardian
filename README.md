@@ -500,6 +500,19 @@ unambiguous signals (an SSN, an email-record header block) still taint regardles
 of context. The legacy `email` class is accepted in persisted rules and maps to
 `communications`.
 
+Document reads are tiered by **source provenance**, so a relaxation that is safe for
+operator-installed reference material is not silently extended to arbitrary sources.
+A read of provably-reference material (the `skill_view` builtin, or any read whose
+target path resolves under the skills tree) is scanned leniently, tolerating the
+placeholder contacts that fill skill docs. A read from an MCP server you have
+declared (`source = reference` or `source = private` on a tool override) follows
+that declaration. An undeclared MCP document read (`…_read_resource`,
+`…_read_document`, `…_get_resource`) of unknown provenance fails closed: it taints
+`documents` conservatively — even with no detectable signal — and Guardian surfaces
+a one-click "Sources seen" classification in Protection so you can declare the
+server once. Unknown source → private until declared, mirroring unknown
+destination → external.
+
 Egress decisions reason over the **ambient session taint**: the union of the data
 classes the session has read so far and any private-looking classes intrinsic to
 the outgoing payload. There is no per-payload narrowing of which classes are
@@ -603,16 +616,20 @@ Override fields:
 
 - `match`: exact tool name, or a single trailing-`*` prefix (e.g. `mcp_acme_*`) to
   cover every tool from one MCP server.
-- `taints`: data classes applied when the tool's result is observed (the "this tool
-  reads my email" case). Independent of egress.
+- `taints`: data classes additively applied when the tool's result is observed (the
+  "this tool reads my email" case). Independent of egress.
 - `egress`: `ignore` (safe non-sink, allowed under taint), `gate` (force approval
   under taint), or a concrete action family such as `message_send` or `web_api`.
+- `source`: the document-read classification *mode* — `reference` (scan the read
+  leniently, like a skill doc) or `private` (always taint as personal data). Empty
+  uses the tiered default. Because MCP tools are server-prefixed, a prefix match
+  (`match = "crm_*"`) declares a whole server at once.
 
 Overrides are a privacy-layer convenience. They never bypass the Security Module
 (credentials, OTPs, sensitive links) or the intrinsic same-call exfiltration hard
 blocks, which always run first. Editing overrides requires CLI or configured-owner
 privileges, and the dashboard requires explicit confirmation for the weakening
-`egress=ignore` and `unknown-tools=allow` actions.
+`egress=ignore`, `source=reference`, and `unknown-tools=allow` actions.
 
 ## Browser And Terminal Behavior
 
@@ -684,9 +701,10 @@ sit on top as the everyday commands.
 # PROTECTION — the floor that always holds
 /guardian protection
 /guardian protection security enable|disable <rule_id>
-/guardian protection tool set <match> [taints=class+class] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]
+/guardian protection tool set <match> [taints=class+class] [egress=ignore|gate|<family>] [source=reference|private] [destination=<dest>] [note=<text>]
 /guardian protection tool delete <match_or_id>
 /guardian protection tool enable|disable <id_or_match>
+/guardian protection source suggest|set <server> reference|private
 /guardian protection unknown-tools gate|allow
 /guardian protection persist-prompts on|off
 /guardian protection language-packs enable|disable <pack_id>
