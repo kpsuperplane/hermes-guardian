@@ -272,6 +272,11 @@
   white-space: nowrap;
 }
 
+.hermes-guardian-check-latency {
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
 .hermes-guardian-check-target {
   display: inline-flex;
   align-items: baseline;

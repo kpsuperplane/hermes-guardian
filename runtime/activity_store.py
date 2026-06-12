@@ -97,7 +97,10 @@ def _ensure_activity_db() -> None:
                         destination_trust TEXT NOT NULL DEFAULT 'unknown',
                         decision_step TEXT NOT NULL DEFAULT '',
                         turn_id TEXT NOT NULL DEFAULT '',
-                        user_prompt TEXT NOT NULL DEFAULT ''
+                        user_prompt TEXT NOT NULL DEFAULT '',
+                        latency_us INTEGER NOT NULL DEFAULT 0,
+                        latency_hook TEXT NOT NULL DEFAULT '',
+                        latency_llm_invoked INTEGER NOT NULL DEFAULT 0
                     )
                     """
                 )
@@ -132,6 +135,12 @@ def _ensure_activity_db() -> None:
                     conn.execute("ALTER TABLE activity ADD COLUMN turn_id TEXT NOT NULL DEFAULT ''")
                 if "user_prompt" not in columns:
                     conn.execute("ALTER TABLE activity ADD COLUMN user_prompt TEXT NOT NULL DEFAULT ''")
+                if "latency_us" not in columns:
+                    conn.execute("ALTER TABLE activity ADD COLUMN latency_us INTEGER NOT NULL DEFAULT 0")
+                if "latency_hook" not in columns:
+                    conn.execute("ALTER TABLE activity ADD COLUMN latency_hook TEXT NOT NULL DEFAULT ''")
+                if "latency_llm_invoked" not in columns:
+                    conn.execute("ALTER TABLE activity ADD COLUMN latency_llm_invoked INTEGER NOT NULL DEFAULT 0")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_ts_idx ON activity(ts)")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_decision_idx ON activity(decision)")
                 conn.execute("CREATE INDEX IF NOT EXISTS activity_action_idx ON activity(action_family)")
@@ -351,7 +360,7 @@ def _emit_activity(
     try:
         _ensure_activity_db()
         with _activity_connect() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 INSERT INTO activity (
                     ts, decision, mode, session_label, session_hash, owner_hash,
@@ -389,6 +398,9 @@ def _emit_activity(
                     str(user_prompt or "")[:500],
                 ),
             )
+            activity_ids = getattr(state._CHECK_TIMING_STATE, "activity_ids", None)
+            if isinstance(activity_ids, list):
+                activity_ids.append(int(cursor.lastrowid))
         _prune_activity_db()
     except Exception as exc:
         core.logger.debug("%s: failed to write activity event: %s", core._PLUGIN_NAME, exc)
@@ -397,6 +409,7 @@ def _emit_activity(
 def _perf_begin_check() -> None:
     """Reset per-thread timing scratch state at the start of a hook check."""
     state._CHECK_TIMING_STATE.llm_invoked = False
+    state._CHECK_TIMING_STATE.activity_ids = []
 
 
 def _perf_mark_llm_invoked() -> None:
@@ -418,6 +431,14 @@ def _record_check_timing(
 ) -> None:
     """Persist sanitized per-check timing for the Performance dashboard."""
     try:
+        safe_duration_us = max(0, int(duration_us))
+        safe_hook = str(hook or "")[:60]
+        safe_llm_invoked = 1 if llm_invoked else 0
+        activity_ids = [
+            int(value)
+            for value in getattr(state._CHECK_TIMING_STATE, "activity_ids", [])
+            if isinstance(value, int) or str(value).isdigit()
+        ]
         _ensure_activity_db()
         with _activity_connect() as conn:
             conn.execute(
@@ -427,13 +448,22 @@ def _record_check_timing(
                 """,
                 (
                     int(state._now()),
-                    str(hook or "")[:60],
+                    safe_hook,
                     str(tool_name or "")[:120],
-                    max(0, int(duration_us)),
-                    1 if llm_invoked else 0,
+                    safe_duration_us,
+                    safe_llm_invoked,
                     1 if blocked else 0,
                 ),
             )
+            if activity_ids:
+                conn.executemany(
+                    """
+                    UPDATE activity
+                    SET latency_us = ?, latency_hook = ?, latency_llm_invoked = ?
+                    WHERE id = ?
+                    """,
+                    [(safe_duration_us, safe_hook, safe_llm_invoked, activity_id) for activity_id in activity_ids],
+                )
     except Exception as exc:
         core.logger.debug("%s: failed to write check timing: %s", core._PLUGIN_NAME, exc)
 

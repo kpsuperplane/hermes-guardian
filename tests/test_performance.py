@@ -84,3 +84,26 @@ def test_timing_does_not_break_check_result():
 
     assert result is not None
     assert result["action"] == "block"
+
+
+def test_hook_activity_rows_carry_latency_and_turn_total():
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="strict")
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+
+    plugin._on_pre_tool_call("send_message", {"to": "x", "text": "hi"}, session_id="s1")
+
+    row = plugin._activity_rows({}, limit=1)[0]
+    assert row["latency_us"] > 0
+    assert row["latency_hook"] == "pre_tool_call"
+    assert row["latency_llm_invoked"] == 0
+
+    turn = plugin._activity_turns_payload({"start": "0", "length": "25"})["turns"][0]
+    check = turn["rows"][0]
+    assert check["latency_us"] == row["latency_us"]
+    assert check["latency_ms"] > 0
+    assert check["latency_hook"] == "pre_tool_call"
+    assert check["latency_llm_invoked"] is False
+    assert turn["total_latency_us"] == row["latency_us"]
+    assert turn["total_latency_ms"] == check["latency_ms"]

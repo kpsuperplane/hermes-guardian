@@ -31,6 +31,7 @@ def test_activity_table_has_turn_columns():
     with plugin._activity_connect() as conn:
         cols = {str(r["name"]) for r in conn.execute("PRAGMA table_info(activity)").fetchall()}
     assert "turn_id" in cols and "user_prompt" in cols
+    assert "latency_us" in cols and "latency_hook" in cols and "latency_llm_invoked" in cols
 
 
 # --- Turn id -----------------------------------------------------------------

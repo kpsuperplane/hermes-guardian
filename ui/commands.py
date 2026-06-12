@@ -223,8 +223,11 @@ def _guardian_history_command(
                 break
         is_cron = any(str(r.get("session_label") or "").startswith("cron_") for r in turn_rows)
         label = "⏲️" if is_cron else "👤"
+        total_latency = sum(max(0, int(r.get("latency_us") or 0)) for r in turn_rows)
+        total_latency_label = _latency_label(total_latency / 1000.0)
         lines.append("")
-        lines.append(f"{label} · {when} · {n} check{'s' if n != 1 else ''}")
+        total_suffix = f" · total {total_latency_label}" if total_latency_label else ""
+        lines.append(f"{label} · {when} · {n} check{'s' if n != 1 else ''}{total_suffix}")
         if prompt:
             lines.append(f"> {dashboard_mod._clip_text(prompt, 200, ellipsis='...', fallback='')}")
         for check in turn_rows[:_MAX_CHECKS_PER_TURN]:
@@ -236,7 +239,9 @@ def _guardian_history_command(
                 icon = icon + "🤖"
             tool = dashboard_mod._clip_text(dashboard_mod._activity_display_tool(check), 60, ellipsis="...", fallback="n/a")
             taints = dashboard_mod._activity_taints_text(check, code=True)
-            lines.append(f"↳ {icon} `{tool}` · {taints}")
+            latency_label = _latency_label(check.get("latency_ms"))
+            latency_suffix = f" · latency {latency_label}" if latency_label else ""
+            lines.append(f"↳ {icon} `{tool}` · {taints}{latency_suffix}")
             action_detail = dashboard_mod._clip_text(check.get("action_detail") or "", 200, ellipsis="...", fallback="")
             if action_detail:
                 lines.append(f"   Action: `{action_detail}`")
@@ -246,6 +251,22 @@ def _guardian_history_command(
         if n > _MAX_CHECKS_PER_TURN:
             lines.append(f"↳ … +{n - _MAX_CHECKS_PER_TURN} more checks")
     return "\n".join(lines)
+
+
+def _latency_label(milliseconds: Any) -> str:
+    try:
+        value = float(milliseconds or 0)
+    except (TypeError, ValueError):
+        return ""
+    if value <= 0:
+        return ""
+    if value < 1:
+        return "<1 ms"
+    if value < 1000:
+        return f"{round(value)} ms"
+    if value < 10000:
+        return f"{value / 1000:.1f} s"
+    return f"{round(value / 1000)} s"
 
 
 def _parse_key_value_args(tokens: list[str], *, allowed_keys: set[str] | None = None) -> tuple[dict[str, str], list[str]]:

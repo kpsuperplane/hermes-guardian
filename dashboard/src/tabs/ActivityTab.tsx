@@ -3,7 +3,7 @@ import { Button } from "@/components/Button";
 import { DecisionStep } from "@/components/DecisionStep";
 import { TrustPill } from "@/components/TrustPill";
 import { HISTORY_PAGE_SIZES } from "@/constants";
-import { classesText, text, timeText } from "@/lib/format";
+import { classesText, latencyText, text, timeText } from "@/lib/format";
 import type { TabId } from "@/lib/deepLinks";
 import type { ActivityRow, ActivityTurn, PendingApproval, PermitOption } from "@/types";
 import type { ApprovalAction } from "@/hooks/useGuardianActions";
@@ -198,6 +198,7 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
   const tool = text(row.tool_name || row.tool, "n/a");
   const destination = text(row.destination, "n/a");
   const action = text(row.action_family, "n/a");
+  const latency = latencyText(row.latency_ms);
   const isRead = text(row.decision) === "read" || text(row.decision) === "tainted";
   // data_classes can arrive as an array or a delimiter-joined string; one chip per taint.
   const taints = (
@@ -229,6 +230,7 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
     },
     { label: "Decision", value: text(row.decision) },
   ];
+  if (latency) detailPairs.push({ label: "Latency", value: latency });
   if (row.action_detail) detailPairs.push({ label: "Action", value: text(row.action_detail) });
   if (row.reason) detailPairs.push({ label: "Reason", value: text(row.reason) });
 
@@ -264,6 +266,11 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
             ))}
           </span>
         ) : null}
+        {latency ? (
+          <span className="hermes-guardian-check-latency hermes-guardian-muted">
+            {"Latency " + latency}
+          </span>
+        ) : null}
         <span className="hermes-guardian-check-time hermes-guardian-muted">
           {text(row.time_short, timeText(row.ts))}
         </span>
@@ -297,6 +304,7 @@ function TurnCard(props: { turn: ActivityTurn; onNavigate: (tab: TabId) => void 
   const first = rows[0] || {};
   const when = text(first.time, timeText(turn.ts));
   const n = rows.length;
+  const totalLatency = latencyText(turn.total_latency_ms);
   return (
     <div
       className={"hermes-guardian-card hermes-guardian-turn-card" + (open ? " hermes-guardian-turn-card-open" : "")}
@@ -321,7 +329,7 @@ function TurnCard(props: { turn: ActivityTurn; onNavigate: (tab: TabId) => void 
           )}
         </div>
         <div className="hermes-guardian-turn-card-meta hermes-guardian-muted">
-          {when + " · " + n + (n === 1 ? " check" : " checks")}
+          {when + " · " + n + (n === 1 ? " check" : " checks") + (totalLatency ? " · Total " + totalLatency : "")}
         </div>
       </div>
       {open ? (

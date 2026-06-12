@@ -137,6 +137,10 @@ export interface ActivityRow {
   reason_short?: string;
   turn_id?: string;
   user_prompt?: string;
+  latency_us?: number;
+  latency_ms?: number;
+  latency_hook?: string;
+  latency_llm_invoked?: boolean;
 }
 
 export interface CronJob {
@@ -215,6 +219,8 @@ export interface ActivityTurn {
   user_prompt?: string;
   ts?: number;
   is_cron?: boolean;
+  total_latency_us?: number;
+  total_latency_ms?: number;
   rows?: ActivityRow[];
 }
 

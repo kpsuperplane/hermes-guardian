@@ -414,6 +414,9 @@ def _activity_row_from_sql(row: sqlite3.Row) -> dict[str, Any]:
         "decision_step": _row_value(row, "decision_step", ""),
         "turn_id": _row_value(row, "turn_id", ""),
         "user_prompt": _row_value(row, "user_prompt", ""),
+        "latency_us": _row_value(row, "latency_us", 0),
+        "latency_hook": _row_value(row, "latency_hook", ""),
+        "latency_llm_invoked": _row_value(row, "latency_llm_invoked", 0),
     }
 
 
@@ -473,6 +476,10 @@ def _activity_datatables_row(row: dict[str, Any]) -> dict[str, Any]:
         # the sort/search allowlists). user_prompt is the already-sanitized excerpt.
         "turn_id": str(row.get("turn_id") or ""),
         "user_prompt": str(row.get("user_prompt") or ""),
+        "latency_us": max(0, int(row.get("latency_us") or 0)),
+        "latency_ms": round(max(0, int(row.get("latency_us") or 0)) / 1000.0, 3),
+        "latency_hook": str(row.get("latency_hook") or ""),
+        "latency_llm_invoked": bool(row.get("latency_llm_invoked")),
     }
 
 
@@ -618,6 +625,11 @@ def _activity_turns_payload(params: dict[str, str]) -> dict[str, Any]:
                 "turn_id": "" if gkey.startswith("row_") else gkey,
                 "user_prompt": prompt,
                 "ts": max(int(row.get("ts") or 0) for row in rows),
+                "total_latency_us": sum(max(0, int(row.get("latency_us") or 0)) for row in rows),
+                "total_latency_ms": round(
+                    sum(max(0, int(row.get("latency_us") or 0)) for row in rows) / 1000.0,
+                    3,
+                ),
                 # A cron run's session id (and its truncated label) starts with "cron_".
                 "is_cron": any(str(row.get("session_label") or "").startswith("cron_") for row in rows),
                 "rows": [_activity_datatables_row(row) for row in rows],

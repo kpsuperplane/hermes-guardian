@@ -20,6 +20,15 @@ export function timeText(seconds: unknown): string {
   return new Date(value * 1000).toLocaleString();
 }
 
+export function latencyText(milliseconds: unknown): string {
+  const value = Number(milliseconds || 0);
+  if (!Number.isFinite(value) || value <= 0) return "";
+  if (value < 1) return "<1 ms";
+  if (value < 1000) return Math.round(value) + " ms";
+  if (value < 10000) return (Math.round(value / 100) / 10).toFixed(1) + " s";
+  return Math.round(value / 1000) + " s";
+}
+
 // Turn an engine decision_step label (doc 03 §3.2, e.g. "step6_approve_external",
 // "step3_intra_boundary_self", "step5_deny_rule:r12") into a one-line explanation.
 // The label is engine-produced; this only formats it, and falls back to a de-snaked
