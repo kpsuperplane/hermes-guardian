@@ -215,7 +215,7 @@ def _guardian_history_command(
         n = len(turn_rows)
         prompt = ""
         for candidate in turn_rows:
-            text_value = str(candidate.get("user_prompt") or "").strip()
+            text_value = _compact_prompt_text(candidate.get("user_prompt"))
             if text_value:
                 prompt = text_value
                 break
@@ -267,6 +267,10 @@ def _latency_label(milliseconds: Any) -> str:
     if value < 10000:
         return f"{value / 1000:.1f} s"
     return f"{round(value / 1000)} s"
+
+
+def _compact_prompt_text(value: Any) -> str:
+    return " ".join(str(value or "").split())
 
 
 def _compact_activity_classes(row: dict[str, Any]) -> str:

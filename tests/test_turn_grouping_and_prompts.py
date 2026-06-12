@@ -266,6 +266,30 @@ def test_slash_activity_groups_by_turn_with_nested_checks(monkeypatch):
     assert "browser_type" in out and "web_read" in out  # both checks nested under the turn
 
 
+def test_slash_activity_compacts_multiline_prompt_text(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    bind_owner(plugin)
+    owner = _owner_hash(plugin)
+    plugin._set_persist_prompts(True)
+
+    plugin._on_pre_gateway_dispatch(
+        gateway_event("first line\nsecond\tline   third line", user_id="owner")
+    )
+    plugin._emit_activity(
+        "blocked",
+        session_id="s1",
+        owner_hash=owner,
+        tool_name="browser_type",
+        action_family="browser_type",
+        reason="requires approval",
+    )
+
+    out = plugin._handle_guardian_command("activity 5")
+    assert "first line second line third line" in out
+    assert "first line\nsecond" not in out
+
+
 def test_slash_activity_robot_prefix_marks_llm_involved_checks(monkeypatch):
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin = load_plugin()
