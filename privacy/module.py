@@ -921,6 +921,14 @@ def _privacy_observe_tool_result(
             # operator can classify the server one click away (see deepLinks.ts).
             decision_step=(tool_policy._SOURCE_DEFAULT_REASON if source_default else ""),
         )
+    else:
+        tool_policy._record_public_discovered_urls(
+            session_id,
+            tool_name,
+            parsed,
+            taint_classes=taint_classes,
+            status=status,
+        )
 
     # First time this session sees an undeclared MCP doc-read from a server, surface a
     # one-click classification suggestion (server prefix only, never content). Declaring the

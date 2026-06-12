@@ -589,6 +589,91 @@ def test_web_search_query_under_taint_requires_approval():
     assert rows[0]["action_detail"] == "search <redacted 11 chars>"
 
 
+def test_tainted_web_extract_allows_exact_public_discovered_url():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    assert plugin._on_pre_tool_call("web_search", {"query": "public briefing news"}, session_id="s1") is None
+    plugin._on_transform_tool_result(
+        "web_search",
+        "Top story: https://lantian.pub/some/article",
+        session_id="s1",
+    )
+    plugin._taint_session("s1", {"calendar", "communications", "contacts"})
+
+    result = plugin._on_pre_tool_call(
+        "web_extract",
+        {"url": "http://lantian.pub/some/article/"},
+        session_id="s1",
+    )
+
+    assert result is None
+    rows = plugin._activity_rows({}, limit=10)
+    assert rows[0]["decision"] == "read"
+    assert rows[0]["tool_name"] == "web_extract"
+    assert not any(row["decision"] == "blocked" for row in rows)
+
+
+def test_tainted_web_extract_discovered_url_mismatch_still_gates():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    assert plugin._on_pre_tool_call("web_search", {"query": "public briefing news"}, session_id="s1") is None
+    plugin._on_transform_tool_result(
+        "web_search",
+        "Top story: https://example.com/a?x=1",
+        session_id="s1",
+    )
+    plugin._taint_session("s1", {"communications"})
+
+    result = plugin._on_pre_tool_call(
+        "web_extract",
+        {"url": "https://example.com/a?x=2"},
+        session_id="s1",
+    )
+
+    assert result is not None
+    assert "Action: web_read" in result["message"]
+
+
+def test_private_discovered_url_is_not_remembered_for_tainted_web_extract():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    assert plugin._on_pre_tool_call("web_search", {"query": "metadata endpoint"}, session_id="s1") is None
+    plugin._on_transform_tool_result(
+        "web_search",
+        "Endpoint: http://169.254.169.254/latest/meta-data/",
+        session_id="s1",
+    )
+    plugin._taint_session("s1", {"communications"})
+
+    result = plugin._on_pre_tool_call(
+        "web_extract",
+        {"url": "http://169.254.169.254/latest/meta-data/"},
+        session_id="s1",
+    )
+
+    assert result is not None
+
+
+def test_tainting_web_result_does_not_seed_public_discovered_url():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    assert plugin._on_pre_tool_call("web_search", {"query": "public briefing news"}, session_id="s1") is None
+    plugin._on_transform_tool_result(
+        "web_search",
+        "Top story: https://example.com/a\nFrom: owner@example.com\nSubject: private note",
+        session_id="s1",
+    )
+    assert "communications" in plugin._session_taint("s1")
+
+    result = plugin._on_pre_tool_call(
+        "web_extract",
+        {"url": "https://example.com/a"},
+        session_id="s1",
+    )
+
+    assert result is not None
+
+
 def test_tainted_session_gates_outward_delegation_and_unknown_sinks():
     """Phase 3 (decide authoritative): outward / unknown-trust sinks still gate under
     taint, while intra-boundary writes (local_system / model_provider) no longer do.

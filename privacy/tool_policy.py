@@ -18,6 +18,10 @@ from ..runtime import shared_context
 from ..security import module as security_module
 
 
+_PUBLIC_DISCOVERED_URL_TTL_SECONDS = 6 * 60 * 60
+_PUBLIC_DISCOVERED_URL_MAX_ENTRIES = 200
+
+
 def _normalize_session_id(session_id: str | None) -> str:
     return session_id or core._GLOBAL_SESSION_ID
 
@@ -50,6 +54,7 @@ def _ensure_session(session_id: str | None, owner_hash: str | None = None) -> di
                 "browser_host": "",
                 "browser_private_hosts": set(),
                 "local_system_result_policies": [],
+                "public_discovered_urls": {},
                 "suggested_sources": set(),
                 "turn_id": "",
             },
@@ -146,6 +151,113 @@ def _url_sends_remote_text(value: str) -> bool:
         return False
     path = parsed.path or ""
     return bool((path and path != "/") or parsed.query or parsed.fragment)
+
+
+def _is_public_web_host(host: str) -> bool:
+    target = str(host or "").strip().lower().strip("[]").rstrip(".")
+    if not target or target == "localhost" or target.endswith(".local"):
+        return False
+    if _is_private_or_metadata_host(target):
+        return False
+    try:
+        ipaddress.ip_address(target)
+        return True
+    except ValueError:
+        return bool(re.search(r"\.[a-z]{2,}$", target))
+
+
+def _canonical_public_url_match_key(value: Any) -> tuple[str, str]:
+    parsed = urlparse(str(value or "").strip())
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return "", ""
+    host = _safe_host_from_url(str(value or ""))
+    if not _is_public_web_host(host):
+        return "", ""
+    netloc = parsed.netloc.rsplit("@", 1)[-1].lower().rstrip(".")
+    path = parsed.path or ""
+    if path == "/":
+        path = ""
+    elif path.endswith("/"):
+        path = path[:-1]
+    canonical = "\n".join((netloc, path, parsed.query or "", parsed.fragment or ""))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest(), host
+
+
+def _prune_public_discovered_urls(session: dict[str, Any], now: float | None = None) -> dict[str, dict[str, Any]]:
+    current = state._now() if now is None else now
+    raw = session.get("public_discovered_urls")
+    entries = raw if isinstance(raw, dict) else {}
+    cutoff = current - _PUBLIC_DISCOVERED_URL_TTL_SECONDS
+    pruned = {
+        str(fingerprint): dict(meta)
+        for fingerprint, meta in entries.items()
+        if isinstance(meta, dict) and float(meta.get("ts") or 0) >= cutoff
+    }
+    if len(pruned) > _PUBLIC_DISCOVERED_URL_MAX_ENTRIES:
+        ordered = sorted(
+            pruned.items(),
+            key=lambda item: float(item[1].get("ts") or 0),
+            reverse=True,
+        )
+        pruned = dict(ordered[:_PUBLIC_DISCOVERED_URL_MAX_ENTRIES])
+    session["public_discovered_urls"] = pruned
+    return pruned
+
+
+def _record_public_discovered_urls(
+    session_id: str | None,
+    tool_name: str,
+    result_value: Any,
+    *,
+    taint_classes: set[str] | None = None,
+    status: str = "",
+) -> None:
+    if str(status or "").lower() == "error" or taint_classes:
+        return
+    lower = str(tool_name or "").lower()
+    if not core._WEB_READ_TOOL_RE.match(lower) or lower.startswith("browser_"):
+        return
+    urls = _extract_urls(result_value)
+    if not urls:
+        return
+    now = state._now()
+    additions: dict[str, dict[str, Any]] = {}
+    for url in urls:
+        fingerprint, host = _canonical_public_url_match_key(url)
+        if fingerprint:
+            additions[fingerprint] = {"host": host, "ts": now}
+    if not additions:
+        return
+    with state._LOCK:
+        session = _ensure_session(session_id)
+        entries = _prune_public_discovered_urls(session, now)
+        entries.update(additions)
+        if len(entries) > _PUBLIC_DISCOVERED_URL_MAX_ENTRIES:
+            ordered = sorted(
+                entries.items(),
+                key=lambda item: float(item[1].get("ts") or 0),
+                reverse=True,
+            )
+            entries = dict(ordered[:_PUBLIC_DISCOVERED_URL_MAX_ENTRIES])
+        session["public_discovered_urls"] = entries
+
+
+def _web_read_uses_public_discovered_url(tool_name: str, args: Any, session_id: str | None) -> bool:
+    lower = str(tool_name or "").lower()
+    if not core._WEB_READ_TOOL_RE.match(lower) or lower == "web_search" or lower.startswith("browser_"):
+        return False
+    urls = _extract_urls(args)
+    if not urls:
+        return False
+    fingerprints: set[str] = set()
+    for url in urls:
+        fingerprint, _host = _canonical_public_url_match_key(url)
+        if not fingerprint:
+            return False
+        fingerprints.add(fingerprint)
+    with state._LOCK:
+        entries = _prune_public_discovered_urls(_ensure_session(session_id))
+        return bool(fingerprints) and fingerprints <= set(entries)
 
 
 # Keys that are ALWAYS free text: any non-empty string under one of these ships content
@@ -1471,7 +1583,10 @@ def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> To
             lambda: ToolAction("message_list", "messaging"),
         ),
         (
-            bool(core._WEB_READ_TOOL_RE.match(lower)) and bool(_session_taint(session_id)) and _args_send_remote_text(args),
+            bool(core._WEB_READ_TOOL_RE.match(lower))
+            and bool(_session_taint(session_id))
+            and _args_send_remote_text(args)
+            and not _web_read_uses_public_discovered_url(lower, args, session_id),
             read_private_action,
         ),
         (
