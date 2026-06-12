@@ -159,6 +159,8 @@
 
 .hermes-guardian-approval-actions button {
   flex: 0 0 auto;
+  height: 2rem;
+  min-height: 2rem;
 }
 
 .hermes-guardian-block-meta {
