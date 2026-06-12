@@ -110,6 +110,64 @@ def test_trusted_recipient_now_deterministically_allows():
     assert blocked is not None and blocked["action"] == "block"
 
 
+def test_trusted_store_connector_id_deterministically_allows():
+    # Regression: "Trust this destination" on a store block adds an identity entry whose
+    # value is the store's connector id (e.g. "pastebin"). A store write carries no
+    # recipient arg, so the decision path must match that entry against the destination's
+    # connector id — otherwise the permit is a dead-end and the write re-blocks forever
+    # (the user is then forced onto an allow rule instead).
+    plugin = load_plugin()
+    bind_owner(plugin, session_id="s1")
+    assert plugin._add_trusted_recipient("pastebin", classes=["documents"])[0]
+    plugin._taint_session("s1", {"documents"})
+
+    assert plugin._on_pre_tool_call(
+        "mcp_pastebin_create", {"content": "x"}, session_id="s1"
+    ) is None
+    rows = plugin._activity_rows({}, limit=3)
+    assert rows[0]["decision"] == "allowed"
+    assert rows[0]["reason"] == "matched trusted destination (identity)"
+
+    # Class scope holds: trusted for documents must not launder a different class out.
+    plugin._taint_session("s1", {"contacts"})
+    cross = plugin._on_pre_tool_call("mcp_pastebin_create", {"content": "x"}, session_id="s1")
+    assert cross is not None and cross["action"] == "block"
+
+    # A different (untrusted) connector still gates.
+    plugin._taint_session("s1", {"documents"})
+    other = plugin._on_pre_tool_call("mcp_other_create", {"content": "x"}, session_id="s1")
+    assert other is not None and other["action"] == "block"
+
+
+def test_trusted_store_connector_id_end_to_end_from_a_block():
+    # The full owner path: a store egress blocks, the owner picks "Trust this destination"
+    # (trusted_identity), and the byte-identical retry is then allowed with no rule created.
+    plugin = load_plugin()
+    bind_owner(plugin, session_id="s1")
+    plugin._taint_session("s1", {"documents"})
+
+    blocked = plugin._on_pre_tool_call("mcp_pastebin_create", {"content": "x"}, session_id="s1")
+    assert blocked is not None and blocked["action"] == "block"
+    approval_id = first_pending_id(plugin)
+    option = next(
+        o for o in plugin._approval_permit_options(plugin._PENDING_APPROVALS[approval_id])
+        if o["method"] == "trusted_identity"
+    )
+    assert option["value"] == "pastebin"
+
+    ok, _message = plugin._apply_permit_option(plugin._CLI_OWNER_HASH, approval_id, "trusted_identity")
+    assert ok
+    # A trusted destination, NOT an allow rule, is what got created.
+    assert plugin._persistent_privacy_rules() == []
+    assert any(
+        e["kind"] == "identity" and e["value"] == "pastebin"
+        for e in plugin._trusted_recipients_snapshot()
+    )
+
+    plugin._taint_session("s2", {"documents"})
+    assert plugin._on_pre_tool_call("mcp_pastebin_create", {"content": "x"}, session_id="s2") is None
+
+
 def test_trusted_destination_does_not_override_a_deny_rule():
     plugin = load_plugin()
     save_privacy_config(plugin, rules=[

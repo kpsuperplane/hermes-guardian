@@ -564,14 +564,19 @@ def _trusted_destination_classes_cover(entry_classes: Any, leaving: Any) -> bool
     return {str(c).strip().lower() for c in (leaving or set())} <= cls
 
 
-def _trusted_destination_match(action_family: str, args: Any, data_classes: set[str]) -> dict[str, Any] | None:
+def _trusted_destination_match(
+    action_family: str, args: Any, data_classes: set[str], destination: Any = None
+) -> dict[str, Any] | None:
     """The user-trusted destination entry covering this egress, or None.
 
     Trusted destinations (Trusted-destinations list) deterministically allow an egress
     when the matched entry's ``classes`` cover everything leaving — a consented
     declassification. ``command`` entries match the terminal command; ``identity`` entries
-    match the resolved recipient. Class coverage is mandatory, so an entry trusted for one
-    class can never wave through another.
+    match the resolved recipient OR — for a store/draft/local write — the destination's
+    connector id (the "trusted-by-connector-id" path, doc 06 §3.1). A store write carries
+    no recipient arg, so without the connector-id candidate the "Trust this destination"
+    permit would be a dead-end that never re-allows the action. Class coverage is mandatory,
+    so an entry trusted for one class can never wave through another.
     """
     leaving = set(data_classes or set())
     entries = rules._trusted_recipients_snapshot()
@@ -585,12 +590,22 @@ def _trusted_destination_match(action_family: str, args: Any, data_classes: set[
                     and _trusted_destination_classes_cover(entry.get("classes"), leaving)
                 ):
                     return entry
+    # Candidate identity tokens: the resolved recipient (messaging) and, for a non-messaging
+    # store/draft/local write, the destination connector id. Both are matched RAW against the
+    # ``identity`` entries exactly as the permit option stored them.
+    candidates: set[str] = set()
     recipient = destinations._normalize_identity(tool_policy._recipient_raw_from_args(args))
     if recipient:
+        candidates.add(recipient)
+    if action_family not in capability._MESSAGING_FAMILIES:
+        dest_id = destinations._normalize_identity(getattr(destination, "id", "") or "")
+        if dest_id and dest_id != "messaging":
+            candidates.add(dest_id)
+    if candidates:
         for entry in entries:
             if (
                 entry.get("kind") == "identity"
-                and destinations._normalize_identity(entry.get("value")) == recipient
+                and destinations._normalize_identity(entry.get("value")) in candidates
                 and _trusted_destination_classes_cover(entry.get("classes"), leaving)
             ):
                 return entry
@@ -769,7 +784,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
     # the gate. decide() stays pure; deny rules above still win; the security layer already
     # ran. Class-scoped, so an entry trusted only for local_system can't launder other
     # classes out.
-    trusted_destination = _trusted_destination_match(action_family, args, data_classes)
+    trusted_destination = _trusted_destination_match(action_family, args, data_classes, cap.destination)
     if trusted_destination is not None:
         _allow_trusted_destination_call(
             tool_name,
