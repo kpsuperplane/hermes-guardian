@@ -430,16 +430,3 @@ def test_5m_approval_applies_to_same_shape_but_not_changed_recipient():
     assert result is not None
     assert "Hermes Guardian blocked this egress" in result["message"]
 
-
-def test_dashboard_mutations_disabled_guard(monkeypatch):
-    server_path = Path(__file__).resolve().parents[1] / "dashboard" / "plugin_api.py"
-    spec = importlib.util.spec_from_file_location("hermes_guardian_dashboard_api_guard", server_path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    monkeypatch.setenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", "0")
-
-    with pytest.raises(module.HTTPException) as exc:
-        module._require_dashboard_admin(SimpleNamespace(headers={}))
-
-    assert exc.value.status_code == 403

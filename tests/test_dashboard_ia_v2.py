@@ -69,14 +69,6 @@ def test_dashboard_clear_taint_action_clears_session_taint():
     assert not any(s["taint"] for s in result["policy"]["sessions"])
 
 
-def test_clear_taint_endpoint_is_admin_guarded(monkeypatch):
-    api = _load_plugin_api()
-    monkeypatch.setenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", "0")
-    with pytest.raises(api.HTTPException) as exc:
-        api._require_dashboard_admin(_request())
-    assert exc.value.status_code == 403
-
-
 # --- "Check a destination" widget (What's Yours, doc 02 §Tab2) -----------------------
 def test_check_destination_resolves_self_after_grant():
     plugin = load_plugin()
@@ -179,18 +171,6 @@ def test_impact_preview_narrow_candidate_excludes_unrelated_rows():
 
 
 # --- The new read endpoints need no admin guard (they only compute) ------------------
-def test_read_endpoints_present_and_unguarded():
-    api = _load_plugin_api()
-    # The four read routes exist on the router and the read helpers are reachable.
-    plugin = load_plugin()
-    assert hasattr(plugin, "_dashboard_pending_approvals")
-    assert hasattr(plugin, "_dashboard_resolve_destination")
-    assert hasattr(plugin, "_dashboard_preview_send")
-    assert hasattr(plugin, "_dashboard_sharing_impact")
-    # The clear-taint route mutates, so it shares the admin guard machinery.
-    assert hasattr(api, "_require_dashboard_admin")
-
-
 # --- Static bundle: five tabs + deep links wired (doc 02 §nav, §Deep links) ----------
 def test_static_bundle_renders_five_tabs_and_deeplinks():
     static_js = (

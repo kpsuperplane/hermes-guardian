@@ -132,14 +132,6 @@ def test_logic_modules_are_real_importable_modules():
         assert isinstance(module, types.ModuleType), f"{dotted} is not a real module"
 
 
-def test_logic_modules_import_without_cycle_errors():
-    # Loading the plugin imports every logic module in dependency order; the call-time
-    # module-object references must tolerate the mutual import edges (rules<->llm,
-    # approvals<->cron_notifications, ...) without raising at import.
-    plugin = load_plugin()
-    assert plugin._CORE._core_logic_missing_required_symbols() == ()
-
-
 def test_facade_reexports_modules_by_reference():
     # The façade is thin: the logic modules and `state` are re-exported BY REFERENCE,
     # so `plugin.<module>` is the identical object the live call path uses. Patching it

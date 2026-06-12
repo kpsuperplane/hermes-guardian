@@ -277,27 +277,6 @@ def test_old_shape_file_fails_closed_to_strict(caplog):
 
 
 # --- 5. Builtin outward-sharing is NOT narrowable from config. -----------------
-def test_builtin_outward_sharing_not_narrowable_from_config():
-    plugin = load_plugin()
-    _write_file(
-        plugin,
-        {
-            "version": 4,
-            "review": {"mode": "strict"},
-            # operator tries to drop builtins down to just "invite" and add an extra.
-            "sharing": {"outward": {"builtin": ["invite"], "extra": ["crosspost"]}},
-        },
-    )
-    config = plugin._load_privacy_config()
-    # Every builtin survives regardless of the narrowed config list (code-owned).
-    assert set(config["outward_sharing"]["builtin"]) == set(plugin._OUTWARD_SHARING_BUILTIN_SUBTYPES)
-    # The extra addition is kept.
-    assert "crosspost" in config["outward_sharing"]["extra"]
-    # A builtin is never demoted into extra.
-    for builtin in plugin._OUTWARD_SHARING_BUILTIN_SUBTYPES:
-        assert builtin not in config["outward_sharing"]["extra"]
-
-
 # --- 6. Round-trip: a mutation persists the v4 shape and reloads identically. ---
 def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     plugin = load_plugin()

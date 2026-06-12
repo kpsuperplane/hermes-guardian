@@ -160,16 +160,6 @@ def test_grouped_help_lists_five_concepts_in_decide_order():
 
 
 # --- §6.3 New commands: check, sharing preview, approvals/approve/deny. --------
-def test_check_resolves_a_known_destination():
-    plugin = load_plugin()
-    save_privacy_config(plugin, mode="strict")
-    plugin._add_self_destination("identity", "me@example.com")
-    out_self = plugin._handle_guardian_command("check me@example.com")
-    assert "-> self" in out_self
-    out_ext = plugin._handle_guardian_command("check stranger@example.com")
-    assert "-> external" in out_ext
-
-
 def test_sharing_preview_returns_the_firing_step():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="strict")

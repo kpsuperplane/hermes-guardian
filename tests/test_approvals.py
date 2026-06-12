@@ -117,17 +117,20 @@ def test_approval_id_generation_does_not_call_llm_with_tool_metadata():
     assert plugin.state._PLUGIN_LLM.calls == []
 
 
-def test_approval_accepts_four_digit_id():
+def test_approval_resolves_id_with_punctuation_via_compact_match():
+    """A user retyping the 4-digit code with stray punctuation (e.g. "12-34") still resolves:
+    _resolve_pending_approval_id falls back to a compact match that strips non-alphanumerics."""
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
-    compact_id = approval_id.replace("-", "")
+    # A dashed variant that does NOT exact-match any pending id, exercising the compact path.
+    dashed_id = f"{approval_id[:2]}-{approval_id[2:]}"
+    assert dashed_id not in plugin._PENDING_APPROVALS
 
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {compact_id} 5m"))
-    response = plugin._handle_guardian_command(f"approve {compact_id} 5m")
+    response = plugin._handle_guardian_command(f"approve {dashed_id} 5m")
 
     assert "Approved message_send" in response
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None

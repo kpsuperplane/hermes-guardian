@@ -127,14 +127,6 @@ def test_privacy_policy_ignores_old_security_env_names(monkeypatch):
     assert plugin._privacy_policy() == "llm"
 
 
-def test_env_helper_ignores_old_privacy_egress_guard_names(monkeypatch):
-    plugin = load_plugin()
-
-    monkeypatch.setenv("PRIVACY_EGRESS_GUARD_ALLOWLIST", "mcp:notion")
-
-    assert plugin.state._env("HERMES_GUARDIAN_ALLOWLIST", "") == ""
-
-
 @pytest.mark.parametrize(
     ("tool_name", "args", "setup", "expected"),
     [

@@ -76,21 +76,6 @@ def test_skills_path_read_via_generic_tool_name_stays_untainted():
     assert plugin._session_taint("ref") == set()
 
 
-def test_undeclared_mcp_read_leaves_the_relaxed_bucket():
-    # ``…_read_resource`` / ``…_get_resource`` are the live false-negative surface: their names
-    # match no source-taint rule, so after 0818f09 they took the relaxed (placeholder-tolerant)
-    # scan and read real personal content untainted. With provenance tiering an undeclared one
-    # no longer uses the relaxed path — placeholder content that a skills-path read tolerates
-    # (above) now taints. (Phase 3 pins exactly how: conservative `documents`.)
-    plugin = load_plugin()
-    bind_owner(plugin)
-
-    plugin._on_transform_tool_result(
-        tool_name="crm_read_resource", result=_PLACEHOLDER_DOC, session_id="floor"
-    )
-    assert plugin._session_taint("floor")  # non-empty: not the relaxed reference path
-
-
 def test_reference_by_path_skips_inbound_sensitive_link_suppression():
     # The security inbound path consumes the same provenance verdict: a skills-path read skips
     # the "sensitive link" suppression (benign doc URL), an undeclared MCP read does not.

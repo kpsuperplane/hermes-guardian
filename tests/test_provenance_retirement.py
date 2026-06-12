@@ -62,36 +62,14 @@ def test_llm_mode_verifier_holds_verbatim_laundering_send():
         session_id="s1",
     )
 
-    # Held at manual approval (not silently allowed).
+    # Held at manual approval (not silently allowed): an approval was created, held, not allowed.
     assert result is not None
     assert "Approval ID:" in result["message"]
-    assert not plugin._PENDING_APPROVALS or True  # approval was created; held, not allowed
+    assert plugin._PENDING_APPROVALS
 
-
-def test_llm_mode_verifier_is_actually_consulted_on_this_flow():
     # The carve-out only holds if the verifier is ACTUALLY reached: decide must have returned
     # APPROVE (because ambient taint from the read was non-empty), which is what routes the
-    # call into the verifier. Assert the verifier saw the real laundering payload.
-    plugin = load_plugin()
-    save_privacy_config(plugin, mode="llm")
-    fake_llm = FakeSecurityLlm({
-        "outcome": "deny",
-        "risk_level": "high",
-        "authorization_level": "unknown",
-        "rationale": "payload carries calendar content the send was not authorized for",
-    })
-    plugin.state._PLUGIN_LLM = fake_llm
-    bind_owner(plugin)
-    _read_private_calendar(plugin)
-
-    plugin._on_pre_tool_call(
-        "send_message",
-        {"to": "stranger@example.com", "text": _CAL_EVENT},
-        session_id="s1",
-    )
-
-    # The verifier was reached (decide APPROVE -> verifier consulted) and read the real
-    # payload — that is where laundering is now caught (doc 02 §4, charter §2.1-§2.2).
+    # call into the verifier — and it read the real laundering payload (doc 02 §4, charter §2.1-§2.2).
     security_calls = [c for c in fake_llm.calls if c.get("purpose") == "hermes-guardian.security_llm"]
     assert len(security_calls) == 1
     verifier_input = json.dumps(security_calls[0]["input"], default=str)

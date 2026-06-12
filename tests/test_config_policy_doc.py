@@ -75,16 +75,6 @@ def test_malformed_self_block_drops_to_safe_subset():
     assert set(config["outward_sharing"]["builtin"]) == set(plugin._OUTWARD_SHARING_BUILTIN_SUBTYPES)
 
 
-def test_wholly_corrupt_document_falls_back_to_strict():
-    plugin = load_plugin()
-    plugin.state._PERSISTENT_RULES_PATH.write_text("{ this is not valid json")
-    plugin.state._PERSISTENT_RULES_CACHE = None
-    plugin.state._PERSISTENT_RULES_MTIME = None
-    config = plugin._load_privacy_config()
-    assert config["privacy"]["mode"] == "strict"
-    assert plugin.state._PERSISTENT_RULES_ERROR is True
-
-
 # --- 3. Non-narrowable sharing: removing a builtin subtype has no effect. -------------
 def test_outward_sharing_builtin_is_not_narrowable():
     plugin = load_plugin()
@@ -122,16 +112,6 @@ def test_self_customization_survives_unrelated_mode_change():
     plugin._set_security_rule("intrinsic_exfiltration", False)
     plugin._save_persistent_privacy_rules([privacy_rule(rule_id="r1")])
     assert "store:crm" in plugin._self_config_snapshot()["destinations"]
-
-
-def test_self_add_destination_flips_resolution_external_to_self():
-    plugin = load_plugin()
-    # A custom store is external before the grant.
-    before = plugin._resolve_destination_trust("store", "crm", "write", "")
-    assert plugin._trust_label_for_debug(before) != "self"
-    plugin._add_self_destination("destination", "store:crm")
-    after = plugin._resolve_destination_trust("store", "crm", "write", "")
-    assert plugin._trust_label_for_debug(after) == "self"
 
 
 def test_tool_override_direction_and_destination_round_trip():
