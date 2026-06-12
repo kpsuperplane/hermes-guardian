@@ -567,6 +567,13 @@ read-only queries) pull page or tool content back into the agent. Returning data
 the agent is not exfiltration: the agent already has direct read access to the page
 and to tool results, and the data is not sent to any third party. Any later attempt
 to send that data onward is itself a separate, independently gated egress. So:
+- A terminal_exec action with privacy_context.safe_remote_read=true is a deterministic
+  GET-style public remote read: Guardian found a public URL and a known read API/tool,
+  with no POST/upload method, command substitution, private-network host, sensitive
+  local path, or downloaded-code execution. Treat it like a read. If the user or cron
+  context authorized the lookup and action_arguments do not carry private data into
+  the URL/body/headers, this is low risk and should be allowed even when
+  classes_in_scope is broad. If the payload does carry private data, judge the export.
 - A browser_console eval (or browser read) that only READS page state — DOM nodes,
   form field values, page text, attributes — and returns it to the agent is low
   risk. Allow it, even when classes_in_scope is broad. Reading every form field's

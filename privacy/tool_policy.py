@@ -681,7 +681,7 @@ def _is_local_system_tool(tool_name: str) -> bool:
 
 def _terminal_command_for_args(args: Any) -> str:
     if isinstance(args, dict):
-        return str(args.get("command") or args.get("cmd") or "")
+        return str(args.get("command") or args.get("cmd") or args.get("code") or "")
     return ""
 
 
@@ -728,27 +728,65 @@ def _local_system_segment_is_metadata_only(segment: str) -> bool:
 
 def _terminal_command_is_safe_remote_read(command: str) -> bool:
     command = str(command or "").strip()
-    if not command:
-        return False
-    if not core._REMOTE_READ_URL_RE.search(command) or not core._REMOTE_READ_TOOL_RE.search(command):
-        return False
-    if core._security_rule_enabled("private_network_reads") and any(_is_private_or_metadata_host(_safe_host_from_url(url)) for url in _extract_urls(command)):
-        return False
-    if core._REMOTE_READ_OUTBOUND_RE.search(command):
-        return False
-    if core._REMOTE_READ_EXECUTION_RE.search(command):
-        return False
-    # A command substitution (`$(...)` / backticks) feeding a network call can splice
-    # ANY local read into the request, so it is never a provably-safe remote read.
-    if core._COMMAND_SUBSTITUTION_RE.search(command):
-        return False
-    if core._SENSITIVE_LOCAL_PATH_RE.search(command):
+    if not _remote_read_text_has_safe_public_target(command):
         return False
     if re.search(r">\s*(?!/(?:tmp|var/tmp)/)", command):
         return False
     if re.search(r"\b(?:write_bytes|write_text|open)\b", command) and not core._REMOTE_READ_TMP_WRITE_RE.search(command):
         return False
     return True
+
+
+def _remote_read_text_has_safe_public_target(text: str) -> bool:
+    text = str(text or "").strip()
+    if not text:
+        return False
+    if not core._REMOTE_READ_URL_RE.search(text) or not core._REMOTE_READ_TOOL_RE.search(text):
+        return False
+    if core._security_rule_enabled("private_network_reads") and any(_is_private_or_metadata_host(_safe_host_from_url(url)) for url in _extract_urls(text)):
+        return False
+    if core._REMOTE_READ_OUTBOUND_RE.search(text):
+        return False
+    if core._REMOTE_READ_EXECUTION_RE.search(text):
+        return False
+    # A command substitution (`$(...)` / backticks) feeding a network call can splice
+    # ANY local read into the request, so it is never a provably-safe remote read.
+    if core._COMMAND_SUBSTITUTION_RE.search(text):
+        return False
+    if core._SENSITIVE_LOCAL_PATH_RE.search(text):
+        return False
+    return True
+
+
+_CODE_REMOTE_READ_LOCAL_SOURCE_RE = re.compile(
+    r"("
+    r"\bos\.environ\b|\bgetenv\s*\(|\b__import__\s*\(|\b(?:eval|exec|compile)\s*\("
+    r"|\bsubprocess\b|\bPopen\s*\(|\bsystem\s*\("
+    r"|\b(?:open|read_text|read_bytes|write_text|write_bytes)\s*\("
+    r"|\bpathlib\.Path\b|\bPath\.home\s*\(|\bexpanduser\s*\("
+    r"|\b(?:glob|iglob|scandir|listdir|walk)\s*\("
+    r")",
+    re.I | re.S,
+)
+
+
+def _code_snippet_is_safe_remote_read(code: str) -> bool:
+    code = str(code or "").strip()
+    if not _remote_read_text_has_safe_public_target(code):
+        return False
+    if _CODE_REMOTE_READ_LOCAL_SOURCE_RE.search(code):
+        return False
+    return True
+
+
+def _tool_call_is_safe_remote_read(tool_name: str, args: Any) -> bool:
+    lower = str(tool_name or "").lower()
+    command = _terminal_command_for_args(args)
+    if lower == "terminal":
+        return _terminal_command_is_safe_remote_read(command)
+    if lower in {"execute_code", "code_execution", "shell"}:
+        return _code_snippet_is_safe_remote_read(command)
+    return False
 
 
 # --- Trusted-command matching (Trusted destinations, kind="command") ----------
@@ -937,11 +975,13 @@ def _is_private_or_metadata_host(host: str) -> bool:
 def _local_system_result_taint_classes(tool_name: str, args: Any) -> set[str]:
     lower = str(tool_name or "").lower()
     if lower in {"execute_code", "code_execution", "shell"}:
+        if _tool_call_is_safe_remote_read(tool_name, args):
+            return set()
         return {"local_system"}
     if lower == "terminal":
-        command = _terminal_command_for_args(args)
-        if _terminal_command_is_safe_remote_read(command):
+        if _tool_call_is_safe_remote_read(tool_name, args):
             return set()
+        command = _terminal_command_for_args(args)
         if _terminal_command_result_is_metadata_only(command):
             return set()
         return {"local_system"}
@@ -954,7 +994,7 @@ def _record_local_system_result_policy(session_id: str | None, tool_name: str, a
     entry = {
         "tool_name": str(tool_name or "").lower(),
         "taint": sorted(_local_system_result_taint_classes(tool_name, args)),
-        "remote_read": _terminal_command_is_safe_remote_read(_terminal_command_for_args(args)),
+        "remote_read": _tool_call_is_safe_remote_read(tool_name, args),
         "ts": state._now(),
     }
     shared_context._record_shared_context(

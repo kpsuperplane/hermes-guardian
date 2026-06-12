@@ -280,7 +280,7 @@ def _sanitize_rationale(text: str) -> str:
 def _llm_hard_deny_reason(shape: dict[str, Any], args: Any) -> str | None:
     safe_remote_read = (
         shape.get("action_family") == "terminal_exec"
-        and tool_policy._terminal_command_is_safe_remote_read(tool_policy._terminal_command_for_args(args))
+        and tool_policy._tool_call_is_safe_remote_read(shape.get("tool_name", ""), args)
     )
     text = security_module._stringify_for_scan({
         "tool_name": shape.get("tool_name", ""),
@@ -420,6 +420,10 @@ def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:
             # responsible for narrowing/anti-laundering — judging whether the payload's
             # content is consistent with the authorized intent (charter §2.1-§2.2).
             "classes_in_scope": sorted(shape.get("data_classes") or []),
+            "safe_remote_read": (
+                shape.get("action_family") == "terminal_exec"
+                and tool_policy._tool_call_is_safe_remote_read(shape.get("tool_name", ""), args)
+            ),
             "security_sensitive_content_already_hard_blocked": True,
             "manual_approval_available_if_denied": True,
         },
