@@ -806,9 +806,11 @@ mine → is it covered by a grant → who judges the rest → the floor):
   read-only).
 - **Sharing**: the standing authorization you've granted — trusted recipients, the
   ordered allow/deny rules (add/edit/delete/enable/disable/**reorder**), the
-  outward-sharing subtypes (builtin read-only, extra editable), a *Preview a send*
-  widget, and an *Impact preview* that replays a candidate rule against recent activity
-  before you commit it. Trust/sharing edits are admin-token + confirmation gated.
+  outward-sharing action names (verbs such as share/invite/publish that are always
+  external even on your own stores, with builtin read-only names plus editable extras),
+  a *Preview a send* widget, and an *Impact preview* that replays a candidate rule
+  against recent activity before you commit it. Trust/sharing edits are admin-token +
+  confirmation gated.
 - **Review**: case-by-case judgment — the privacy **mode** (each option written as a
   who-reviews sentence), the owner/cron authorization context toggles, the verifier
   model, and a verifier **scoreboard** (consulted checks + median latency).

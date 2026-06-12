@@ -289,13 +289,21 @@ function OutwardSharing(props: { controller: DestinationsController }) {
         <div>
           <div className="hermes-guardian-card-title">Outward sharing</div>
           <div className="hermes-guardian-muted">
-            Actions that reach other people even on a store that is yours (sharing, inviting,
-            publishing). These are always treated as external.
+            Action names that mean "this reaches someone else" even when the destination store is
+            yours. When a tool call looks like one of these actions, Guardian treats it as an
+            external boundary crossing and asks for review unless a trusted destination or rule
+            covers it.
           </div>
         </div>
       </div>
       <div className="hermes-guardian-dest-group">
-        <div className="hermes-guardian-dest-group-title">Built-in (always external — cannot be disabled)</div>
+        <div className="hermes-guardian-dest-group-title">
+          Built-in sharing actions (always external — cannot be disabled)
+        </div>
+        <div className="hermes-guardian-muted hermes-guardian-dest-empty">
+          These catch common verbs such as sharing a document, inviting a collaborator, publishing
+          a page, or making something public.
+        </div>
         <div className="hermes-guardian-chips">
           {sharingBuiltin.map((subtype) => (
             <span key={subtype} className="hermes-guardian-pill hermes-guardian-trust-external">
@@ -305,7 +313,11 @@ function OutwardSharing(props: { controller: DestinationsController }) {
         </div>
       </div>
       <div className="hermes-guardian-dest-group">
-        <div className="hermes-guardian-dest-group-title">Extra</div>
+        <div className="hermes-guardian-dest-group-title">Extra action names</div>
+        <div className="hermes-guardian-muted hermes-guardian-dest-empty">
+          Add tool-specific verbs here when your apps use another name for outward sharing, for
+          example <Mono>crosspost</Mono> or <Mono>send_invite</Mono>.
+        </div>
         {sharingExtra.length ? (
           <ul className="hermes-guardian-dest-list">
             {sharingExtra.map((item) => (
@@ -326,8 +338,8 @@ function OutwardSharing(props: { controller: DestinationsController }) {
           </div>
         )}
         <AddRow
-          placeholder="export_link"
-          buttonLabel="Add sharing action"
+          placeholder="crosspost or send_invite"
+          buttonLabel="Add action name"
           disabled={busy}
           onAdd={(value) => addSharing(value)}
         />

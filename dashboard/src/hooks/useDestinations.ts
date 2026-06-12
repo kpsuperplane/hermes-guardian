@@ -148,8 +148,11 @@ export function useDestinations(showToast: ShowToast): DestinationsController {
 
   const addSharing = useCallback(
     (subtype: string) => {
-      run('Add "' + subtype + '" as an outward-sharing action (always treated as external)?', () =>
-        addSharingSubtype(subtype),
+      run(
+        'Treat action name "' +
+          subtype +
+          '" as outward sharing? Matching writes will be external even on your own stores.',
+        () => addSharingSubtype(subtype),
       );
     },
     [run],
@@ -157,7 +160,7 @@ export function useDestinations(showToast: ShowToast): DestinationsController {
 
   const removeSharing = useCallback(
     (subtype: string) => {
-      run('Remove the extra outward-sharing action "' + subtype + '"?', () =>
+      run('Remove the extra outward-sharing action name "' + subtype + '"?', () =>
         removeSharingSubtype(subtype),
       );
     },
