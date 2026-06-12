@@ -97,6 +97,27 @@ def test_4_unknown_equals_external():
                    plugin._decide(cap_external, classes, "unknown", mode)
 
 
+def test_4b_garbage_trust_coerces_to_external_not_intra_boundary():
+    """_normalize_trust keeps decide total: a destination carrying a garbage/missing trust
+    value must resolve to UNKNOWN -> external, never to an intra-boundary allow. All tests
+    pass real enums, so this fail-closed coercion needs its own pin."""
+    plugin = load_plugin()
+    DT = plugin._DestinationTrust
+    cap_external = _mk_cap(plugin, trust=DT.EXTERNAL)
+    # Unrecognized trust values (including a non-string) that match no enum member even
+    # after the normalizer's strip/lower. (A whitespace-padded valid label like "SELF "
+    # is deliberately NOT garbage — the normalizer strips it to self.)
+    for bad in ("banana", "", "not_a_trust", 123):
+        cap_bad = _mk_cap(plugin, trust=bad)
+        for classes in (set(), {"communications"}, {"documents"}):
+            for mode in ("strict", "llm"):
+                decision = plugin._decide(cap_bad, classes, "unknown", mode)
+                assert decision == plugin._decide(cap_external, classes, "unknown", mode)
+                # Under private taint it must gate, never silently allow.
+                if classes:
+                    assert decision != plugin._DECISION_ALLOW
+
+
 # --- Test 5: conservative ambient default; verifier-upgrade seam --------------
 def test_5_conservative_ambient_default_and_verifier_seam():
     plugin = load_plugin()

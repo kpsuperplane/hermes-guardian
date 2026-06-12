@@ -204,3 +204,34 @@ def test_activity_new_fields_are_metadata_only():
         # the recipient never appears raw in the new fields (pseudonymous only elsewhere).
         assert "stranger@example.com" not in str(row["destination_trust"])
         assert "stranger@example.com" not in str(row["decision_step"])
+
+
+def test_non_owner_cannot_add_self_identity():
+    """A non-owner adding their own address as a self-identity would flip its destination
+    trust to `self` and bypass egress gating. The `mine add` path is owner-gated; the
+    rejection must both refuse AND leave the self-config unchanged (AGENTS.md owner checks)."""
+    plugin = load_plugin()
+
+    plugin._on_pre_gateway_dispatch(
+        gateway_event("/guardian mine add identity attacker@example.com", user_id="attacker")
+    )
+    response = plugin._handle_guardian_command("mine add identity attacker@example.com")
+
+    assert "Permission denied" in response
+    assert "attacker@example.com" not in plugin._self_config_snapshot()["identities"]
+
+
+def test_non_owner_cannot_remove_self_destination():
+    """The remove direction is owner-gated too: a non-owner cannot strip a seeded self
+    store (which would push first-party writes back into gated egress)."""
+    plugin = load_plugin()
+    seeded = plugin._self_config_snapshot()["destinations"]
+    assert "store:files" in seeded
+
+    plugin._on_pre_gateway_dispatch(
+        gateway_event("/guardian mine remove destination store:files", user_id="attacker")
+    )
+    response = plugin._handle_guardian_command("mine remove destination store:files")
+
+    assert "Permission denied" in response
+    assert "store:files" in plugin._self_config_snapshot()["destinations"]
