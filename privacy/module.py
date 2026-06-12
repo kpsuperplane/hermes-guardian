@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable
 
 from . import action_details
 from . import approvals
@@ -310,7 +310,17 @@ def _allow_read_only_tool_call(shape: dict[str, Any], tool_name: str, args: Any)
     _record_allowed_tool_side_effects(shape.get("session_id", ""), tool_name, args)
 
 
-def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: Any) -> tuple[dict[str, str] | None, str | None]:
+def _llm_policy_tool_call_result(
+    shape: dict[str, Any], tool_name: str, args: Any
+) -> tuple[dict[str, str] | None, str | None, Callable[[], None] | None]:
+    # Returns ``(block_result, blocked_reason, apply_allow)``. At most one is set:
+    #   - block_result: a hard-deny/security block to return verbatim (lockdown-independent).
+    #   - blocked_reason: the verifier wants manual approval; caller gates it.
+    #   - apply_allow: the verifier auto-approved. The caller invokes this ONLY after the
+    #     cross-channel lockdown check passes; it emits the ``auto_approved`` activity row and
+    #     records allowed side effects. Deferring it here means a lockdown block never leaves a
+    #     phantom ``auto_approved`` twin in the audit trail, and taint/browser-private-input
+    #     state is never recorded for an export the lockdown then withholds.
     hard_reason = llm._llm_hard_deny_reason(shape, args)
     if hard_reason:
         core.logger.info(
@@ -347,7 +357,7 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
             destination_trust=shape.get("destination_trust", "unknown"),
             decision_step=shape.get("decision_step", ""),
         )
-        return {"action": "block", "message": security_module._block_message(hard_reason)}, None
+        return {"action": "block", "message": security_module._block_message(hard_reason)}, None, None
 
     cached = llm._cached_deny_verdict(shape)
     verdict = cached if cached is not None else llm._llm_security_verdict(shape, args)
@@ -373,43 +383,46 @@ def _llm_policy_tool_call_result(shape: dict[str, Any], tool_name: str, args: An
             f"llm {verdict.get('risk_level', 'unknown')}: "
             f"{verdict.get('rationale', 'approved')}"
         )
-        core.logger.info(
-            "%s: LLM-approved Hermes Guardian %s to %s for session %s",
-            core._PLUGIN_NAME,
-            shape.get("action_family", ""),
-            shape.get("destination", ""),
-            tool_policy._normalize_session_id(shape.get("session_id", "")),
-        )
-        _emit_egress_activity(
-            "auto_approved",
-            session_id=shape.get("session_id", ""),
-            owner_hash=shape.get("owner_hash", ""),
-            tool_name=tool_name,
-            action_family=shape.get("action_family", ""),
-            destination=shape.get("destination", ""),
-            data_classes=set(shape.get("data_classes") or []),
-            reason=reason,
-            rule_source="llm",
-            action_detail=shape.get("action_detail", ""),
-            purpose=shape.get("purpose", "unknown"),
-            recipient_identity=shape.get("recipient_identity", "none"),
-            destination_trust=shape.get("destination_trust", "unknown"),
-            decision_step=shape.get("decision_step", ""),
-        )
-        _record_allowed_tool_side_effects(
-            shape.get("session_id", ""),
-            tool_name,
-            args,
-            action_family=shape.get("action_family", ""),
-            mark_browser_private_input=True,
-        )
-        return None, None
+
+        def _apply_allow() -> None:
+            core.logger.info(
+                "%s: LLM-approved Hermes Guardian %s to %s for session %s",
+                core._PLUGIN_NAME,
+                shape.get("action_family", ""),
+                shape.get("destination", ""),
+                tool_policy._normalize_session_id(shape.get("session_id", "")),
+            )
+            _emit_egress_activity(
+                "auto_approved",
+                session_id=shape.get("session_id", ""),
+                owner_hash=shape.get("owner_hash", ""),
+                tool_name=tool_name,
+                action_family=shape.get("action_family", ""),
+                destination=shape.get("destination", ""),
+                data_classes=set(shape.get("data_classes") or []),
+                reason=reason,
+                rule_source="llm",
+                action_detail=shape.get("action_detail", ""),
+                purpose=shape.get("purpose", "unknown"),
+                recipient_identity=shape.get("recipient_identity", "none"),
+                destination_trust=shape.get("destination_trust", "unknown"),
+                decision_step=shape.get("decision_step", ""),
+            )
+            _record_allowed_tool_side_effects(
+                shape.get("session_id", ""),
+                tool_name,
+                args,
+                action_family=shape.get("action_family", ""),
+                mark_browser_private_input=True,
+            )
+
+        return None, None, _apply_allow
 
     blocked_reason = (
         f"requires approval (llm {verdict.get('risk_level', 'unknown')}: "
         f"{verdict.get('rationale', 'denied')})"
     )
-    return None, blocked_reason
+    return None, blocked_reason, None
 
 
 # --- Cross-channel turn lockdown (channel-shopping defense) ------------------
@@ -797,13 +810,16 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
     if privacy_policy == "llm":
         # llm mode: the verifier may UPGRADE the APPROVE to allow/hold/deny, including the
         # cron high-risk downgrade and _validated_llm_security_verdict — UNCHANGED.
-        llm_result, llm_blocked_reason = _llm_policy_tool_call_result(shape, tool_name, args)
+        llm_result, llm_blocked_reason, llm_apply_allow = _llm_policy_tool_call_result(shape, tool_name, args)
         if llm_result is not None:
             return llm_result
-        if llm_blocked_reason is None:
-            # Verifier cleared it. Honor that unless the turn lockdown is armed, in which
-            # case a re-routed external export is gated for the human regardless.
+        if llm_apply_allow is not None:
+            # Verifier auto-approved. Honor that unless the turn lockdown is armed, in which
+            # case a re-routed external export is gated for the human regardless. The
+            # auto_approved activity row and allowed side effects are emitted ONLY here, so a
+            # lockdown block never leaves a phantom auto_approved twin in the audit trail.
             if not lockdown:
+                llm_apply_allow()
                 return None
         elif not lockdown:
             blocked_reason = llm_blocked_reason

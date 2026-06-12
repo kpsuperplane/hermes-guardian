@@ -87,6 +87,50 @@ def test_lockdown_is_scoped_to_the_denied_policy_classes():
     )
 
 
+def test_lockdown_block_does_not_double_log_or_record_allowed_side_effects():
+    """Regression: a lockdown-blocked export must leave exactly ONE activity row (the
+    block) and no allowed side effects.
+
+    The verifier's allow-branch used to emit the ``auto_approved`` activity row and record
+    side effects (taint / browser-private-input) BEFORE the cross-channel lockdown gate
+    ran. When the lockdown then blocked the re-routed export, the call was logged as both
+    ``auto_approved`` AND ``blocked`` — inflating auto-approve counts with phantom twins —
+    and taint was marked for an action that never executed. The allow emit/side effects
+    are now deferred until after the lockdown check passes.
+    """
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts"})
+
+    # Arm the turn lockdown directly (a prior private->external export was already
+    # withheld this turn) without emitting its own activity row, so the single gated call
+    # below is the only row we expect.
+    plugin._record_turn_external_denial("s1", {"contacts"})
+
+    # The verifier WOULD auto-allow this browser form-fill into an external page...
+    plugin.state._PLUGIN_LLM = _fake_llm("allow", "low")
+    plugin._set_browser_host("s1", "https://docs.google.com/forms/d/e/abc/viewform")
+    result = plugin._on_pre_tool_call(
+        "browser_type", {"ref": "1", "text": "private calendar event details"}, session_id="s1"
+    )
+
+    # ...but the lockdown gates it for human review.
+    assert result is not None and result["action"] == "block"
+    assert "cross-channel lockdown" in result["message"].lower()
+
+    # Exactly one activity row, and it is the block — no phantom auto_approved twin.
+    rows = plugin._activity_rows({}, limit=10)
+    assert len(rows) == 1
+    assert rows[0]["decision"] == "blocked"
+    assert not any(row["decision"] == "auto_approved" for row in rows)
+
+    # The allow-branch side effect (mark_browser_private_input) was deferred and never
+    # applied: the withheld export left no browser-private taint behind.
+    assert not plugin._browser_has_private_input("s1")
+    assert "browser_private_input" not in plugin._session_taint("s1")
+
+
 def test_new_user_input_clears_the_turn_lockdown(monkeypatch):
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin = load_plugin()
