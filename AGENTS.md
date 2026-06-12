@@ -114,8 +114,8 @@ runtime state unless the task explicitly requires it.
   checked-in static dashboard assets in `dashboard/dist/`.
 - `integrations/`: cron failure notification support through Hermes CLI and
   optional Telegram copy-button delivery.
-- `language_packs/`: declarative semantic detection packs. English and Spanish
-  are bundled and enabled by default.
+- `language_packs/`: declarative semantic detection packs. English is required,
+  always enabled, and the only pack enabled by default; the rest are opt-in.
 - `tests/`: behavior-focused pytest suite. `tests/support.py` loads the plugin
   from `__init__.py` and redirects rule/activity/HMAC state into `/tmp`.
 - `README.md`: user-facing documentation and operational model.
@@ -236,13 +236,15 @@ the tests/docs are updated accordingly:
   never self-authorize high-risk egress: a high-risk `allow` verdict on a cron
   session is always downgraded to manual approval, even with cron context on.
   Authorization is data-class-scoped, not action-only. The verifier input
-  distinguishes ambient `classes_in_scope` (what the session has read) from
-  per-argument `source_classes` and `exported_source_classes` (object-level
-  provenance over this call's payload — what is actually being exported). These
-  are sanitized class labels, never raw content. Context channels authorize only
-  the data classes intrinsic to the request, so authorization cannot launder an
-  export whose provenance shows content from a source the request did not call
-  for (e.g. a calendar event submitted into an email subscription form).
+  carries the ambient `classes_in_scope` (the sanitized class labels the session
+  has read, never raw content) alongside the real `action_arguments` (the actual
+  payload, with security-sensitive content stripped). There is no separate
+  object-level provenance signal; the verifier does the narrowing/anti-laundering
+  itself by judging the payload's content against the authorized intent. Context
+  channels authorize only the data classes intrinsic to the request, so a payload
+  whose content points to a source the request did not call for (e.g. a calendar
+  event submitted into an email subscription form) is a mismatch that falls back
+  to manual approval.
 - Final model responses are egress. Tainted responses to owner-private CLI/DM
   destinations may pass; tainted responses to group, cron, or unknown
   destinations are suppressed.
@@ -263,7 +265,7 @@ re-authored to the schema below.
 {
   "version": 4,
   "whats_yours": {
-    "stores": ["store:files", "store:notes", "store:calendar", "store:drive", "draft:*"],
+    "stores": ["store:files", "store:memory", "store:todo", "store:calendar", "store:drive", "draft:*"],
     "identities": [],
     "hosts": []
   },
