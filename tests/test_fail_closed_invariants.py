@@ -465,3 +465,92 @@ def test_privacy_off_and_allow_rules_do_not_bypass_security_module():
     assert result is not None
     assert result["action"] == "block"
     assert "password reset" in result["message"] or "auth code" in result["message"]
+
+
+def test_throwing_transform_llm_output_suppresses_tainted_session_fail_closed(monkeypatch):
+    """If the final-output hook impl raises while the session is tainted, the response is
+    suppressed (fail-closed) and an activity row records the suppression — data must not
+    leak through an internal error."""
+    plugin = load_plugin()
+    plugin._taint_session("s1", {"communications"})
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("transform boom")
+
+    monkeypatch.setattr(plugin.privacy_module, "_privacy_transform_llm_output", boom)
+
+    out = plugin._on_transform_llm_output("benign sounding summary", session_id="s1")
+
+    assert out is not None
+    assert "suppressed" in out.lower()
+    rows = plugin._activity_rows({"decision": "security_suppressed"}, limit=5)
+    assert any(r["tool_name"] == "llm_output" for r in rows)
+
+
+def test_throwing_transform_llm_output_passes_untainted_benign_response(monkeypatch):
+    """The same internal error on an UNTAINTED session with benign text must NOT suppress:
+    fail-closed applies only where data could leak, so a clean response still passes."""
+    plugin = load_plugin()
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("transform boom")
+
+    monkeypatch.setattr(plugin.privacy_module, "_privacy_transform_llm_output", boom)
+
+    out = plugin._on_transform_llm_output("the weather looks fine today", session_id="s1")
+
+    assert out is None
+
+
+def test_taint_is_observed_before_security_result_suppression(monkeypatch):
+    """Ordering invariant: a tool result is observed for privacy taint BEFORE the Security
+    Module scrubs it, so a suppressed sensitive record still leaves the session tainted."""
+    plugin = load_plugin()
+
+    result = plugin._on_transform_tool_result(
+        "mcp_gmail_read",
+        '{"body": "Your verification code is 123456"}',
+        session_id="s1",
+    )
+    parsed = json.loads(result)
+
+    # Security suppressed the auth-code record...
+    assert parsed["hermes_guardian"]["suppressed"] is True
+    # ...but the read still tainted the session (taint observed first).
+    assert "communications" in plugin._session_taint("s1")
+
+
+def test_pre_gateway_recovery_rescan_suppresses_sensitive_message(monkeypatch):
+    """The dispatch handler raises but the recovery _sensitive_reason rescan SUCCEEDS and
+    finds sensitive content -> skip (the success branch of the recovery path)."""
+    plugin = load_plugin()
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("dispatch boom")
+
+    # Only the dispatch path is broken; the rescan runs the real scanner.
+    monkeypatch.setattr(plugin.security_module, "_security_pre_gateway_dispatch", boom)
+
+    result = plugin._on_pre_gateway_dispatch(
+        event=gateway_event("Your password reset code is 123456")
+    )
+
+    assert result == {
+        "action": "skip",
+        "reason": "security-sensitive content suppressed before model dispatch",
+    }
+
+
+def test_pre_gateway_recovery_rescan_passes_benign_message(monkeypatch):
+    """Same broken dispatch path, but a benign message: the recovery rescan finds nothing
+    sensitive and the hook passes through (None), not a blanket suppression."""
+    plugin = load_plugin()
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("dispatch boom")
+
+    monkeypatch.setattr(plugin.security_module, "_security_pre_gateway_dispatch", boom)
+
+    result = plugin._on_pre_gateway_dispatch(event=gateway_event("can you summarize my notes"))
+
+    assert result is None
