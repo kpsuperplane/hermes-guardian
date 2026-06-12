@@ -252,6 +252,19 @@ def test_tainted_final_response_to_unknown_destination_is_suppressed():
 
     assert out is not None
     assert "suppressed" in out.lower()
+    approval_id = first_pending_id(plugin)
+    approval = plugin._PENDING_APPROVALS[approval_id]
+    assert approval["tool_name"] == "llm_output"
+    assert approval["action_family"] == "final_response"
+    assert approval["destination"] == "unknown"
+    assert approval["data_classes"] == ["communications"]
+    assert approval["reason"] == "tainted final response to non-owner destination"
+    assert [option["method"] for option in plugin._approval_permit_options(approval)] == [
+        "rule_5m",
+        "rule_forever",
+    ]
+    rows = plugin._activity_rows({"decision": "blocked"}, limit=1)
+    assert rows[0]["approval_id"] == approval_id
 
 
 def test_tainted_final_response_with_bound_owner_but_missing_destination_metadata_is_suppressed():
@@ -263,6 +276,40 @@ def test_tainted_final_response_with_bound_owner_but_missing_destination_metadat
 
     assert out is not None
     assert "suppressed" in out.lower()
+    assert plugin._PENDING_APPROVALS
+
+
+def test_tainted_final_response_pending_approval_can_create_allow_rule():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts", "documents"})
+
+    out = plugin._on_transform_llm_output(
+        "private summary",
+        session_id="s1",
+        platform="even-ai",
+    )
+    assert out is not None
+    approval_id = first_pending_id(plugin)
+
+    ok, message = plugin._apply_permit_option(plugin._CLI_OWNER_HASH, approval_id, "rule_5m")
+
+    assert ok, message
+    assert approval_id not in plugin._PENDING_APPROVALS
+    rules = plugin._persistent_privacy_rules()
+    assert len(rules) == 1
+    match = rules[0]["match"]
+    assert match["tool_name"] == "llm_output"
+    assert match["action_family"] == "final_response"
+    assert match["destination"] == "even-ai"
+    assert set(match["data_classes"]) == {"contacts", "documents"}
+
+    retry = plugin._on_transform_llm_output(
+        "private summary",
+        session_id="s1",
+        platform="even-ai",
+    )
+    assert retry is None
 
 
 def test_tainted_final_response_to_owner_private_destination_is_allowed():

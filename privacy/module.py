@@ -1017,7 +1017,7 @@ def _final_response_shape(
         recipient_identity=recipient_identity,
         legacy_destination=destination,
         data_classes=data_classes,
-        args={},
+        args={"destination": destination, "recipient_identity": recipient_identity},
         destination_trust="unknown",
         decision_step="",
     )
@@ -1086,15 +1086,5 @@ def _privacy_transform_llm_output(response_text: str = "", **kwargs: Any) -> str
             destination_trust="self",
         )
         return None
-    _emit_egress_activity(
-        "blocked",
-        session_id=session_id,
-        tool_name="llm_output",
-        action_family="final_response",
-        destination=destination,
-        data_classes=classes,
-        reason="tainted final response to non-owner destination",
-        purpose="unknown",
-        recipient_identity=recipient_identity,
-    )
+    _block_for_pending_approval(shape, "llm_output", "tainted final response to non-owner destination")
     return "[hermes-guardian suppressed a tainted final response to this destination.]"

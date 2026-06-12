@@ -170,8 +170,12 @@ the tests/docs are updated accordingly:
   column for debugging. It is opt-in, confirmation-gated on every surface,
   retention-capped with every other row, resolved from a single audited source in
   `_emit_activity`, and never read back by the agent or the verifier.
-- Approval IDs are short-lived four-digit codes, but one-time approvals are
-  bound to an HMAC fingerprint of the exact tool arguments.
+- Approval IDs are short-lived four-digit codes. A pending approval also carries
+  an HMAC fingerprint of the exact tool arguments; it keys the short-TTL
+  deny-verdict cache so a changed argument re-consults the verifier rather than
+  reusing a stale verdict. Approval resolution is by four-digit code and creates
+  shape-scoped allow rules (action family / destination / classes / scope), not
+  exact-argument-bound rules.
 - Session taint is intentionally coarse. Do not weaken it to content-only
   detection for known private source tools.
 - Unknown or ambiguous egress surfaces should be classified conservatively,
@@ -217,8 +221,10 @@ the tests/docs are updated accordingly:
   request did not call for (e.g. a calendar event submitted into an email
   subscription form) is a mismatch that falls back to manual approval.
 - Final model responses are egress. Tainted responses to owner-private CLI/DM
-  destinations may pass; tainted responses to group, cron, or unknown
-  destinations are suppressed.
+  destinations may pass; tainted responses to group or unknown destinations are
+  suppressed. A cron run's own final output is treated as owner-configured and
+  allowed under taint (trust `self`), unless an explicit `final_response` deny
+  rule applies.
 - Cron failure notifications include safe metadata only and are sent at most
   once per cron session.
 

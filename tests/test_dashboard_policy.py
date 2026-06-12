@@ -232,6 +232,32 @@ def test_policy_snapshot_includes_five_recent_unresolved_blocks(monkeypatch):
     assert policy["recent_blocks"][0]["pending"] is True
 
 
+def test_policy_snapshot_exposes_final_response_pending_approval():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts", "documents"})
+
+    plugin._on_transform_llm_output(
+        "private summary",
+        session_id="s1",
+        platform="even-ai",
+    )
+    approval_id = first_pending_id(plugin)
+
+    policy = plugin._policy_snapshot()
+    pending = policy["pending"][0]
+    block = policy["recent_blocks"][0]
+
+    assert pending["id"] == approval_id
+    assert pending["tool_name"] == "llm_output"
+    assert pending["action_family"] == "final_response"
+    assert pending["destination"] == "even-ai"
+    assert pending["recipient_identity"] == "none"
+    assert [option["method"] for option in pending["permit_options"]] == ["rule_5m", "rule_forever"]
+    assert block["id"] == approval_id
+    assert block["pending"] is True
+
+
 def test_policy_snapshot_marks_pending_block_covered_by_new_allow_rule(tmp_path):
     plugin = load_plugin()
     plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"

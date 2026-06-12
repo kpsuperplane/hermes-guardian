@@ -678,9 +678,6 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
         "expires_at": expires_at,
         "created_at": int(float(rule.get("created_at") or 0)),
     }
-    fingerprint = str(rule.get("fingerprint") or "").strip()
-    if re.fullmatch(r"[A-Fa-f0-9]{64}", fingerprint):
-        normalized["fingerprint"] = fingerprint
     return normalized
 
 
@@ -1976,9 +1973,6 @@ def _approval_source(shape: dict[str, Any]) -> dict[str, str] | None:
         llm._prune_expired()
         persistent_rules = _persistent_privacy_rules()
         for rule in list(persistent_rules):
-            fingerprint = str(rule.get("fingerprint") or "")
-            if fingerprint and fingerprint != str(shape.get("fingerprint") or ""):
-                continue
             if not _rule_matches(rule, shape):
                 continue
             return _rule_source_payload(rule, "persistent")
