@@ -480,9 +480,6 @@ export function WhatsYoursTab({ controller }: WhatsYoursTabProps) {
               never gated.
             </div>
           </div>
-          <Button onClick={() => setShowAddModal(true)} disabled={busy}>
-            Add item
-          </Button>
         </div>
 
         {SELF_ITEM_OPTIONS.map((item) => (
@@ -496,6 +493,11 @@ export function WhatsYoursTab({ controller }: WhatsYoursTabProps) {
             onRemove={removeSelf}
           />
         ))}
+        <div className="hermes-guardian-self-actions">
+          <Button onClick={() => setShowAddModal(true)} disabled={busy}>
+            Add item
+          </Button>
+        </div>
       </div>
 
       <CheckDestination />
