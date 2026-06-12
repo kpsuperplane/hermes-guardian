@@ -182,12 +182,10 @@ def _json_mutation_result(result: tuple[dict[str, Any], int]) -> JSONResponse:
 
 
 # The live 4-digit approval code IS the approve credential: anyone who learns a
-# pending approval's `id` can POST /approvals/{id}/approve. These read routes are
-# unauthenticated, so they must not echo that code. We blank the id-bearing fields
-# on the pending / recent-block rows while keeping the rest of the metadata the UI
-# needs to render (action, destination, classes, expiry, trust pill, permit options).
-# The dashboard UI drives approve through the admin-gated mutation route; it does
-# not need the raw code echoed on this open channel.
+# pending approval's `id` can POST /approvals/{id}/approve. Activity/history routes
+# keep redacting it so a broad activity read does not expose approval credentials.
+# The dedicated /approvals dashboard route intentionally returns it: the Activity
+# tab needs that id to call the admin-gated approve/dismiss mutation routes.
 _REDACTED_APPROVAL_ID_FIELDS = (
     "id",
     "approval_id",
@@ -254,11 +252,8 @@ async def approvals() -> dict[str, Any]:
 
     Reads the already-computed "pending" slice of the policy snapshot — no new
     decision logic, no mutation.
-
-    This route is unauthenticated, so the live 4-digit approval `id` (which is
-    the approve credential) is redacted from the rows — see _redact_approval_ids.
     """
-    return {"approvals": _redact_approval_ids(_guardian()._dashboard_pending_approvals())}
+    return {"approvals": _guardian()._dashboard_pending_approvals()}
 
 
 @router.get("/destinations/resolve")

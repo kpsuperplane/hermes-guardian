@@ -687,7 +687,7 @@ def test_unauthenticated_policy_route_redacts_live_approval_id():
     assert real_id not in json.dumps(policy)
 
 
-def test_unauthenticated_approvals_route_redacts_live_approval_id():
+def test_approvals_route_returns_live_approval_id_for_dashboard_actions():
     api = _load_plugin_api()
     plugin = load_plugin()
     bind_owner(plugin)
@@ -700,11 +700,10 @@ def test_unauthenticated_approvals_route_redacts_live_approval_id():
     result = _drive_route_with_live_plugin(api, plugin, api.approvals)
 
     assert result["approvals"], "approvals list should still be present for the UI"
-    assert result["approvals"][0]["id"] == ""
-    # Permit options / trust pill survive so the UI can still drive approve via the
-    # admin-gated mutation route.
+    assert result["approvals"][0]["id"] == real_id
+    # Permit options / trust pill survive so the UI can drive approve/dismiss through
+    # the admin-gated mutation route.
     assert result["approvals"][0]["destination_trust"] == "external"
-    assert real_id not in json.dumps(result)
 
 
 def test_recent_blocks_in_policy_route_redact_approval_id(monkeypatch):
@@ -784,8 +783,7 @@ def test_unauthenticated_activity_turns_route_redacts_live_approval_id():
 def test_approve_route_without_token_passes_host_auth_gate(monkeypatch):
     """DEFAULT config (no token): the host dashboard's own authentication is the gate, so
     the approve route is reachable (no 403) and consumes the pending approval. The
-    unauthenticated read routes never expose the live approval id (see the redaction
-    tests), so this cannot be chained from an unauthenticated read."""
+    Activity tab reads the live approval id from /approvals and posts it back here."""
     api = _load_plugin_api()
     monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN", raising=False)
     monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", raising=False)
@@ -797,10 +795,13 @@ def test_approve_route_without_token_passes_host_auth_gate(monkeypatch):
 
     sys.modules["_hermes_guardian_dashboard_facade"] = plugin
     try:
-        response = asyncio.run(api.approve(_request(), approval_id, {"method": "rule_5m"}))
+        approvals_payload = asyncio.run(api.approvals())
+        dashboard_approval_id = approvals_payload["approvals"][0]["id"]
+        response = asyncio.run(api.approve(_request(), dashboard_approval_id, {"method": "rule_5m"}))
     finally:
         sys.modules.pop("_hermes_guardian_dashboard_facade", None)
 
+    assert dashboard_approval_id == approval_id
     assert response.status_code != 403
     assert approval_id not in plugin._PENDING_APPROVALS
 
