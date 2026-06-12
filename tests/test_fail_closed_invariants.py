@@ -244,42 +244,7 @@ def test_unavailable_hmac_key_blocks_approval_fail_closed(tmp_path):
     assert not plugin._PENDING_APPROVALS
 
 
-def test_tainted_final_response_to_unknown_destination_is_suppressed():
-    plugin = load_plugin()
-    plugin._taint_session("s1", {"communications"})
-
-    out = plugin._on_transform_llm_output("private summary", session_id="s1")
-
-    assert out is not None
-    assert "suppressed" in out.lower()
-    approval_id = first_pending_id(plugin)
-    approval = plugin._PENDING_APPROVALS[approval_id]
-    assert approval["tool_name"] == "llm_output"
-    assert approval["action_family"] == "final_response"
-    assert approval["destination"] == "unknown"
-    assert approval["data_classes"] == ["communications"]
-    assert approval["reason"] == "tainted final response to non-owner destination"
-    assert [option["method"] for option in plugin._approval_permit_options(approval)] == [
-        "rule_5m",
-        "rule_forever",
-    ]
-    rows = plugin._activity_rows({"decision": "blocked"}, limit=1)
-    assert rows[0]["approval_id"] == approval_id
-
-
-def test_tainted_final_response_with_bound_owner_but_missing_destination_metadata_is_suppressed():
-    plugin = load_plugin()
-    bind_owner(plugin)
-    plugin._taint_session("s1", {"communications"})
-
-    out = plugin._on_transform_llm_output("private summary", session_id="s1")
-
-    assert out is not None
-    assert "suppressed" in out.lower()
-    assert plugin._PENDING_APPROVALS
-
-
-def test_tainted_final_response_pending_approval_can_create_allow_rule():
+def test_tainted_final_response_is_not_privacy_gated():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"contacts", "documents"})
@@ -287,183 +252,35 @@ def test_tainted_final_response_pending_approval_can_create_allow_rule():
     out = plugin._on_transform_llm_output(
         "private summary",
         session_id="s1",
-        platform="even-ai",
-    )
-    assert out is not None
-    approval_id = first_pending_id(plugin)
-
-    ok, message = plugin._apply_permit_option(plugin._CLI_OWNER_HASH, approval_id, "rule_5m")
-
-    assert ok, message
-    assert approval_id not in plugin._PENDING_APPROVALS
-    rules = plugin._persistent_privacy_rules()
-    assert len(rules) == 1
-    match = rules[0]["match"]
-    assert match["tool_name"] == "llm_output"
-    assert match["action_family"] == "final_response"
-    assert match["destination"] == "even-ai"
-    assert set(match["data_classes"]) == {"contacts", "documents"}
-
-    retry = plugin._on_transform_llm_output(
-        "private summary",
-        session_id="s1",
-        platform="even-ai",
-    )
-    assert retry is None
-
-
-def test_tainted_final_response_to_owner_private_destination_is_allowed():
-    plugin = load_plugin()
-    bind_owner(plugin)
-    plugin._taint_session("s1", {"communications"})
-
-    out = plugin._on_transform_llm_output(
-        "private summary",
-        session_id="s1",
         platform="telegram",
-        sender_id="owner",
-        chat_type="private",
-    )
-
-    assert out is None
-
-
-def test_tainted_final_response_to_group_can_be_allowed_by_rule():
-    plugin = load_plugin()
-    bind_owner(plugin)
-    save_privacy_config(
-        plugin,
-        rules=[
-            privacy_rule(
-                rule_id="allow_group_final",
-                action_family="final_response",
-                destination="discord:group",
-                data_classes=["communications"],
-            )
-        ],
-    )
-    plugin._taint_session("s1", {"communications"})
-
-    out = plugin._on_transform_llm_output(
-        "private summary",
-        session_id="s1",
-        platform="discord",
-        sender_id="owner",
         chat_type="group",
     )
 
     assert out is None
-    rows = plugin._activity_rows({"decision": "allowed"}, limit=1)
-    assert rows[0]["tool_name"] == "llm_output"
-    assert rows[0]["action_family"] == "final_response"
-    assert rows[0]["destination"] == "discord:group"
-    assert rows[0]["reason"] == "matched allow rule"
-    assert rows[0]["rule_id"] == "allow_group_final"
+    assert not plugin._PENDING_APPROVALS
+    assert not plugin._activity_rows({"tool_name": "llm_output"}, limit=5)
 
 
-def test_tainted_final_response_to_matching_sender_without_private_chat_metadata_is_suppressed():
+def test_final_response_privacy_rules_are_ignored():
     plugin = load_plugin()
-    bind_owner(plugin)
-    plugin._taint_session("s1", {"communications"})
-
-    out = plugin._on_transform_llm_output(
-        "private summary",
-        session_id="s1",
-        platform="telegram",
-        sender_id="owner",
-    )
-
-    assert out is not None
-    assert "suppressed" in out.lower()
-
-
-def test_tainted_final_response_to_private_chat_can_use_stored_sender_metadata():
-    plugin = load_plugin()
-    bind_owner(plugin)
-    plugin._taint_session("s1", {"communications"})
-
-    out = plugin._on_transform_llm_output(
-        "private summary",
-        session_id="s1",
-        platform="telegram",
-        chat_type="private",
-    )
-
-    assert out is None
-
-
-def test_tainted_final_response_can_use_stored_private_chat_metadata():
-    plugin = load_plugin()
-    plugin._on_pre_llm_call(
-        session_id="s1",
-        platform="telegram",
-        sender_id="owner",
-        chat_type="private",
-    )
-    plugin._taint_session("s1", {"communications"})
-
-    out = plugin._on_transform_llm_output(
-        "private summary",
-        session_id="s1",
-        platform="telegram",
-    )
-
-    assert out is None
-
-
-def test_tainted_final_response_to_cli_destination_is_allowed_without_sender_metadata():
-    plugin = load_plugin()
-    plugin._on_pre_llm_call(session_id="s1", platform="cli")
-    plugin._taint_session("s1", {"communications"})
-
-    out = plugin._on_transform_llm_output("private summary", session_id="s1", platform="cli")
-
-    assert out is None
-
-
-def test_tainted_final_response_to_cron_session_is_allowed():
-    plugin = load_plugin()
-    cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
-    plugin._taint_session(cron_session, {"communications"})
-
-    out = plugin._on_transform_llm_output("private summary", session_id=cron_session, platform="cron")
-
-    assert out is None
-    rows = plugin._activity_rows({"decision": "allowed"}, limit=1)
-    assert rows[0]["tool_name"] == "llm_output"
-    assert rows[0]["action_family"] == "final_response"
-    assert rows[0]["destination"] == "cron"
-    assert rows[0]["destination_trust"] == "self"
-    assert rows[0]["reason"] == "owner-configured cron final response"
-
-
-def test_tainted_final_response_to_cron_session_can_be_denied_by_rule():
-    plugin = load_plugin()
-    cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
     save_privacy_config(
         plugin,
         rules=[
             privacy_rule(
-                rule_id="deny_cron_final",
+                rule_id="deny_final",
                 effect="deny",
                 action_family="final_response",
-                destination="cron",
+                destination="telegram",
                 data_classes=["communications"],
             )
         ],
     )
-    plugin._taint_session(cron_session, {"communications"})
+    plugin._taint_session("s1", {"communications"})
 
-    out = plugin._on_transform_llm_output("private summary", session_id=cron_session, platform="cron")
+    out = plugin._on_transform_llm_output("private summary", session_id="s1", platform="telegram")
 
-    assert out is not None
-    assert "suppressed" in out.lower()
-    rows = plugin._activity_rows({"decision": "blocked"}, limit=1)
-    assert rows[0]["tool_name"] == "llm_output"
-    assert rows[0]["action_family"] == "final_response"
-    assert rows[0]["destination"] == "cron"
-    assert rows[0]["reason"] == "matched deny rule"
-    assert rows[0]["rule_id"] == "deny_cron_final"
+    assert out is None
+    assert not plugin._activity_rows({"tool_name": "llm_output"}, limit=5)
 
 
 def test_privacy_off_and_allow_rules_do_not_bypass_security_module():
@@ -495,7 +312,7 @@ def test_throwing_transform_llm_output_suppresses_tainted_session_fail_closed(mo
     def boom(*_args, **_kwargs):
         raise RuntimeError("transform boom")
 
-    monkeypatch.setattr(plugin.privacy_module, "_privacy_transform_llm_output", boom)
+    monkeypatch.setattr(plugin.security_module, "_security_transform_llm_output", boom)
 
     out = plugin._on_transform_llm_output("benign sounding summary", session_id="s1")
 
@@ -513,7 +330,7 @@ def test_throwing_transform_llm_output_passes_untainted_benign_response(monkeypa
     def boom(*_args, **_kwargs):
         raise RuntimeError("transform boom")
 
-    monkeypatch.setattr(plugin.privacy_module, "_privacy_transform_llm_output", boom)
+    monkeypatch.setattr(plugin.security_module, "_security_transform_llm_output", boom)
 
     out = plugin._on_transform_llm_output("the weather looks fine today", session_id="s1")
 

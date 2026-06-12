@@ -71,10 +71,10 @@ The attacker’s objective is unauthorized disclosure or unauthorized action. Th
 - File uploads.
 - MCP tool calls.
 - Shell or code execution.
-- Final responses delivered through gateways or shared channels, unless an explicit
-  `final_response` privacy rule allows the flow. Owner-configured cron final output
-  is treated as owner-authorized; the actions the cron run takes before that output
-  remain ordinary mediated egress.
+
+Final responses are outside the Privacy-module egress gate. They are still scanned
+by the non-approvable Security Module for credentials, OTPs, reset links, security
+alerts, and similar account-security content.
 
 ### Trusted components
 
@@ -384,7 +384,6 @@ Private information can leave through channels that do not look like ordinary �
 - Timing and request size.
 - File names.
 - Browser form submissions.
-- Final responses delivered to shared or automated contexts.
 
 OpenAI’s link-safety work highlights URL-based exfiltration as a distinct risk class for agentic browsing.
 

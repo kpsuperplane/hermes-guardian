@@ -383,7 +383,7 @@ def test_final_output_private_key_suppressed():
     assert "omitted security-sensitive final response" in out
 
 
-def test_tainted_final_response_to_group_is_suppressed():
+def test_tainted_final_response_to_group_is_not_privacy_gated():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
@@ -396,8 +396,7 @@ def test_tainted_final_response_to_group_is_suppressed():
         chat_type="group",
     )
 
-    assert out is not None
-    assert "suppressed" in out.lower()
+    assert out is None
 
 
 def test_browser_result_redirect_updates_host():
@@ -429,4 +428,3 @@ def test_5m_approval_applies_to_same_shape_but_not_changed_recipient():
 
     assert result is not None
     assert "Hermes Guardian blocked this egress" in result["message"]
-

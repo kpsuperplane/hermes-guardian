@@ -283,7 +283,7 @@ def _on_transform_llm_output_impl(response_text: str = "", **kwargs: Any) -> str
     security_output = security_module._security_transform_llm_output(response_text)
     if security_output is not None:
         return security_output
-    return privacy_module._privacy_transform_llm_output(response_text=response_text, **kwargs)
+    return None
 
 
 def _on_transform_llm_output(response_text: str = "", **kwargs: Any) -> str | None:

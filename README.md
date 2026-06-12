@@ -615,10 +615,10 @@ These action families normally require approval when private data is in scope:
   service.
 - Unrecognized tools (custom or third-party) under taint, unless declared safe by
   a tool override (see [Tool Classification And Overrides](#tool-classification-and-overrides)).
-- Final responses to group or unknown destinations, unless an explicit
-  `final_response` privacy rule allows them. Suppressed final responses create
-  pending approvals for the matching rule options. Final responses from
-  owner-configured cron sessions are treated as owner-authorized output.
+
+Final responses are not Privacy-module egress-gated. The Security Module still
+scans final responses and suppresses credentials, OTPs, reset links, security
+alerts, and similar account-security content.
 
 Read-only browsing and search are allowed only when arguments do not send
 private-looking or tainted session-derived text outward. Content returned from

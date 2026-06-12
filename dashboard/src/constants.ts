@@ -6,7 +6,6 @@ export const ACTIONS = [
   "browser_read",
   "browser_type",
   "cron_write",
-  "final_response",
   "local_write",
   "mcp_read_query",
   "mcp_unknown",
