@@ -6,11 +6,11 @@ name: LLM Verifier (live)
 # hermetic unit matrix in tests.yml still runs on every PR.
 #
 # Configure in the repository (one backend; Google is preferred when both are set):
-#   - secret   GEMINI_API_KEY           Google AI Studio key (free tier), OR
-#   - secret   OPENROUTER_API_KEY       OpenRouter key
-#   - variable GUARDIAN_LLM_TEST_MODEL  model id for the chosen backend, e.g.
-#                                        gemini-2.5-flash (Google) or openai/gpt-4o-mini.
-#                                        May be a comma-separated list to test several.
+#   - secret GEMINI_API_KEY           Google AI Studio key (free tier), OR
+#   - secret OPENROUTER_API_KEY       OpenRouter key
+#   - secret GUARDIAN_LLM_TEST_MODEL  model id for the chosen backend, e.g.
+#                                      gemini-2.5-flash (Google) or openai/gpt-4o-mini.
+#                                      May be a comma-separated list to test several.
 # This job opts into the live tests (--run-llm), so if no backend key/model is set it
 # FAILS with a message naming the env vars to add — it does not silently self-skip.
 
@@ -31,7 +31,7 @@ jobs:
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      GUARDIAN_LLM_TEST_MODEL: ${{ vars.GUARDIAN_LLM_TEST_MODEL }}
+      GUARDIAN_LLM_TEST_MODEL: ${{ secrets.GUARDIAN_LLM_TEST_MODEL }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
