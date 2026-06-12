@@ -249,6 +249,32 @@ def test_add_to_self_suggestion_flips_resolution_external_to_self():
     assert after_mcp == SELF
 
 
+def test_seen_recently_re_resolves_claimed_mcp_destination_as_self():
+    """A claimed MCP connector should not keep rendering as unknown in Seen recently."""
+    plugin = load_plugin()
+    plugin._emit_activity(
+        "blocked",
+        session_id="s1",
+        tool_name="mcp_google_calendar_create",
+        action_family="mcp_unknown",
+        destination="mcp:google",
+        data_classes=["communications"],
+        reason="requires approval",
+        destination_trust="unknown",
+    )
+
+    before = next(e for e in plugin._destination_trust_summary()["seen"] if e["destination"] == "mcp:google")
+    assert before["trust"] == "unknown"
+    assert before["suggest"] == {"kind": "destination", "value": "mcp:google"}
+
+    ok, _ = plugin._add_self_destination(before["suggest"]["kind"], before["suggest"]["value"])
+    assert ok
+
+    after = next(e for e in plugin._destination_trust_summary()["seen"] if e["destination"] == "mcp:google")
+    assert after["trust"] == "self"
+    assert after["suggest"] is None
+
+
 def test_pending_block_trust_survives_store_reload():
     """A gateway restart reloads pending approvals from SQLite; the trust pill + step must
     survive (Commit 1 persists them as columns, not in-memory only)."""

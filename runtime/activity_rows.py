@@ -12,6 +12,7 @@ from . import activity_store
 from .. import core
 from .. import state
 from ..privacy import approvals
+from ..privacy import destinations as destinations_mod
 from ..privacy import llm
 from ..privacy import rules as rules_mod
 from ..privacy import tool_policy
@@ -939,19 +940,64 @@ def _suggest_self_grant(destination: str) -> dict[str, str] | None:
     return None
 
 
+def _seen_destination_resolver_shape(destination: str) -> tuple[str, str, str, str] | None:
+    """Return resolver inputs for a claimable seen destination, or None."""
+    suggest = _suggest_self_grant(destination)
+    if not suggest:
+        return None
+    kind = str(suggest.get("kind") or "").strip().lower()
+    value = str(suggest.get("value") or "").strip()
+    if kind == "host":
+        return ("host", value, "write", "")
+    if kind != "destination":
+        return None
+    if ":" not in value:
+        return ("store", value, "write", "")
+    dest_kind, _, dest_id = value.partition(":")
+    dest_kind = dest_kind.strip().lower()
+    if dest_kind in {"mcp", "store", "draft"} and dest_id.strip():
+        return (dest_kind, dest_id.strip(), "write", "")
+    return None
+
+
+def _current_seen_destination_trust(
+    destination: str,
+    stored_trust: str,
+    config: dict[str, Any],
+) -> str:
+    """Resolve current trust for claimable seen destinations.
+
+    Activity rows intentionally keep their historical trust label. The dashboard's
+    "Seen recently" affordance is a live policy summary, though, so a destination the
+    operator just claimed should stop looking unknown and stop offering "I own this".
+    """
+    trust = activity_store._normalize_destination_trust_label(stored_trust)
+    shape = _seen_destination_resolver_shape(destination)
+    if not shape:
+        return trust
+    try:
+        resolved = destinations_mod._resolve_destination_trust(*shape, config)
+    except Exception:
+        return trust
+    return activity_store._normalize_destination_trust_label(getattr(resolved, "value", resolved))
+
+
 def _destination_trust_seen(*, limit: int = 300, max_entries: int = 40) -> list[dict[str, Any]]:
     """Distinct recent egress destinations with their trust + a suggested self-grant.
 
     Powers the dashboard "Seen recently" list and the one-click "this is mine -> add to
-    self" (doc 03 §3.1). Metadata-only: reads the destination + destination_trust +
-    recipient_identity columns, never payload. The recipient identity is the same
-    pseudonymized ``recipient_<hash>`` token stored on the row (never a raw address), and
-    is surfaced so messaging egress can be grouped by recipient on the dashboard. Ordered
-    most-recent-first, deduped by (destination, trust, recipient_identity).
+    self" (doc 03 §3.1). Metadata-only: reads the destination + historical
+    destination_trust + recipient_identity columns, never payload. Claimable
+    destinations are re-resolved against the current config for display, so a newly
+    owned store/host no longer appears as unknown. The recipient identity is the same
+    pseudonymized ``recipient_<hash>`` token stored on the row (never a raw address),
+    and is surfaced so messaging egress can be grouped by recipient on the dashboard.
+    Ordered most-recent-first, deduped by (destination, current trust, recipient_identity).
     """
     activity_store._ensure_activity_db()
     counts: dict[tuple[str, str, str], int] = {}
     order: list[tuple[str, str, str]] = []
+    config = core._load_privacy_config()
     try:
         with activity_store._activity_connect() as conn:
             rows = conn.execute(
@@ -963,8 +1009,8 @@ def _destination_trust_seen(*, limit: int = 300, max_entries: int = 40) -> list[
     except Exception:
         return []
     for row in rows:
-        trust = activity_store._normalize_destination_trust_label(row["trust"])
         dest = str(row["destination"] or "")
+        trust = _current_seen_destination_trust(dest, str(row["trust"] or ""), config)
         recipient = str(row["recipient_identity"] or "none")
         key = (dest, trust, recipient)
         if key not in counts:
@@ -973,13 +1019,14 @@ def _destination_trust_seen(*, limit: int = 300, max_entries: int = 40) -> list[
         counts[key] += 1
     seen: list[dict[str, Any]] = []
     for dest, trust, recipient in order[:max_entries]:
+        suggest = _suggest_self_grant(dest) if trust in ("external", "unknown", "public") else None
         seen.append(
             {
                 "destination": dest,
                 "trust": trust,
                 "recipient_identity": recipient,
                 "count": counts[(dest, trust, recipient)],
-                "suggest": _suggest_self_grant(dest) if trust in ("external", "unknown", "public") else None,
+                "suggest": suggest,
             }
         )
     return seen
