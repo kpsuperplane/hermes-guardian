@@ -68,7 +68,6 @@ export function ReviewTab(props: ReviewTabProps) {
   } = props;
 
   const verifierModelOptions = (policy && policy.llm_verifier_model_options) || [];
-  const currentMode = MODE_OPTIONS.find((option) => option.value === privacyMode);
 
   // Verifier scoreboard (doc 02 §Tab4.6) derived from the timing summary.
   const llmStats = performance && performance.llm;
@@ -79,9 +78,6 @@ export function ReviewTab(props: ReviewTabProps) {
     <div className="hermes-guardian-grid">
       <div className="hermes-guardian-card">
         <div className="hermes-guardian-card-title">Who reviews outbound actions</div>
-        <div className="hermes-guardian-muted">
-          {currentMode ? currentMode.consequence : "Security filtering runs in every mode."}
-        </div>
         <div className="hermes-guardian-review-control">
           <select
             className="hermes-guardian-select"
