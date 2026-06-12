@@ -54,6 +54,28 @@
   align-items: stretch;
 }
 
+.hermes-guardian-rule-order-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.hermes-guardian-rule-order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.85rem;
+  min-height: 1.45rem;
+  border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+  border-radius: var(--radius-sm, 0.25rem);
+  background: color-mix(in srgb, var(--color-muted) 24%, transparent);
+  color: var(--color-muted-foreground);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
 .hermes-guardian-rule-tile {
   flex-basis: 19rem;
   width: 19rem;

@@ -141,9 +141,12 @@ function RuleCard(props: {
   return (
     <div className={classes.join(" ")}>
       <div className="hermes-guardian-sharing-tile-head">
-        <span className={"hermes-guardian-pill hermes-guardian-rule-effect-" + effect}>
-          {effect}
-        </span>
+        <div className="hermes-guardian-rule-order-group">
+          <span className="hermes-guardian-rule-order">{"#" + (index + 1)}</span>
+          <span className={"hermes-guardian-pill hermes-guardian-rule-effect-" + effect}>
+            {effect}
+          </span>
+        </div>
         {expiry ? <span className="hermes-guardian-pill">{expiry}</span> : null}
       </div>
       <div className="hermes-guardian-rule-head hermes-guardian-rule-tile-head">
