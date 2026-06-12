@@ -558,6 +558,82 @@ def test_low_risk_terminal_result_does_not_taint_local_system():
     assert rows == []
 
 
+def test_env_assignment_prefixed_metadata_command_does_not_taint():
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    command = "TZ=America/Los_Angeles date '+%A %Y-%m-%d %I:%M %p %Z'"
+    assert plugin._on_pre_tool_call("terminal", {"command": command}, session_id="s1") is None
+    plugin._on_transform_tool_result(
+        tool_name="terminal",
+        result=json.dumps({"result": "Friday 2026-06-12 02:44 AM PDT"}),
+        session_id="s1",
+    )
+
+    assert "local_system" not in plugin._session_taint("s1")
+
+
+def test_compound_metadata_probe_does_not_taint():
+    # The common agent preflight: whoami/pwd, command lookup, env-var presence
+    # tests, and literal printf labels — chained with ;/&&/||/if-then — only ever
+    # emits metadata, so it must not taint local_system.
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    command = (
+        "set -e\n"
+        "printf 'whoami='; whoami\n"
+        "printf 'pwd='; pwd\n"
+        "printf 'ntn='; command -v ntn || true\n"
+        "printf 'NOTION_API_KEY set? '; "
+        'if [ -n "$NOTION_API_KEY" ]; then echo yes; else echo no; fi'
+    )
+    assert plugin._on_pre_tool_call("terminal", {"command": command}, session_id="s1") is None
+    plugin._on_transform_tool_result(
+        tool_name="terminal",
+        result=json.dumps({"result": "whoami=root\npwd=/root\nntn=\nNOTION_API_KEY set? no"}),
+        session_id="s1",
+    )
+
+    assert "local_system" not in plugin._session_taint("s1")
+
+
+def test_dev_null_redirects_do_not_defeat_metadata_carve_out():
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    assert plugin._on_pre_tool_call(
+        "terminal", {"command": "du -sh /var 2>/dev/null && uname -a >/dev/null 2>&1"}, session_id="s1"
+    ) is None
+    plugin._on_transform_tool_result(
+        tool_name="terminal",
+        result=json.dumps({"result": "1.2G\t/var"}),
+        session_id="s1",
+    )
+
+    assert "local_system" not in plugin._session_taint("s1")
+
+
+def test_compound_command_with_content_bearing_segment_taints():
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    for session_id, command in [
+        ("s1", "pwd; cat /etc/passwd"),
+        ("s2", "ls & cat /etc/passwd"),
+        ("s3", 'grep -E "^NOTION_API_KEY=" "$HOME/.hermes/.env" >/dev/null && echo yes'),
+        ("s4", "echo $NOTION_API_KEY"),
+        ("s5", "pwd > /tmp/out"),
+    ]:
+        assert plugin._on_pre_tool_call("terminal", {"command": command}, session_id=session_id) is None
+        plugin._on_transform_tool_result(
+            tool_name="terminal",
+            result=json.dumps({"result": "output"}),
+            session_id=session_id,
+        )
+        assert "local_system" in plugin._session_taint(session_id), command
+
+
 def test_content_bearing_terminal_result_taints_local_system():
     plugin = load_plugin()
     bind_owner(plugin)

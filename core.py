@@ -296,12 +296,32 @@ _READ_ONLY_TERMINAL_SAFE_RE = re.compile(
 _CONTENT_BEARING_READ_RE = re.compile(r"^\s*(cat|head|tail|grep|rg|find|sed|awk|jq|sqlite3)(\s|$)", re.I)
 _LOCAL_SYSTEM_NO_TAINT_DENY_RE = re.compile(
     r"(\b(curl|wget|scp|sftp|ssh|rsync|nc|netcat|telnet|ftp|openssl|base64|python|python3|node|npm|npx|perl|ruby|php)\b"
-    r"|https?://|>>?|<|;|&&|\|\||`|\$\()",
+    r"|https?://|>>?|<|`|\$\()",
     re.I,
 )
+# Output-discarding redirects are stripped before the deny check: sending output to
+# /dev/null (or merging streams) cannot persist content anywhere.
+_LOCAL_SYSTEM_NO_TAINT_DISCARD_RE = re.compile(
+    r"(?:[0-9]?>>?|&>>?)\s*/dev/null\b|[0-9]>&[0-9]",
+    re.I,
+)
+_LOCAL_SYSTEM_SEGMENT_SPLIT_RE = re.compile(r"\|\||[;\n&]")
+_LOCAL_SYSTEM_CONTROL_KEYWORD_RE = re.compile(r"^(?:if|then|elif|else|fi|do|done)\b\s*", re.I)
+_LOCAL_SYSTEM_ENV_ASSIGN_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;|&<>`]*(?:\s+|$))+")
 _LOCAL_SYSTEM_NO_TAINT_FIRST_RE = re.compile(
     r"^\s*(pwd|date|whoami|id|uname|hostname|ls|stat|du|df|test|true|false)(\s|$)",
     re.I,
+)
+# Whole-segment heads that only ever emit metadata: presence tests (exit status only),
+# shell option setting, command lookup, and printf/echo restricted to literal arguments
+# (no $-expansion, so no environment or file content can reach the output).
+_LOCAL_SYSTEM_NO_TAINT_SAFE_HEAD_RE = re.compile(
+    r"(?:set(?:\s+(?:--|[-+][A-Za-z]+|[a-z]+))+"
+    r"|command\s+-v\s+[\w.+/-]+"
+    r"|\[{1,2}\s.*\]{1,2}"
+    r"|(?:printf|echo)(?:\s+(?:-[A-Za-z]+|'[^'$`]*'|\"[^\"$`]*\"|[^\s'\"$`\\;|&<>]+))*"
+    r")",
+    re.I | re.S,
 )
 _LOCAL_SYSTEM_NO_TAINT_FILTER_RE = re.compile(
     r"^\s*(grep|wc|head|tail)(\s|$)",

@@ -500,6 +500,14 @@ example, reading email taints the session as `communications` even if the return
 email text contains no obvious PII pattern. A bare email address found in content
 is an identifier and taints `contacts`, not `communications`.
 
+Terminal commands whose output can only be metadata do not taint `local_system`:
+the metadata words above (`pwd`, `date`, `whoami`, …), presence tests like
+`[ -n "$VAR" ]`, `command -v`, `set` flags, and `printf`/`echo` with literal
+arguments — including chains of such segments (`;`, `&&`, `||`, `if`/`then`),
+env-assignment prefixes (`TZ=… date`), and output-discarding `>/dev/null`
+redirects. Any segment outside that set (content-bearing reads, `$`-expansion in
+output, real redirects, network tools, substitution) taints the whole command.
+
 Web and browser reads are confidence-gated: contact-shaped content (an address, a
 phone number, an `address`/`contact` field label) only taints when the host
 carries private context — the operator typed credentials there, or the page shows

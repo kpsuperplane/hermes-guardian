@@ -471,12 +471,41 @@ def _terminal_command_result_is_metadata_only(command: str) -> bool:
     command = str(command or "").strip()
     if not command:
         return False
-    if core._LOCAL_SYSTEM_NO_TAINT_DENY_RE.search(command):
+    screened = core._LOCAL_SYSTEM_NO_TAINT_DISCARD_RE.sub(" ", command)
+    if core._LOCAL_SYSTEM_NO_TAINT_DENY_RE.search(screened):
         return False
-    segments = [segment.strip() for segment in command.split("|")]
-    if not segments or not core._LOCAL_SYSTEM_NO_TAINT_FIRST_RE.search(segments[0]):
+    return all(
+        _local_system_segment_is_metadata_only(segment.strip())
+        for segment in core._LOCAL_SYSTEM_SEGMENT_SPLIT_RE.split(screened)
+    )
+
+
+def _local_system_segment_is_metadata_only(segment: str) -> bool:
+    """True iff one ;/&&/||/&-separated segment can only emit metadata output.
+
+    Shell-control keywords and env-assignment prefixes are stripped, then the head
+    command must be a metadata word, a safe whole-segment head (presence test,
+    literal printf/echo, command -v, set flags), optionally piped through the
+    count/filter commands. Anything unrecognized fails closed (the command taints).
+    """
+    while True:
+        stripped = core._LOCAL_SYSTEM_CONTROL_KEYWORD_RE.sub("", segment).strip()
+        if stripped == segment:
+            break
+        segment = stripped
+    segment = core._LOCAL_SYSTEM_ENV_ASSIGN_RE.sub("", segment).strip()
+    if not segment:
+        return True
+    parts = [part.strip() for part in segment.split("|")]
+    head = parts[0]
+    if not head:
         return False
-    return all(core._LOCAL_SYSTEM_NO_TAINT_FILTER_RE.search(segment) for segment in segments[1:])
+    if not (
+        core._LOCAL_SYSTEM_NO_TAINT_FIRST_RE.search(head)
+        or core._LOCAL_SYSTEM_NO_TAINT_SAFE_HEAD_RE.fullmatch(head)
+    ):
+        return False
+    return all(core._LOCAL_SYSTEM_NO_TAINT_FILTER_RE.search(part) for part in parts[1:])
 
 
 def _terminal_command_is_safe_remote_read(command: str) -> bool:
