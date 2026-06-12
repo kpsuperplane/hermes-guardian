@@ -197,9 +197,12 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
   const [open, setOpen] = useState(false);
   const tool = text(row.tool_name || row.tool, "n/a");
   const destination = text(row.destination, "n/a");
-  const action = text(row.action_family, "n/a");
+  const direction =
+    text(row.direction) ||
+    (text(row.decision) === "read" || text(row.decision) === "tainted" ? "read" : "write");
+  const action = text(row.action_family, direction === "read" ? "read" : "n/a");
   const latency = latencyText(row.latency_ms);
-  const isRead = text(row.decision) === "read" || text(row.decision) === "tainted";
+  const isRead = direction === "read";
   // data_classes can arrive as an array or a delimiter-joined string; one chip per taint.
   const taints = (
     Array.isArray(row.data_classes) ? row.data_classes : text(row.data_classes).split(/[,]/)
@@ -207,7 +210,7 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
     .map((cls) => text(cls).trim())
     .filter(Boolean);
   const detailPairs: Array<{ label: string; value: React.ReactNode }> = [
-    { label: "Direction", value: isRead ? "read" : "write" },
+    { label: "Direction", value: direction },
     {
       label: "Destination",
       value: destination + (taints.length > 0 ? " (" + text(row.destination_trust, "unknown") + ")" : ""),

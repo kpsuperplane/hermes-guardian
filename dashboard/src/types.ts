@@ -120,6 +120,7 @@ export interface ActivityRow {
   id?: string;
   decision?: string;
   icon?: string;
+  direction?: string;
   time?: string;
   time_short?: string;
   ts?: number;

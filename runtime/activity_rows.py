@@ -444,6 +444,7 @@ def _activity_plain_reason_line(row: dict[str, Any], *, limit: int = 120) -> str
 
 
 def _activity_datatables_row(row: dict[str, Any]) -> dict[str, Any]:
+    direction = _activity_display_direction(row)
     return {
         "id": int(row.get("id") or 0),
         "DT_RowId": f"activity-{int(row.get('id') or 0)}",
@@ -452,6 +453,7 @@ def _activity_datatables_row(row: dict[str, Any]) -> dict[str, Any]:
         "time_short": dashboard._activity_clock_text(row),
         "icon": dashboard._activity_status_icon(str(row.get("decision") or "")),
         "decision": str(row.get("decision") or ""),
+        "direction": direction,
         "tool": dashboard._activity_display_tool(row),
         "tool_name": str(row.get("tool_name") or ""),
         "action_family": str(row.get("action_family") or ""),
@@ -482,6 +484,29 @@ def _activity_datatables_row(row: dict[str, Any]) -> dict[str, Any]:
         "latency_hook": str(row.get("latency_hook") or ""),
         "latency_llm_invoked": bool(row.get("latency_llm_invoked")),
     }
+
+
+_READ_ACTION_FAMILIES = frozenset({"browser_read", "mcp_read_query", "message_list", "web_read"})
+
+
+def _activity_display_direction(row: dict[str, Any]) -> str:
+    decision = str(row.get("decision") or "")
+    action_family = str(row.get("action_family") or "")
+    hook = str(row.get("latency_hook") or "")
+    tool_name = str(row.get("tool_name") or "")
+    if decision in {"read", "tainted"}:
+        return "read"
+    if action_family in _READ_ACTION_FAMILIES:
+        return "read"
+    if hook in {"transform_tool_result", "pre_gateway_dispatch"}:
+        return "read"
+    if hook in {"pre_tool_call", "transform_llm_output"}:
+        return "write"
+    if decision == "security_suppressed" and tool_name and tool_name != "llm_output":
+        return "read"
+    if decision == "security_blocked" and tool_name == "gateway_message":
+        return "read"
+    return "write"
 
 
 def _datatables_column_name(params: dict[str, str], index: int) -> str:

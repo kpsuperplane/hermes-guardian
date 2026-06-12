@@ -30,6 +30,26 @@ def test_dashboard_payload_filters_activity_by_decision():
     assert all(row["decision"] == "blocked" for row in payload["activity"])
 
 
+def test_security_suppressed_tool_result_renders_as_read_activity():
+    plugin = load_plugin()
+
+    suppressed = plugin._on_transform_tool_result(
+        tool_name="skill_view",
+        result="Security alert: new sign-in detected",
+        session_id="s1",
+    )
+    assert suppressed is not None
+
+    payload = plugin._activity_turns_payload({"draw": "1", "start": "0", "length": "25"})
+    row = payload["turns"][0]["rows"][0]
+
+    assert row["decision"] == "security_suppressed"
+    assert row["tool_name"] == "skill_view"
+    assert row["direction"] == "read"
+    assert row["action_family"] == ""
+    assert row["destination"] == ""
+
+
 def test_activity_rows_and_datatables_include_contextual_metadata():
     plugin = load_plugin()
     recipient_identity = plugin._recipient_identity_from_value("friend")
