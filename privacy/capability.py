@@ -263,19 +263,46 @@ def _dest_kind_for_family(action_family: str) -> str:
     return _FAMILY_TO_DEST_KIND.get(str(action_family or ""), "store")
 
 
+def _is_mcp_connector_destination(action: Any) -> bool:
+    """True iff this action targets a third-party MCP connector (``mcp:<name>``).
+
+    Such a destination must NOT be matched against the first-party store allowlist:
+    a malicious MCP server naming its tool ``mcp_<seeded-name>_*`` would otherwise
+    impersonate a seeded ``store:<name>`` self entry. The resolver instead matches an
+    MCP connector only against EXPLICIT ``mcp:<name>`` self entries (Fix 1).
+    """
+    return str(getattr(action, "destination", "") or "").startswith("mcp:")
+
+
+def _dest_kind_for_action(action_family: str, action: Any) -> str:
+    """Coarse destination kind for the resolver, overriding the family default when the
+    concrete destination is a third-party MCP connector.
+
+    An ``mcp:<name>`` connector resolves under the distinct ``mcp`` kind, which the
+    resolver matches ONLY against explicit ``mcp:<name>`` self entries — never against
+    seeded ``store:<name>`` tokens. So an unrecognized/malicious connector that merely
+    borrows a seeded store name no longer inherits self-trust.
+    """
+    if _is_mcp_connector_destination(action):
+        return "mcp"
+    return _dest_kind_for_family(action_family)
+
+
 def _dest_id_for_action(action_family: str, action: Any) -> str:
     """Derive the concrete destination id the resolver matches on (doc 02 §7).
 
-    ``mcp:<server>`` style destinations collapse to the bare connector id so they match
-    the self-destination allowlist tokens like ``store:notion``. Messaging destinations
-    are handled separately by recipient identity, so id here is just a label.
+    ``mcp:<server>`` style destinations collapse to the bare connector id; under the
+    distinct ``mcp`` kind the resolver matches it against explicit ``mcp:<name>`` self
+    entries only. Messaging destinations are handled separately by recipient identity,
+    so id here is just a label.
     """
     family = str(action_family or "")
     destination = str(getattr(action, "destination", "") or "")
     if family in _MESSAGING_FAMILIES:
         return "messaging"
     if destination.startswith("mcp:"):
-        # mcp:notion -> "notion"; matches the "store:notion" self allowlist token.
+        # mcp:notion -> "notion". The resolver re-prefixes the "mcp" kind, so this only
+        # matches an explicit "mcp:notion" self entry, not the seeded "store:notion".
         return destination.split(":", 1)[1] or destination
     return destination
 
@@ -338,7 +365,7 @@ def classify(tool_name: str = "", args: Any = None, session: Any = None) -> Capa
         dest_id = _dest_id_for_action(action_family, action) or "draft"
         subtype = "draft"
     else:
-        dest_kind = _dest_kind_for_family(action_family)
+        dest_kind = _dest_kind_for_action(action_family, action)
         dest_id = _dest_id_for_action(action_family, action)
         subtype = _action_subtype_for(action_family, tool_name)
         # A write to a self store that names an external recipient (e.g. a calendar event

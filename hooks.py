@@ -244,7 +244,23 @@ def _on_pre_gateway_dispatch(event: Any = None, **kwargs: Any) -> dict[str, Any]
     except Exception:
         core.logger.exception("%s: pre_gateway_dispatch error", core._PLUGIN_NAME)
         text = getattr(event, "text", "")
-        reason = security_module._sensitive_reason(text) if isinstance(text, str) else None
+        try:
+            reason = security_module._sensitive_reason(text) if isinstance(text, str) else None
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            # The recovery re-scan itself threw (e.g. the original failure was
+            # inside the scanner). We cannot prove the message safe, so fail
+            # closed by suppressing rather than letting the exception escape.
+            core.logger.exception(
+                "%s: pre_gateway_dispatch recovery rescan error", core._PLUGIN_NAME
+            )
+            _emit_fail_closed_activity(
+                "security_blocked",
+                tool_name="gateway_message",
+                reason="guardian internal error; rescan failed, suppressed fail-closed",
+            )
+            return {"action": "skip", "reason": "security-sensitive content suppressed before model dispatch"}
         if reason:
             _emit_fail_closed_activity(
                 "security_blocked",

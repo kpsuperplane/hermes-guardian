@@ -30,6 +30,10 @@ def load_plugin():
     for path in [module.state._ACTIVITY_DB_PATH, module.state._ACTIVITY_DB_PATH.with_suffix(".sqlite3-wal"), module.state._ACTIVITY_DB_PATH.with_suffix(".sqlite3-shm")]:
         path.unlink(missing_ok=True)
     module.state._ACTIVITY_DB_INITIALIZED = False
+    # Tests drive `_handle_guardian_command` directly, modeling the trusted local
+    # operator. Production reaches the handler only via the gateway (which records the
+    # real owner), where this stays False and an unrecorded command fails closed.
+    module.state._TRUSTED_LOCAL_COMMAND_CONTEXT = True
     return module
 
 

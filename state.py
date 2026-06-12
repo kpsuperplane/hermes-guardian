@@ -76,6 +76,14 @@ _SESSIONS: dict[str, dict[str, Any]] = {}
 _OWNER_SESSIONS: dict[str, set[str]] = {}
 _PENDING_APPROVALS: dict[str, dict[str, Any]] = {}
 _RECENT_COMMAND_OWNERS: dict[str, list[tuple[float, str]]] = {}
+# When True, a `/guardian` command that reaches the handler WITHOUT a gateway-recorded
+# owner is treated as the trusted local operator (the CLI owner). Default False: an
+# unrecorded command fails CLOSED (unauthenticated) instead of inheriting CLI-owner admin.
+# In production `_handle_guardian_command` is reached only via the gateway command path,
+# which always records the real sender in `_RECENT_COMMAND_OWNERS` first, so a miss is
+# anomalous and must not escalate. A genuine local-CLI/host embedding that drives the
+# handler directly sets this flag to opt into the local-operator identity.
+_TRUSTED_LOCAL_COMMAND_CONTEXT = False
 # Volatile, owner-keyed cache of the most recent sanitized user request captured
 # at gateway dispatch. Used only as authorization evidence for the LLM verifier.
 # Never persisted; pruned by _USER_REQUEST_TTL_SECONDS.

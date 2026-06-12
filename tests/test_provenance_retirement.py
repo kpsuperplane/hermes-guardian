@@ -102,11 +102,13 @@ def test_llm_mode_verifier_is_actually_consulted_on_this_flow():
     assert "exported_source_classes" not in payload["privacy_context"]
 
 
-def test_llm_mode_verifier_can_allow_when_payload_is_consistent_with_intent():
+def test_llm_mode_verifier_can_allow_when_payload_is_consistent_with_intent(monkeypatch):
     # The verifier is reached and CAN upgrade (proving it is the live narrowing path): a
     # payload consistent with the authorized intent (a bare email address into a form) is
     # allowed even though the session is tainted — the FP narrowing provenance used to do
-    # is now recovered by the verifier (doc 02 §4 net-FP note).
+    # is now recovered by the verifier (doc 02 §4 net-FP note). The external private-export
+    # auto-allow also requires owner authorization context (doc 02 §3 corroboration gate).
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake_llm = FakeSecurityLlm({
@@ -117,6 +119,7 @@ def test_llm_mode_verifier_can_allow_when_payload_is_consistent_with_intent():
     })
     plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
+    plugin._on_pre_gateway_dispatch(gateway_event("subscribe me to the newsletter", user_id="owner"))
     _read_private_calendar(plugin)
 
     result = plugin._on_pre_tool_call(

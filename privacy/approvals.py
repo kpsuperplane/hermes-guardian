@@ -711,6 +711,16 @@ def _delete_persistent_rule(owner_hash: str, rule_id: str) -> tuple[bool, str, d
     return True, f"Deleted privacy rule {rule_id}.", removed
 
 
+# Fail-closed sentinel for a `/guardian` command whose owner was never positively
+# recorded by `pre_gateway_dispatch` (`_remember_command_owner`). It must NOT equal
+# `core._CLI_OWNER_HASH` and must NOT be a configured gateway owner, so it satisfies
+# neither `_approval_owner_allowed` nor `_owner_is_authenticated`. Any handler path that
+# reaches `_pop_command_owner` without a recorded owner — agent-emitted slash text, a
+# programmatic dispatch, a TTL/whitespace skew — is therefore treated as an
+# unauthenticated stranger and DENIED, instead of inheriting CLI-owner admin power.
+_UNAUTHENTICATED_OWNER_HASH = "__unauthenticated__"
+
+
 def _remember_command_owner(raw_args: str, owner_hash: str) -> None:
     key = raw_args.strip()
     if not key:
@@ -797,7 +807,15 @@ def _pop_command_owner(raw_args: str) -> str:
             if not state._RECENT_COMMAND_OWNERS[key]:
                 state._RECENT_COMMAND_OWNERS.pop(key, None)
             return entries[0][1]
-    return core._CLI_OWNER_HASH
+    # Cache miss: the gateway never positively recorded an owner for this command.
+    # A trusted local-CLI/host context (which drives the handler directly, with no
+    # gateway dispatch) opts into the local-operator identity. Otherwise fail CLOSED
+    # with an unauthenticated identity rather than the all-powerful CLI owner, so an
+    # approve that did not transit `pre_gateway_dispatch` (agent-emitted slash text, a
+    # lost/stale gateway record) is denied instead of silently self-approving.
+    if state._TRUSTED_LOCAL_COMMAND_CONTEXT:
+        return core._CLI_OWNER_HASH
+    return _UNAUTHENTICATED_OWNER_HASH
 
 
 def _owner_session_ids(owner_hash: str) -> set[str]:

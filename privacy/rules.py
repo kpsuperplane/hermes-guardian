@@ -85,8 +85,12 @@ _DEFAULT_DASHBOARD_ADMIN_TOKEN_ENV = "HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN"
 # decision path consumes them yet.
 #
 # Conservative-but-useful defaults (doc 01 §4):
-#  - destinations: the seven single-operator-owned stores + draft:* (writes here
-#    reach no new party because the operator authenticated as themselves).
+#  - destinations: the first-party single-operator-owned Hermes stores + draft:*
+#    (writes here reach no new party because the operator authenticated as
+#    themselves). Third-party MCP connectors are NOT seeded here: a connector is
+#    self only when the operator explicitly adds an `mcp:<name>` self entry, never
+#    by a `store:<name>` name collision (a malicious MCP server must not inherit
+#    trust by naming its tool `mcp_<seeded-name>_*`).
 #  - identities / hosts: EMPTY — send-to-self and own-infra are powerful `self`
 #    grants the operator must opt into; an unfilled list fails closed to external.
 #  - outward_sharing.builtin: the six subtypes that reach other parties even on a
@@ -97,7 +101,6 @@ _DEFAULT_SELF_DESTINATIONS = (
     "store:memory",
     "store:todo",
     "store:calendar",
-    "store:notion",
     "store:drive",
     "draft:*",
 )

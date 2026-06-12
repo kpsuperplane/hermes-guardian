@@ -932,10 +932,7 @@ def _suggest_self_grant(destination: str) -> dict[str, str] | None:
     low = dest.lower()
     if not dest or low in _NON_ADDABLE_DESTINATIONS:
         return None
-    if low.startswith("mcp:"):
-        rest = low[4:].strip(": ")
-        return {"kind": "destination", "value": f"store:{rest}"} if rest else None
-    if low.startswith("store:") or low.startswith("draft:"):
+    if low.startswith("mcp:") or low.startswith("store:") or low.startswith("draft:"):
         return {"kind": "destination", "value": low}
     if _SEEN_HOSTNAME_RE.match(low):
         return {"kind": "host", "value": dest}

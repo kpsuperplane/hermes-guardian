@@ -16,6 +16,7 @@ from support import *  # noqa: F403
 
 
 def test_llm_privacy_allows_model_approved_guardian(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake_llm = FakeSecurityLlm({
@@ -27,6 +28,9 @@ def test_llm_privacy_allows_model_approved_guardian(monkeypatch):
     plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     plugin._taint_session("s1", {"memory"})
+    # A verifier auto-allow of a tainted terminal egress (external trust) requires owner
+    # authorization context (doc 02 §3 corroboration gate).
+    plugin._on_pre_gateway_dispatch(gateway_event("check the working directory", user_id="owner"))
 
     result = plugin._on_pre_tool_call("terminal", {"command": "pwd"}, session_id="s1")
 

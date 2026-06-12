@@ -246,6 +246,12 @@ _MESSAGING_SUBTYPES = frozenset({"send", "email", "message", "dm", "reply", "for
 # the self destination allowlist.
 _STORE_KINDS = frozenset({"store", "draft", "memory", "todo", "file", "local"})
 
+# Third-party MCP connector kinds (Fix 1). NOT in _STORE_KINDS: a connector resolves
+# to self only against an EXPLICIT `mcp:<name>` / `connector:<name>` self entry, never
+# against a seeded `store:<name>` token — so naming a tool `mcp_<seeded-name>_*` can't
+# impersonate a first-party store.
+_CONNECTOR_KINDS = frozenset({"mcp", "connector"})
+
 # Destination kinds that denote a non-networked local effect (doc 01 §3.4).
 _LOCAL_KINDS = frozenset({"local", "file", "memory", "todo", "draft"})
 
@@ -304,6 +310,21 @@ def resolve_destination_trust(
             return DestinationTrust.UNKNOWN
         # A real, resolvable, non-self, non-trusted recipient is external.
         return DestinationTrust.EXTERNAL
+
+    # --- Third-party MCP connector: explicit-self ONLY (Fix 1). ---------------
+    # An `mcp:<name>` connector is a third-party server, NOT a first-party Hermes
+    # store. It resolves to self ONLY when the operator EXPLICITLY added that
+    # connector to their self allowlist (an `mcp:<name>` entry) — never by a seeded
+    # `store:<name>` name collision, so a malicious server naming its tool
+    # `mcp_<seeded-name>_*` cannot impersonate self. A connector the operator
+    # explicitly trusts as a recipient is trusted; otherwise fall through to
+    # unknown -> external (gates under taint, fail-closed).
+    if kind in _CONNECTOR_KINDS:
+        if _matches_self_destination(kind, str(dest_id or ""), self_cfg):
+            return DestinationTrust.SELF
+        if _recipient_trusted_class(dest_id, cfg):
+            return DestinationTrust.TRUSTED_RECIPIENT
+        return DestinationTrust.UNKNOWN
 
     # --- §3.3 / §3.4 Stores & local: match the self-destination allowlist. -----
     if kind in _STORE_KINDS or kind in _LOCAL_KINDS:

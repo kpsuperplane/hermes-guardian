@@ -346,7 +346,12 @@ _REMOTE_READ_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.I)
 _REMOTE_READ_TOOL_RE = re.compile(r"\b(curl|wget|urlopen|urllib\.request|requests\.get)\b", re.I)
 _REMOTE_READ_OUTBOUND_RE = re.compile(
     r"("
-    r"\b(curl|wget)\b.{0,80}\b(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s*(?:POST|PUT|PATCH|DELETE)|--data(?:-raw|-binary)?|-d|--form|--upload-file|-T)\b"
+    # An explicit POST/upload flag. The flag group is anchored with a whitespace/start
+    # lookbehind `(?<!\S)` instead of `\b`, because `\b` does not fire between a space
+    # and a leading `-` (both non-word), so `-d` / `--data` / `--data-binary` / `-T` /
+    # `--form` were silently missed. The trailing edge for short flags is a non-letter
+    # lookahead so `-d` matches `-d ` but not the unrelated `-data` token.
+    r"\b(curl|wget)\b.{0,80}(?<!\S)(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s*(?:POST|PUT|PATCH|DELETE)|--data(?:-raw|-binary)?\b|-d(?![a-z])|--form\b|--upload-file\b|-T(?![a-z]))"
     r"|\brequests\.(?:post|put|patch|delete)\b"
     r"|\bmethod\s*=\s*['\"](?:POST|PUT|PATCH|DELETE)['\"]"
     r"|\burlopen\s*\([^)]*,\s*data\s*="
@@ -376,6 +381,17 @@ _LOCAL_SECRET_READ_RE = re.compile(
     r"cat\s+[^;&|]*(?:\.env|credentials?|tokens?|\.ssh)|"
     r"(?:open|read_text|read_bytes|readFileSync|fs\.readFile)\s*\([^)]*(?:\.env|auth\.json|mcp-tokens|credentials?|tokens?|\.ssh))",
     re.I | re.S,
+)
+# Shell command substitution — `$(...)` or backticks. ANY substitution feeding a
+# network tool is an outbound source+sink in the same call, whatever the substituted
+# read is (`$(cat ~/Documents/tax_return.txt)`, `$(printenv)`, `` `whoami` ``), so the
+# same-call exfil check does not depend on the inner read being a KNOWN-secret path.
+# Linear/ReDoS-safe: the `$(...)` branch is a negated-char-class body (no nested
+# quantifier backtracking); the backtick branch likewise. `re.S` lets the body span
+# newlines in a multi-line command.
+_COMMAND_SUBSTITUTION_RE = re.compile(
+    r"\$\([^)]*\)|`[^`]*`",
+    re.S,
 )
 _BROWSER_SECRET_READ_RE = re.compile(
     r"(document\.(?:cookie|body|documentElement|forms?)|localStorage|sessionStorage|indexedDB|"

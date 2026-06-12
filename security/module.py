@@ -22,15 +22,15 @@ def _stringify_for_scan(value: Any, *, depth: int = 0) -> str:
 
 
 def _sensitive_finding(
-    value: Any, *, skip_reasons: frozenset[str] = frozenset()
+    value: Any, *, skip_reasons: frozenset[str] = frozenset(), egress: bool = True
 ) -> dict[str, str] | None:
-    return core._security._sensitive_finding(value, skip_reasons=skip_reasons)
+    return core._security._sensitive_finding(value, skip_reasons=skip_reasons, egress=egress)
 
 
 def _sensitive_reason(
-    value: Any, *, skip_reasons: frozenset[str] = frozenset()
+    value: Any, *, skip_reasons: frozenset[str] = frozenset(), egress: bool = True
 ) -> str | None:
-    return core._security._sensitive_reason(value, skip_reasons=skip_reasons)
+    return core._security._sensitive_reason(value, skip_reasons=skip_reasons, egress=egress)
 
 
 def _log_unsafe_diagnostic(surface: str, value: Any) -> None:
@@ -70,18 +70,20 @@ def _scrub_text_records(
     *,
     hide_subjectless_email_records: bool = False,
     skip_reasons: frozenset[str] = frozenset(),
+    egress: bool = True,
 ) -> tuple[str, int, str | None]:
     return core._security._scrub_text_records(
         text,
         hide_subjectless_email_records=hide_subjectless_email_records,
         skip_reasons=skip_reasons,
+        egress=egress,
     )
 
 
 def _scrub(
-    value: Any, *, skip_reasons: frozenset[str] = frozenset()
+    value: Any, *, skip_reasons: frozenset[str] = frozenset(), egress: bool = True
 ) -> tuple[Any, int, str | None]:
-    return core._security._scrub(value, skip_reasons=skip_reasons)
+    return core._security._scrub(value, skip_reasons=skip_reasons, egress=egress)
 
 
 def _security_pre_tool_call(tool_name: str, args: Any, session_id: str | None) -> dict[str, str] | None:
@@ -140,11 +142,14 @@ def _security_transform_tool_result(
         # _SECURITY_SENSITIVE_REASONS.
         inbound_allowed = inbound_allowed | core._security._SECURITY_SENSITIVE_REASONS
     if not parsed_ok:
-        reason = None if public_remote_read else _sensitive_reason(result, skip_reasons=inbound_allowed)
+        # Inbound read: an over-cap result is not itself an egress leak, so scan the capped
+        # prefix without forcing suppression (egress=False). Every egress surface still fails
+        # closed on over-cap. See _stringify_for_scan / _SCAN_TEXT_CAP.
+        reason = None if public_remote_read else _sensitive_reason(result, skip_reasons=inbound_allowed, egress=False)
         if not reason:
             return None
         _log_unsafe_diagnostic(f"transform_tool_result:{tool_name}", result)
-        scrubbed_text, suppressed, text_reason = _scrub_text_records(result, skip_reasons=inbound_allowed)
+        scrubbed_text, suppressed, text_reason = _scrub_text_records(result, skip_reasons=inbound_allowed, egress=False)
         if suppressed and scrubbed_text.strip():
             activity_store._emit_activity(
                 "security_suppressed",
@@ -179,7 +184,7 @@ def _security_transform_tool_result(
     if public_remote_read:
         return None
 
-    scrubbed, suppressed, reason = _scrub(deepcopy(parsed), skip_reasons=inbound_allowed)
+    scrubbed, suppressed, reason = _scrub(deepcopy(parsed), skip_reasons=inbound_allowed, egress=False)
     if not suppressed:
         return None
 

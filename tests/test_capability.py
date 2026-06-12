@@ -14,14 +14,34 @@ def _trust(plugin):
     return plugin._DestinationTrust
 
 
-def test_classify_self_store_write_resolves_self_and_collapses_class():
+def test_classify_mcp_connector_write_is_connector_kind_not_self():
+    # An MCP connector write resolves under the distinct `mcp` kind, NOT the first-party
+    # store kind. By default (no explicit `mcp:notion` self entry) it is not self, so a
+    # malicious server naming its tool `mcp_notion_*` cannot impersonate a seeded store.
     plugin = load_plugin()
     cap = plugin._classify("mcp_notion_create_page", {"title": "Contact notes"}, "s1")
     assert cap.direction == "write"
-    assert cap.destination.kind == "store"
+    assert cap.destination.kind == "mcp"
+    assert cap.destination.id == "notion"
+    assert cap.destination.trust in {
+        _trust(plugin).UNKNOWN,
+        _trust(plugin).EXTERNAL,
+    }
+
+
+def test_classify_mcp_connector_write_is_self_when_explicitly_listed():
+    # When the operator EXPLICITLY adds the connector to the self allowlist, an MCP
+    # write to it resolves to self.
+    plugin = load_plugin()
+    plugin._save_privacy_config({
+        "version": plugin._PRIVACY_RULE_FILE_VERSION,
+        "self": {"destinations": ["store:files", "mcp:notion"], "identities": [], "hosts": []},
+    })
+    cap = plugin._classify("mcp_notion_create_page", {"title": "Contact notes"}, "s1")
+    assert cap.direction == "write"
+    assert cap.destination.kind == "mcp"
     assert cap.destination.id == "notion"
     assert cap.destination.trust == _trust(plugin).SELF
-    # No session taint, clean args -> nothing classified, but destination is self anyway.
 
 
 def test_classify_external_send_resolves_external():

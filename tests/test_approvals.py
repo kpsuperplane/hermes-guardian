@@ -266,6 +266,26 @@ def test_deny_alias_still_dismisses_pending_approval():
     assert approval_id not in plugin._PENDING_APPROVALS
 
 
+def test_unrecorded_command_fails_closed_without_trusted_local_context():
+    # Production reaches `_handle_guardian_command` only via the gateway, which records
+    # the real owner first. A command that arrives with no recorded owner and no trusted
+    # local context (agent-emitted slash text, a lost/stale gateway record) must NOT
+    # inherit CLI-owner admin and self-approve — it fails closed.
+    plugin = load_plugin()
+    plugin.state._TRUSTED_LOCAL_COMMAND_CONTEXT = False  # simulate production
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
+    approval_id = first_pending_id(plugin)
+
+    # No gateway dispatch recorded this command's owner.
+    response = plugin._handle_guardian_command(f"approve {approval_id} forever")
+    assert "denied" in response.lower()
+    assert approval_id in plugin._PENDING_APPROVALS  # not approved
+    assert not plugin._persistent_privacy_rules()  # no broad grant created
+
+
 def test_wrong_sender_cannot_approve():
     plugin = load_plugin()
     bind_owner(plugin, user_id="owner")

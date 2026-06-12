@@ -186,3 +186,176 @@ def test_read_activity_classifier_golden_cases(tool_name, args, expected):
     plugin._set_browser_host("s1", "https://example.com")
 
     assert plugin._read_activity_for_tool(tool_name, args, "s1") == expected
+
+
+# --- LLM-mode external-private-export corroboration gate ---------------------
+# An `allow` verdict for a PRIVATE export to an EXTERNAL/unknown destination is the
+# softest model-trust point: the prompt waves through low/medium risk, and both
+# risk_level and authorization_level are model-emitted. The deterministic corroboration
+# gate honors such an allow ONLY when the model rated authorization explicit/substantive
+# AND Guardian ACTUALLY held owner/cron authorization context for this owner this window.
+# Otherwise it downgrades the allow to a manual gate. It is additive (allow->gate only),
+# never touches intra-boundary allows or local_system-only reads, and never weakens the
+# existing critical/high/cron caps.
+
+def _corroboration_llm(*, risk_level="medium", authorization_level="substantive", outcome="allow"):
+    return FakeSecurityLlm({
+        "outcome": outcome,
+        "risk_level": risk_level,
+        "authorization_level": authorization_level,
+        "rationale": "test verdict",
+    })
+
+
+def test_medium_external_private_export_without_owner_context_now_gates(monkeypatch):
+    # (a) The closed hole: outcome=allow, risk_level=medium to an EXTERNAL destination with
+    # PRIVATE data and NO owner authorization context. The verifier auto-allow is downgraded
+    # to a manual gate (it was an auto-allow before the corroboration gate).
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    plugin.state._PLUGIN_LLM = _corroboration_llm(risk_level="medium", authorization_level="substantive")
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts"})
+
+    result = plugin._on_pre_tool_call(
+        "send_message", {"to": "stranger@example.com", "text": "hi"}, session_id="s1"
+    )
+
+    assert result is not None and result["action"] == "block"
+    assert "Approval ID:" in result["message"]
+    assert plugin._PENDING_APPROVALS
+
+
+def test_medium_external_private_export_with_weak_auth_gates_even_with_owner_context(monkeypatch):
+    # Condition (1) alone is insufficient: owner context is present, but the model rated
+    # authorization `weak`. The allow is still downgraded — both conditions are required.
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    plugin.state._PLUGIN_LLM = _corroboration_llm(risk_level="medium", authorization_level="weak")
+    plugin._on_pre_gateway_dispatch(gateway_event("send my note to stranger", user_id="owner"))
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts"})
+
+    result = plugin._on_pre_tool_call(
+        "send_message", {"to": "stranger@example.com", "text": "hi"}, session_id="s1"
+    )
+
+    assert result is not None and result["action"] == "block"
+
+
+def test_external_private_export_with_owner_context_and_explicit_auth_still_allows(monkeypatch):
+    # (b) The legitimate "the user asked me to send X" flow: owner authorization context is
+    # present (an authenticated owner request this window) AND the model rated authorization
+    # explicit. Both conditions met -> the external private export still auto-allows.
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    plugin.state._PLUGIN_LLM = _corroboration_llm(risk_level="medium", authorization_level="explicit")
+    plugin._on_pre_gateway_dispatch(gateway_event("please message stranger with the update", user_id="owner"))
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts"})
+
+    result = plugin._on_pre_tool_call(
+        "send_message", {"to": "stranger@example.com", "text": "hi"}, session_id="s1"
+    )
+
+    assert result is None
+    assert not plugin._PENDING_APPROVALS
+
+
+def test_intra_boundary_private_allow_is_unaffected_by_corroboration_gate():
+    # (c) An intra-boundary destination (a local self-write) is allowed by the engine
+    # directly (decide ALLOW), never reaching the verifier or the corroboration gate — even
+    # under private taint and with no owner context. The gate must not touch it.
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    plugin.state._PLUGIN_LLM = _corroboration_llm(risk_level="medium", authorization_level="weak")
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts"})
+
+    result = plugin._on_pre_tool_call(
+        "write_file", {"path": "/tmp/x", "content": "private note"}, session_id="s1"
+    )
+
+    assert result is None
+    assert not plugin._PENDING_APPROVALS
+
+
+def test_local_system_only_safe_read_is_unaffected_by_corroboration_gate():
+    # (c') A session tainted ONLY by local_system (a safe remote read pulling data IN, not a
+    # personal-data export) is not a "private export": the gate excludes local_system, so the
+    # verifier allow stands without owner context.
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    plugin.state._PLUGIN_LLM = _corroboration_llm(risk_level="low", authorization_level="weak")
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"local_system"})
+
+    result = plugin._on_pre_tool_call(
+        "terminal", {"command": "python3 -c \"import urllib.request\""}, session_id="s1"
+    )
+
+    assert result is None
+    assert not plugin._PENDING_APPROVALS
+
+
+def test_high_external_private_export_still_gates_without_owner_context():
+    # (d) High-risk behavior is unchanged: even an explicit-auth high-risk allow gates
+    # without owner authorization context (the validation high-risk cap AND the
+    # corroboration gate both apply; neither is weakened).
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    plugin.state._PLUGIN_LLM = _corroboration_llm(risk_level="high", authorization_level="explicit")
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts"})
+
+    result = plugin._on_pre_tool_call(
+        "send_message", {"to": "stranger@example.com", "text": "hi"}, session_id="s1"
+    )
+
+    assert result is not None and result["action"] == "block"
+
+
+def test_critical_allow_still_fails_closed_unchanged():
+    # (d') Critical-risk allow is rejected at verdict validation (fail-closed deny),
+    # independent of the corroboration gate — unchanged.
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    plugin.state._PLUGIN_LLM = _corroboration_llm(risk_level="critical", authorization_level="explicit")
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts"})
+
+    result = plugin._on_pre_tool_call(
+        "send_message", {"to": "stranger@example.com", "text": "hi"}, session_id="s1"
+    )
+
+    assert result is not None and result["action"] == "block"
+
+
+def test_corroboration_downgrade_is_not_poisoned_into_the_deny_cache(monkeypatch):
+    # A downgraded allow must NOT be cached as a deny: the model emitted an allow (never
+    # cached), so a later call that DOES arrive with owner context gets a fresh verifier
+    # consult rather than a stale gate. Here the second call adds owner context and allows.
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    fake = _corroboration_llm(risk_level="medium", authorization_level="explicit")
+    plugin.state._PLUGIN_LLM = fake
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts"})
+
+    args = {"to": "stranger@example.com", "text": "hi"}
+    # First call: no owner context -> downgraded to a gate (and NOT cached).
+    first = plugin._on_pre_tool_call("send_message", args, session_id="s1")
+    assert first is not None and first["action"] == "block"
+
+    # Owner authorizes mid-turn, then the same export is retried.
+    plugin._on_pre_gateway_dispatch(gateway_event("yes message stranger with the update", user_id="owner"))
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts"})
+    second = plugin._on_pre_tool_call("send_message", args, session_id="s1")
+
+    # The retry was re-consulted (not served from a poisoned deny cache) and allowed.
+    assert second is None
+    assert len(fake.calls) == 2

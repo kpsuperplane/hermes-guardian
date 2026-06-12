@@ -47,14 +47,18 @@ def test_lockdown_gates_a_rerouted_export_through_another_channel():
     assert "cross-channel lockdown" in second["message"].lower()
 
 
-def test_external_export_auto_allows_without_a_prior_denial():
+def test_external_export_auto_allows_without_a_prior_denial(monkeypatch):
     """Control: the same allowing verifier + the same browser form-fill auto-allows when
     no prior external denial armed the lockdown — proving the gate above is the lockdown,
     not the verifier."""
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     bind_owner(plugin, session_id="s2")
     plugin._taint_session("s2", {"contacts"})
+    # Owner authorization context present (verifier auto-allow of an external private
+    # export requires it — doc 02 §3 corroboration gate).
+    plugin._on_pre_gateway_dispatch(gateway_event("fill the form with my email", user_id="owner"))
     plugin.state._PLUGIN_LLM = _fake_llm("allow", "low")
     plugin._set_browser_host("s2", "https://docs.google.com/forms/d/e/abc/viewform")
 
@@ -64,10 +68,11 @@ def test_external_export_auto_allows_without_a_prior_denial():
     assert result is None
 
 
-def test_lockdown_is_scoped_to_the_denied_policy_classes():
+def test_lockdown_is_scoped_to_the_denied_policy_classes(monkeypatch):
     """A denial of one private class does not lock down an unrelated class. Here the
     first gate carries browser_private only; a later personal_private export is judged
     by the verifier (auto-allowed), not blanket-gated."""
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     bind_owner(plugin)
@@ -77,9 +82,11 @@ def test_lockdown_is_scoped_to_the_denied_policy_classes():
     plugin.state._PLUGIN_LLM = _fake_llm("deny", "high")
     assert plugin._on_pre_tool_call("browser_press", {"key": "Enter"}, session_id="s1") is not None
 
-    # An unrelated personal_private export on a fresh session is unaffected.
+    # An unrelated personal_private export on a fresh session is unaffected. Owner
+    # authorization context is present so the verifier auto-allow is honored.
     bind_owner(plugin, session_id="s3")
     plugin._taint_session("s3", {"contacts"})
+    plugin._on_pre_gateway_dispatch(gateway_event("message my friend the update", user_id="owner"))
     plugin.state._PLUGIN_LLM = _fake_llm("allow", "low")
     assert (
         plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hi"}, session_id="s3")

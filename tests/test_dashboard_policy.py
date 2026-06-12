@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import importlib.util
 import json
 import logging
@@ -13,6 +14,21 @@ from types import SimpleNamespace
 import pytest
 
 from support import *  # noqa: F403
+
+
+def _load_plugin_api():
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "hermes_guardian_dashboard_plugin_api", root / "dashboard" / "plugin_api.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def _request(headers: dict | None = None):
+    return SimpleNamespace(headers=headers or {})
 
 
 def test_policy_snapshot_compacts_all_class_privacy_rule(monkeypatch):
@@ -609,3 +625,130 @@ def test_activity_prune_limits_retention_days(monkeypatch):
 
     assert result["remaining"] == 1
     assert rows[0]["reason"] == "new"
+
+
+# --- Security: unauthenticated read routes must not leak the 4-digit approval id -----
+def _drive_route_with_live_plugin(api, plugin, coro_factory):
+    """Run an async route coroutine with the route facade bound to the live test plugin
+    so it observes the same in-memory pending approvals the test created."""
+    sys.modules["_hermes_guardian_dashboard_facade"] = plugin
+    try:
+        return asyncio.run(coro_factory())
+    finally:
+        sys.modules.pop("_hermes_guardian_dashboard_facade", None)
+
+
+def test_unauthenticated_policy_route_redacts_live_approval_id():
+    api = _load_plugin_api()
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    plugin._on_pre_tool_call(
+        "send_message", {"to": "stranger@example.com", "text": "hi"}, session_id="s1"
+    )
+    real_id = first_pending_id(plugin)
+    assert re.fullmatch(r"[0-9]{4}", real_id), "precondition: a live 4-digit approval id exists"
+
+    policy = _drive_route_with_live_plugin(api, plugin, api.policy)
+
+    # The pending row is still rendered, with its metadata — but the approve credential is gone.
+    assert policy["pending"], "pending row should still be present for the UI"
+    assert policy["pending"][0]["id"] == ""
+    assert policy["pending"][0]["action_family"] == "message_send"
+    assert policy["pending"][0]["destination"] == "messaging"
+    assert policy["pending"][0]["destination_trust"] == "external"
+    # The id leaks nowhere in the serialized read payload (also covers recent_blocks).
+    assert real_id not in json.dumps(policy)
+
+
+def test_unauthenticated_approvals_route_redacts_live_approval_id():
+    api = _load_plugin_api()
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    plugin._on_pre_tool_call(
+        "send_message", {"to": "stranger@example.com", "text": "hi"}, session_id="s1"
+    )
+    real_id = first_pending_id(plugin)
+
+    result = _drive_route_with_live_plugin(api, plugin, api.approvals)
+
+    assert result["approvals"], "approvals list should still be present for the UI"
+    assert result["approvals"][0]["id"] == ""
+    # Permit options / trust pill survive so the UI can still drive approve via the
+    # admin-gated mutation route.
+    assert result["approvals"][0]["destination_trust"] == "external"
+    assert real_id not in json.dumps(result)
+
+
+def test_recent_blocks_in_policy_route_redact_approval_id(monkeypatch):
+    api = _load_plugin_api()
+    plugin = load_plugin()
+    now = {"value": 1000}
+    monkeypatch.setattr(plugin.state, "_now", lambda: now["value"])
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
+    real_id = first_pending_id(plugin)
+
+    policy = _drive_route_with_live_plugin(api, plugin, api.policy)
+
+    blocks = policy["recent_blocks"]
+    assert blocks, "a pending block should surface in recent_blocks"
+    # The id-bearing fields (id / approval_id / dismiss_id / historical_approval_id) are blanked.
+    for field in ("id", "approval_id", "dismiss_id", "historical_approval_id"):
+        assert blocks[0].get(field, "") == ""
+    assert real_id not in json.dumps(policy)
+
+
+# --- Security: the approve route fails closed without admin auth (no token configured) -
+def test_approve_route_without_token_passes_host_auth_gate(monkeypatch):
+    """DEFAULT config (no token): the host dashboard's own authentication is the gate, so
+    the approve route is reachable (no 403) and consumes the pending approval. The
+    unauthenticated read routes never expose the live approval id (see the redaction
+    tests), so this cannot be chained from an unauthenticated read."""
+    api = _load_plugin_api()
+    monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN", raising=False)
+    monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", raising=False)
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hi"}, session_id="s1")
+    approval_id = first_pending_id(plugin)
+
+    sys.modules["_hermes_guardian_dashboard_facade"] = plugin
+    try:
+        response = asyncio.run(api.approve(_request(), approval_id, {"method": "rule_5m"}))
+    finally:
+        sys.modules.pop("_hermes_guardian_dashboard_facade", None)
+
+    assert response.status_code != 403
+    assert approval_id not in plugin._PENDING_APPROVALS
+
+
+def test_approve_route_allows_with_token(monkeypatch):
+    """With a token configured and the correct header, the approve route passes the gate
+    and runs the underlying approval action."""
+    api = _load_plugin_api()
+    monkeypatch.setenv("HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN", "s3cret")
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hi"}, session_id="s1")
+    approval_id = first_pending_id(plugin)
+
+    sys.modules["_hermes_guardian_dashboard_facade"] = plugin
+    try:
+        response = asyncio.run(
+            api.approve(
+                _request({"x-hermes-guardian-token": "s3cret"}),
+                approval_id,
+                {"method": "rule_5m"},
+            )
+        )
+    finally:
+        sys.modules.pop("_hermes_guardian_dashboard_facade", None)
+
+    assert response.status_code == 200
+    assert response.content["ok"] is True
+    assert approval_id not in plugin._PENDING_APPROVALS

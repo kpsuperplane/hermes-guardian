@@ -66,9 +66,11 @@ def test_verifier_model_is_passed_to_completion():
     assert fake.calls[0].get("model") == "gpt-5.4-mini"
 
 
-def test_rejected_model_override_falls_back_instead_of_failing_closed():
+def test_rejected_model_override_falls_back_instead_of_failing_closed(monkeypatch):
     # If the override is rejected (e.g. allow_model_override not granted), the
     # verifier must retry on the default model, not deny everything.
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+
     class FlakyLLM:
         def __init__(self):
             self.calls = []
@@ -93,6 +95,10 @@ def test_rejected_model_override_falls_back_instead_of_failing_closed():
     plugin.state._PLUGIN_LLM = FlakyLLM()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
+    # Owner authorization context present so the verifier auto-allow of this external
+    # private export is honored (doc 02 §3 corroboration gate); the focus here is the
+    # model-override fallback, not the corroboration check.
+    plugin._on_pre_gateway_dispatch(gateway_event("message a with the update", user_id="owner"))
 
     result = plugin._on_pre_tool_call("send_message", {"to": "a", "text": "hi"}, session_id="s1")
 

@@ -190,6 +190,26 @@ def test_throwing_security_result_hook_suppresses_fail_closed(monkeypatch):
     assert "fail-closed" in parsed["hermes_guardian"]["reason"]
 
 
+def test_throwing_pre_gateway_recovery_rescan_suppresses_fail_closed(monkeypatch):
+    plugin = load_plugin()
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("scanner boom")
+
+    # Break the primary dispatch path AND the recovery re-scan: the original
+    # failure is inside the scanner, so the recovery _sensitive_reason re-run
+    # would re-raise. The hook must not propagate; it must fail closed.
+    monkeypatch.setattr(plugin.security_module, "_security_pre_gateway_dispatch", boom)
+    monkeypatch.setattr(plugin.security_module, "_sensitive_reason", boom)
+
+    result = plugin._on_pre_gateway_dispatch(event=gateway_event("hello there"))
+
+    assert result == {
+        "action": "skip",
+        "reason": "security-sensitive content suppressed before model dispatch",
+    }
+
+
 def test_pending_approval_storage_failure_still_blocks(monkeypatch):
     plugin = load_plugin()
     bind_owner(plugin)

@@ -295,6 +295,107 @@ def _llm_hard_deny_reason(shape: dict[str, Any], args: Any) -> str | None:
     return None
 
 
+def _owner_context_present(shape: dict[str, Any]) -> bool:
+    """True iff owner/cron authorization context is ACTUALLY attached for this verdict.
+
+    Mirrors exactly the conditions under which ``_llm_verdict_input`` attaches
+    ``user_request_context`` (a fresh sanitized request from an authenticated session
+    owner, with the owner-context channel enabled) or ``cron_context`` (the standing
+    instruction of the cron job that owns this run, with the cron-context channel
+    enabled). This is the corroboration signal: it is true only when Guardian holds a
+    concrete owner/cron authorization for this owner this window — not merely because
+    the model emitted ``explicit``/``substantive`` (both of those fields are model-emitted
+    and therefore attacker-influenceable). The external-export allow gate combines the
+    model's authorization_level with this independent presence check (doc 02 §3 / charter
+    §2.1-§2.2): an external/unknown private export is auto-allowed only when BOTH agree.
+    """
+    if (
+        rules._llm_user_context_enabled()
+        and approvals._recent_user_request_for_owner(shape.get("owner_hash", ""))
+    ):
+        return True
+    if (
+        rules._llm_cron_context_enabled()
+        and approvals._cron_instruction_for_session(shape.get("session_id"))
+    ):
+        return True
+    return False
+
+
+# The private POLICY classes whose external export needs owner corroboration: the
+# personal-private vocabulary (calendar/contacts/communications/documents/memory — all
+# collapse to ``personal_private``) plus private browser input. ``local_system`` is
+# DELIBERATELY excluded: a session tainted only by ``local_system`` reads is the engine's
+# "not personally-private" tier (a safe remote read pulling data IN, not exporting personal
+# data OUT), and the charter requires reads/local-only flows stay unaffected by this gate.
+# Unrecognized taint tokens fail closed to ``personal_private`` (see ``_taint_policy_classes``),
+# so they are covered.
+_CORROBORATION_PRIVATE_POLICY_CLASSES = frozenset(
+    capability.PRIVATE_POLICY_CLASSES | {"browser_private"}
+)
+
+
+def _export_private_policy_classes(data_classes: Any) -> set[str]:
+    """The corroboration-relevant private POLICY classes carried by ``data_classes``.
+
+    Collapses the shape's fine taint classes to policy classes (via the engine's
+    ``_taint_policy_classes`` — same adapter ``decide`` uses) and intersects with
+    ``_CORROBORATION_PRIVATE_POLICY_CLASSES``. Empty means nothing personally-private (or
+    private browser input) is leaving — e.g. a ``local_system``-only safe remote read.
+    """
+    from . import policy
+
+    try:
+        return set(policy._taint_policy_classes(data_classes)) & _CORROBORATION_PRIVATE_POLICY_CLASSES
+    except Exception:
+        return set()
+
+
+def _is_external_private_export(shape: dict[str, Any]) -> bool:
+    """True iff this egress sends personally-private data to an external/unknown destination.
+
+    The two softest-trust labels (``external`` and the fail-closed ``unknown``, which
+    ``decide`` treats as external — doc 01 §2) carrying a non-empty PRIVATE policy-class set
+    (``_export_private_policy_classes`` — personal_private / browser_private, NOT
+    local_system). Intra-boundary destinations (self / local_system / model_provider) and
+    consented ``trusted_recipient`` destinations are excluded by the trust check; pure
+    ``local_system`` reads are excluded by the private-class check. Only the genuinely
+    outward, least-known sinks carrying personal data need the corroboration gate.
+    """
+    trust = str(shape.get("destination_trust") or "unknown").strip().lower()
+    if trust not in {"external", "unknown"}:
+        return False
+    return bool(_export_private_policy_classes(shape.get("data_classes")))
+
+
+def _llm_allow_lacks_owner_corroboration(
+    shape: dict[str, Any], verdict: dict[str, str], owner_context_present: bool
+) -> bool:
+    """True iff an ``allow`` verdict for a private external export must be downgraded.
+
+    Deterministic corroboration applied UNIFORMLY across risk bands (doc 02 §3): the
+    softest model-trust point is an ``allow`` of a private export to an external/unknown
+    destination, where the prompt tells the model to wave through low/medium risk. Both
+    ``risk_level`` and ``authorization_level`` are model-emitted, so the high-risk gate in
+    ``_validated_llm_security_verdict`` gives only false determinism. This check requires,
+    in ADDITION, that BOTH hold before such an allow is honored:
+      (1) the model rated authorization ``explicit`` or ``substantive``, AND
+      (2) Guardian ACTUALLY held owner/cron authorization context for this owner this
+          window (``owner_context_present`` — see ``_owner_context_present``).
+    If either is missing, the allow is downgraded to a manual gate. This is purely
+    ADDITIVE: it can only turn an allow into a gate, never the reverse, and it never
+    touches intra-boundary allows or reads (``_is_external_private_export`` excludes them).
+    """
+    if verdict.get("outcome") != "allow":
+        return False
+    if not _is_external_private_export(shape):
+        return False
+    authorization_level = str(verdict.get("authorization_level") or "").strip().lower()
+    if authorization_level not in {"explicit", "substantive"}:
+        return True
+    return not owner_context_present
+
+
 def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:
     user_request = approvals._recent_user_request_for_owner(shape.get("owner_hash", ""))
     payload: dict[str, Any] = {

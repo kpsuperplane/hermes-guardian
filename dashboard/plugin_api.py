@@ -93,6 +93,13 @@ def _require_dashboard_admin(request: Request) -> None:
     token = os.environ.get("HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN", "")
     if token and not hmac.compare_digest(_request_header(request, "x-hermes-guardian-token"), token):
         raise HTTPException(status_code=403, detail="invalid guardian admin token")
+    # When no admin token is configured, the host dashboard's own authentication is the
+    # gate: it mounts these routes behind authenticated local/admin access (see README
+    # "Recommended Hermes Baseline"). Set HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN to also
+    # require a token here when the plugin port is reachable outside that host-auth
+    # boundary. The unauthenticated read routes never expose live approval IDs (see
+    # `_redact_approval_ids`), so a pending egress cannot be read and self-approved over
+    # an unauthenticated channel even in the no-token configuration.
 
 
 def _confirmation_value(body: dict[str, Any]) -> str:
@@ -168,9 +175,46 @@ def _json_mutation_result(result: tuple[dict[str, Any], int]) -> JSONResponse:
     return JSONResponse(payload, status_code=status)
 
 
+# The live 4-digit approval code IS the approve credential: anyone who learns a
+# pending approval's `id` can POST /approvals/{id}/approve. These read routes are
+# unauthenticated, so they must not echo that code. We blank the id-bearing fields
+# on the pending / recent-block rows while keeping the rest of the metadata the UI
+# needs to render (action, destination, classes, expiry, trust pill, permit options).
+# The dashboard UI drives approve through the admin-gated mutation route; it does
+# not need the raw code echoed on this open channel.
+_REDACTED_APPROVAL_ID_FIELDS = (
+    "id",
+    "approval_id",
+    "dismiss_id",
+    "historical_approval_id",
+)
+
+
+def _redact_approval_ids(rows: Any) -> list[dict[str, Any]]:
+    redacted: list[dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        clean = dict(row)
+        for field in _REDACTED_APPROVAL_ID_FIELDS:
+            if field in clean:
+                clean[field] = ""
+        redacted.append(clean)
+    return redacted
+
+
+def _redacted_policy_snapshot() -> dict[str, Any]:
+    snapshot = dict(_guardian()._policy_snapshot())
+    if "pending" in snapshot:
+        snapshot["pending"] = _redact_approval_ids(snapshot.get("pending"))
+    if "recent_blocks" in snapshot:
+        snapshot["recent_blocks"] = _redact_approval_ids(snapshot.get("recent_blocks"))
+    return snapshot
+
+
 @router.get("/policy")
 async def policy() -> dict[str, Any]:
-    return _guardian()._policy_snapshot()
+    return _redacted_policy_snapshot()
 
 
 @router.get("/performance")
@@ -196,8 +240,11 @@ async def approvals() -> dict[str, Any]:
 
     Reads the already-computed "pending" slice of the policy snapshot — no new
     decision logic, no mutation.
+
+    This route is unauthenticated, so the live 4-digit approval `id` (which is
+    the approve credential) is redacted from the rows — see _redact_approval_ids.
     """
-    return {"approvals": _guardian()._dashboard_pending_approvals()}
+    return {"approvals": _redact_approval_ids(_guardian()._dashboard_pending_approvals())}
 
 
 @router.get("/destinations/resolve")

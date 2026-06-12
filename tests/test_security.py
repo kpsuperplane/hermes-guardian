@@ -684,3 +684,116 @@ def test_public_remote_read_result_does_not_suppress_auth_code_like_text():
     assert plugin._session_taint("s1") == set()
     rows = plugin._activity_rows({"decision": "security_suppressed"}, limit=10)
     assert rows == []
+
+
+def test_secret_assignment_value_shape_not_just_name_or_brackets():
+    plugin = load_plugin()
+
+    # Whether ``NAME = value`` is a hardcoded secret is decided by the VALUE SHAPE, not by
+    # the variable name or by "any bracket anywhere". Parens around a literal don't launder
+    # it, and a ``_url``/handle name suffix does not exempt a bare opaque value.
+    assert plugin._sensitive_reason("API_TOKEN = ('abcdef1234567890')") == "secret assignment"
+    assert plugin._sensitive_reason("DB_PASSWORD = ('hunter2hunter2')") == "password assignment"
+    assert plugin._sensitive_reason("password_url = hunter2hunter2") == "password assignment"
+    assert (
+        plugin._sensitive_reason("api_token_url = abcdef1234567890abcdef1234567890")
+        == "secret assignment"
+    )
+
+    # Non-credential value shapes are still exempt: an env/file/JSON-deriving EXPRESSION, a
+    # URL value, and a filesystem path value are not hardcoded secrets.
+    for line in (
+        "secret_path = base / 'google_client_secret.json'",
+        "api_key = os.environ['KEY']",
+        "secret = json.loads(secret_path.read_text())",
+        'config_url = "https://example.com"',
+    ):
+        assert plugin._sensitive_reason(line) is None, line
+
+    # A password-reset URL value is a URL, never a "password assignment" hard secret. (It is
+    # independently a "sensitive link" because of the ``/reset`` path — the point here is
+    # only that the secret-assignment matcher does not claim it.)
+    reset_reason = plugin._sensitive_reason('reset_password_url = "https://example.com/reset?x=1"')
+    assert reset_reason not in ("password assignment", "secret assignment")
+
+
+def test_otp_obfuscation_is_normalized_before_matching():
+    plugin = load_plugin()
+
+    # A delivered OTP must not leak through egress when obfuscated. Zero-width separators
+    # between digits, a Cyrillic homoglyph in the label word, and NBSP separators all fold
+    # to the plain form before matching.
+    obfuscated = [
+        "verification code is 1​2​3​4​5​6",  # ZWSP between digits
+        "verification cоde is 123456",  # Cyrillic 'o' homoglyph in "code"
+        "verification code is 1\xa02\xa03\xa04\xa05\xa06",  # NBSP between digits
+    ]
+    for text in obfuscated:
+        assert plugin._sensitive_reason(text) == "auth code", repr(text)
+
+    # NFKC normalization must keep the already-correct forms blocked (no regression).
+    for text in (
+        "verification code is 123456",
+        "verification code is 123-456",
+        "verification code is １２３４５６",  # full-width digits
+    ):
+        assert plugin._sensitive_reason(text) == "auth code", repr(text)
+
+    # The OTP going out as a tool argument is blocked even when obfuscated.
+    blocked = plugin._on_pre_tool_call(
+        tool_name="message_send",
+        args={"text": "verification code is 1​2​3​4​5​6"},
+    )
+    assert blocked is not None and blocked["action"] == "block"
+
+
+def test_magic_login_link_with_high_entropy_code_token_blocks():
+    plugin = load_plugin()
+
+    # A magic/login link whose token carries no trigger word and no digit is still a
+    # sensitive link when the ``code=`` value is high-entropy (12+ token chars).
+    assert (
+        plugin._sensitive_reason("https://acme.com/auth?code=abcdefghijklmnop")
+        == "sensitive link"
+    )
+    assert (
+        plugin._sensitive_reason("https://acme.com/code/abcdefghijklmnop")
+        == "sensitive link"
+    )
+
+    # OAuth authorization-code URLs must NOT be flagged: ``response_type=code`` is a value,
+    # not a ``code=`` param, and a short/word-shaped callback ``?code=`` value is below the
+    # high-entropy floor.
+    assert (
+        plugin._sensitive_reason(
+            "https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=x"
+        )
+        is None
+    )
+    assert plugin._sensitive_reason("http://localhost:1/?state=abc&code=4/0AeanSxyz") is None
+
+
+def test_oversize_egress_payload_fails_closed():
+    plugin = load_plugin()
+    from _hermes_guardian.security import scanner as sc
+
+    # A payload larger than the scan cap can hide a secret past the cap, so on egress it is
+    # itself a positive finding (fail closed) rather than being scanned-and-allowed.
+    oversize = "x" * (sc._SCAN_TEXT_CAP + 10_000)
+    assert plugin._sensitive_reason(oversize, egress=True) == sc._OVER_CAP_REASON
+
+    # It is hard-blocked as a tool argument and suppressed as a final response.
+    blocked = plugin._on_pre_tool_call(tool_name="message_send", args={"text": oversize})
+    assert blocked is not None and blocked["action"] == "block"
+    assert plugin._on_transform_llm_output(response_text=oversize) is not None
+
+    # Inbound reads are not an egress leak: an over-cap benign inbound result scans the
+    # capped prefix without being forced to suppress.
+    assert plugin._sensitive_reason(oversize, egress=False) is None
+    assert plugin._on_transform_tool_result(tool_name="skill_view", result=oversize) is None
+
+    # A secret in the scannable prefix of an over-cap inbound payload is still caught.
+    prefixed_secret = "DB_PASSWORD = hunter2hunter2\n" + ("x" * (sc._SCAN_TEXT_CAP + 10_000))
+    inbound = plugin._on_transform_tool_result(tool_name="skill_view", result=prefixed_secret)
+    assert inbound is not None
+    assert parse_json(inbound)["hermes_guardian"]["suppressed"] is True

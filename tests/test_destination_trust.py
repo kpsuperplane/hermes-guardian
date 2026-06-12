@@ -93,7 +93,6 @@ def test_outward_sharing_beats_ownership(subtype):
     "dest_kind,dest_id",
     [
         ("store", "files"),
-        ("store", "notion"),
         ("store", "calendar"),
         ("store", "memory"),
         ("store", "todo"),
@@ -105,6 +104,49 @@ def test_self_store_write_is_self(dest_kind, dest_id):
     cfg = _default_config(plugin)
     trust = plugin._resolve_destination_trust(dest_kind, dest_id, "write", "", cfg)
     assert trust == plugin._DestinationTrust.SELF
+
+
+def test_seeded_self_stores_exclude_notion_connector():
+    # notion is a third-party MCP connector, not a first-party Hermes store. It is no
+    # longer seeded into the self allowlist, so a write to it resolves to unknown
+    # (-> external, gates under taint), not self.
+    plugin = load_plugin()
+    cfg = _default_config(plugin)
+    assert (
+        plugin._resolve_destination_trust("store", "notion", "write", "", cfg)
+        == plugin._DestinationTrust.UNKNOWN
+    )
+
+
+def test_mcp_connector_is_self_only_when_explicitly_listed():
+    # An `mcp:<name>` connector destination resolves to self ONLY when the operator
+    # explicitly adds that connector to the self allowlist — a seeded `store:<name>`
+    # name collision must NOT confer self-trust (Fix 1 impersonation guard).
+    plugin = load_plugin()
+    default_cfg = _default_config(plugin)
+    # By default no explicit mcp entry -> unknown, even for a seeded store name.
+    assert (
+        plugin._resolve_destination_trust("mcp", "files", "create", "", default_cfg)
+        == plugin._DestinationTrust.UNKNOWN
+    )
+    assert (
+        plugin._resolve_destination_trust("mcp", "notion", "create", "", default_cfg)
+        == plugin._DestinationTrust.UNKNOWN
+    )
+    # Explicit `mcp:notion` self entry -> self for that connector only.
+    cfg = _config_with(
+        plugin,
+        self={"destinations": ["store:files", "mcp:notion"], "identities": [], "hosts": []},
+    )
+    assert (
+        plugin._resolve_destination_trust("mcp", "notion", "create", "", cfg)
+        == plugin._DestinationTrust.SELF
+    )
+    # A different connector not explicitly listed stays unknown.
+    assert (
+        plugin._resolve_destination_trust("mcp", "drive", "create", "", cfg)
+        == plugin._DestinationTrust.UNKNOWN
+    )
 
 
 # --- 5. Draft is self. --------------------------------------------------------
@@ -220,12 +262,15 @@ def test_credential_to_self_destination_still_hard_blocks():
     plugin = load_plugin()
     plugin._on_pre_llm_call(session_id="s1", platform="telegram", sender_id="owner")
 
-    # notion is a self-listed store, yet a credential-bearing payload to it must
-    # be hard-blocked by the Security Module — destination trust does not soften
-    # security hard blocks.
-    cfg = _default_config(plugin)
+    # Even where the operator has EXPLICITLY trusted a connector as self, a
+    # credential-bearing payload to it must be hard-blocked by the Security Module —
+    # destination trust does not soften security hard blocks (invariant #1).
+    cfg = _config_with(
+        plugin,
+        self={"destinations": ["store:files", "mcp:notion"], "identities": [], "hosts": []},
+    )
     assert (
-        plugin._resolve_destination_trust("store", "notion", "write", "", cfg)
+        plugin._resolve_destination_trust("mcp", "notion", "write", "", cfg)
         == plugin._DestinationTrust.SELF
     )
 

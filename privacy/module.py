@@ -376,8 +376,33 @@ def _llm_policy_tool_call_result(
         }
     if cached is None:
         # Cache only freshly-computed denials so retried/looping blocked actions
-        # don't re-pay the verifier latency.
+        # don't re-pay the verifier latency. Done BEFORE the corroboration downgrade
+        # below so a downgraded allow is NOT poisoned into the deny cache: an allow the
+        # model emitted (skipped by _store_deny_verdict) must stay un-cached, so a later
+        # call that DOES arrive with owner-authorization context gets a fresh verifier
+        # consult instead of a stale gate.
         llm._store_deny_verdict(shape, verdict)
+    if verdict.get("outcome") == "allow" and llm._llm_allow_lacks_owner_corroboration(
+        shape, verdict, llm._owner_context_present(shape)
+    ):
+        # Deterministic corroboration gate (charter §2.1-§2.2). An ``allow`` of a private
+        # export to an external/unknown destination is the softest model-trust point: the
+        # prompt waves through low/medium risk, and both risk_level and authorization_level
+        # are model-emitted. Honor such an allow only when the model rated authorization
+        # explicit/substantive AND Guardian ACTUALLY held owner/cron authorization context
+        # for this owner this window. Otherwise downgrade to a manual gate — never
+        # auto-allow. Additive: this only turns an allow into a deny, and only for genuinely
+        # outward private exports (intra-boundary allows and reads are untouched). Runs
+        # AFTER the cron high-risk downgrade so that cap still holds, and after the deny
+        # cache so the downgrade is per-call (never cached as a deny).
+        verdict = {
+            **verdict,
+            "outcome": "deny",
+            "rationale": (
+                "external private export lacks owner-authorization corroboration "
+                f"({verdict.get('rationale', '')})"
+            ),
+        }
     if verdict.get("outcome") == "allow":
         reason = (
             f"llm {verdict.get('risk_level', 'unknown')}: "

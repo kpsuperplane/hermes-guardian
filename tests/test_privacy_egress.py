@@ -61,23 +61,35 @@ def test_tainted_session_blocks_message_send():
     assert "Data classes: communications" in result["message"]
 
 
-def test_tainted_session_allows_self_store_mcp_write():
-    """Phase 3 (decide authoritative): a tainted write to the operator's OWN seeded store
-    (``store:notion`` is a default self destination) reaches no new party, so it no longer
-    gates. This is the canonical false positive the charter (§1) calls out — "save my
-    inbox summary to my own Notion" — now removed. Floor-neutral.
+def test_tainted_mcp_connector_write_gates_unless_explicitly_self():
+    """An MCP connector is NOT seeded as a self store (Fix 1): a malicious or unverified
+    server naming its tool ``mcp_notion_*`` must not inherit self-trust. By default a
+    tainted write to it gates; only when the operator EXPLICITLY adds ``mcp:notion`` to
+    their self allowlist does the canonical "save my inbox summary to my own Notion" FP
+    get removed.
     """
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"contacts"})
 
-    result = plugin._on_pre_tool_call(
+    # Default config: no explicit mcp:notion self entry -> the write gates.
+    gated = plugin._on_pre_tool_call(
         tool_name="mcp_notion_create_page",
         args={"title": "Contact notes"},
         session_id="s1",
     )
+    assert gated is not None
 
-    assert result is None
+    # Operator explicitly trusts the notion connector as self -> the write passes.
+    plugin._save_privacy_config({
+        "version": plugin._PRIVACY_RULE_FILE_VERSION,
+        "self": {"destinations": ["store:files", "mcp:notion"], "identities": [], "hosts": []},
+    })
+    assert plugin._on_pre_tool_call(
+        tool_name="mcp_notion_create_page",
+        args={"title": "Contact notes"},
+        session_id="s1",
+    ) is None
 
 
 def test_tainted_session_blocks_mcp_write_to_non_self_store():
@@ -625,3 +637,75 @@ def test_tainted_session_allows_intra_boundary_writes_after_flip():
     for tool_name, args in intra_boundary:
         result = plugin._on_pre_tool_call(tool_name, args, session_id="s1")
         assert result is None, tool_name
+
+
+# --- Fix 3: remote-text gate fails closed on unknown keys ---------------------
+
+
+def test_tainted_mcp_search_gates_on_unenumerated_text_keys():
+    """Under taint, an MCP read/search ships free text via ANY key, not just a fixed
+    set. Private text riding `question` / `keywords` / nested `params.text` must gate."""
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+
+    for tool_name, args in [
+        ("mcp_perplexity_search", {"question": "my private salary is 200k"}),
+        ("web_search", {"keywords": "my private medical diagnosis"}),
+        ("mcp_notion_search", {"params": {"text": "private board minutes"}}),
+    ]:
+        result = plugin._on_pre_tool_call(tool_name, args, session_id="s1")
+        assert result is not None, tool_name
+        assert result["action"] in {"block", "approve"}, tool_name
+
+
+def test_untainted_read_with_only_id_or_enum_does_not_gate():
+    """A benign read whose only args are an id / enum / limit must NOT gate (no free
+    text to leak)."""
+    plugin = load_plugin()
+    bind_owner(plugin)
+    # No taint: a read is never a sink regardless, but also confirm the free-text
+    # detector itself does not flag bare ids / enums / numbers.
+    tp = plugin.tool_policy
+    for args in [{"id": "abc"}, {"limit": 10}, {"cursor": "eyJ0"}, {"format": "json"},
+                 {"params": {"id": "page_123"}}, {"enabled": True}]:
+        assert not tp._mcp_read_sends_query(args), args
+        assert not tp._args_send_remote_text(args), args
+
+
+def test_tainted_read_with_only_id_arg_does_not_gate_end_to_end():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    # An MCP read carrying only an id (no free text) is not a remote-text sink, so it
+    # does not gate even under taint.
+    assert plugin._on_pre_tool_call(
+        "mcp_drive_get_file_metadata", {"id": "abc"}, session_id="s1"
+    ) is None
+
+
+# --- Fix 4: classifier input clamp fails closed (soft-DoS) --------------------
+
+
+def test_over_cap_tool_result_still_taints():
+    """An over-cap tool result must NOT be scanned-and-declared-clean: it fails closed,
+    tainting the session conservatively as `documents`, so private content hidden past
+    the byte cap cannot slip out untainted (soft-DoS guard)."""
+    plugin = load_plugin()
+    bind_owner(plugin, session_id="sCap")
+    tp = plugin.tool_policy
+    over_cap = "a" * (tp._CONTENT_CLASSIFIER_BYTE_CAP + 64)
+
+    # The classifier helpers fail closed on over-cap input, even though the content
+    # carries no private signal that a prefix scan would catch.
+    assert tp._classes_from_content(over_cap) == {"documents"}
+    assert tp._doc_content_taint_classes(over_cap) == {"documents"}
+    assert tp._web_content_taint_classes(over_cap, "sCap") == {"documents"}
+    # Under-cap clean content is unaffected.
+    assert tp._classes_from_content("hello world") == set()
+
+    # End to end: observing the over-cap result taints the session.
+    plugin._on_transform_tool_result(
+        tool_name="some_generic_reader", result=over_cap, session_id="sCap"
+    )
+    assert "documents" in plugin._session_taint("sCap")

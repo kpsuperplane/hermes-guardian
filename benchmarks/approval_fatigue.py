@@ -121,6 +121,9 @@ def _load_plugin(temp_dir: Path):
         "_ACTIVITY_DB_INITIALIZED": False,
         "_GUARDIAN_HMAC_KEY_PATH": temp_dir / ".guardian-hmac-key",
         "_LAST_ACTIVITY_PRUNE": 0.0,
+        # The benchmark drives `/guardian approve` directly, modeling the trusted local
+        # operator approving gated actions (production records the owner via the gateway).
+        "_TRUSTED_LOCAL_COMMAND_CONTEXT": True,
     }
     # Single source of truth: rebind on the `state` module so the engine observes it.
     for key, value in overrides.items():
@@ -352,6 +355,18 @@ def _run_workflow(plugin: Any, workflow: Workflow, metrics: dict[str, Any]) -> b
         platform=workflow.platform,
         sender_id=workflow.sender_id,
     )
+    # Owner-initiated (non-cron) workflows carry authorization context: the operator
+    # asked for this work. Seed a sanitized owner request so the llm verifier can
+    # corroborate auto-allows of external private exports (doc 02 §3 corroboration gate).
+    # Cron runs are unattended and deliberately get NO owner context — they cannot
+    # self-authorize high-risk egress.
+    if workflow.platform != "cron":
+        plugin._on_pre_gateway_dispatch(
+            SimpleNamespace(
+                text=f"please run the {workflow.name.replace('_', ' ')} for me",
+                source=SimpleNamespace(platform=workflow.platform, user_id=workflow.sender_id),
+            )
+        )
     complete = True
     for step in workflow.steps:
         if step.kind == "result":
@@ -402,6 +417,21 @@ def run_benchmark(*, modes: tuple[str, ...] = MODES) -> dict[str, Any]:
         "benchmark": "approval_fatigue",
         "modes": {},
     }
+    # Authenticate the owner-initiated workflows' sender so their seeded requests count
+    # as owner authorization context (the corroboration gate reads the configured-owner
+    # allowlist). Restored after the run so the process env is left unchanged.
+    _prev_allowed = os.environ.get("TELEGRAM_ALLOWED_USERS")
+    os.environ["TELEGRAM_ALLOWED_USERS"] = "bench-owner"
+    try:
+        return _run_benchmark_modes(results, modes)
+    finally:
+        if _prev_allowed is None:
+            os.environ.pop("TELEGRAM_ALLOWED_USERS", None)
+        else:
+            os.environ["TELEGRAM_ALLOWED_USERS"] = _prev_allowed
+
+
+def _run_benchmark_modes(results: dict[str, Any], modes: tuple[str, ...]) -> dict[str, Any]:
     for mode in modes:
         if mode not in MODES:
             raise ValueError(f"unsupported benchmark mode {mode!r}")

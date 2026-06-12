@@ -96,6 +96,18 @@ def test_dashboard_mutations_disabled_blocks_admin(monkeypatch):
     assert exc.value.status_code == 403
 
 
+def test_admin_gate_allows_when_no_token_configured(monkeypatch):
+    """No admin token configured (the default): the host dashboard's own authentication
+    is the gate, so the admin check passes without a Guardian token. The token is opt-in
+    hardening for direct-port exposure; the read routes never leak live approval IDs, so
+    the unauthenticated read-then-approve chain stays closed even here."""
+    api = _load_plugin_api()
+    monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN", raising=False)
+    monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", raising=False)
+    # No exception -> allowed (host auth is the gate).
+    api._require_dashboard_admin(_request())
+
+
 # --- 9. Identity/host grant raises the informational banner. --------------------------
 def test_identity_grant_raises_informational_banner():
     plugin = load_plugin()
@@ -165,8 +177,8 @@ def test_suggest_self_grant_maps_destinations_to_valid_grants():
     plugin = load_plugin()
     # Hostnames -> own-infra host grant.
     assert plugin._suggest_self_grant("docs.google.com") == {"kind": "host", "value": "docs.google.com"}
-    # MCP/store destinations -> store grant.
-    assert plugin._suggest_self_grant("mcp:notion") == {"kind": "destination", "value": "store:notion"}
+    # MCP connectors stay MCP grants; store destinations stay store grants.
+    assert plugin._suggest_self_grant("mcp:notion") == {"kind": "destination", "value": "mcp:notion"}
     assert plugin._suggest_self_grant("store:crm") == {"kind": "destination", "value": "store:crm"}
     # Pseudo-destinations, IPs, and empties are NOT one-click addable.
     for non_addable in ("", "web_search", "cron", "telegram", "127.0.0.1", "messaging"):
@@ -216,8 +228,8 @@ def test_seen_groups_messaging_by_pseudonymized_recipient():
 
 
 def test_add_to_self_suggestion_flips_resolution_external_to_self():
-    """The centerpiece interaction: claiming a seen host moves it into the self-allowlist
-    so the same destination resolves self instead of external."""
+    """The centerpiece interaction: claiming a seen destination moves it into the
+    self-allowlist so the same destination resolves self instead of external/unknown."""
     plugin = load_plugin()
     SELF = plugin._DestinationTrust.SELF
     before = plugin._resolve_destination_trust("network", "myvps.example.com", "post", "", plugin._load_privacy_config())
@@ -226,6 +238,15 @@ def test_add_to_self_suggestion_flips_resolution_external_to_self():
     assert ok
     after = plugin._resolve_destination_trust("network", "myvps.example.com", "post", "", plugin._load_privacy_config())
     assert after == SELF
+
+    mcp_suggest = plugin._suggest_self_grant("mcp:google")
+    assert mcp_suggest == {"kind": "destination", "value": "mcp:google"}
+    before_mcp = plugin._resolve_destination_trust("mcp", "google", "write", "", plugin._load_privacy_config())
+    assert before_mcp != SELF
+    ok, _ = plugin._add_self_destination(mcp_suggest["kind"], mcp_suggest["value"])
+    assert ok
+    after_mcp = plugin._resolve_destination_trust("mcp", "google", "write", "", plugin._load_privacy_config())
+    assert after_mcp == SELF
 
 
 def test_pending_block_trust_survives_store_reload():
