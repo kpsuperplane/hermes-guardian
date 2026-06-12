@@ -107,6 +107,162 @@ def _dashboard_rule_form_suggestions(
     }
 
 
+_OUTWARD_HISTORY_ACTION_FAMILIES = {
+    "mcp_write",
+    "mcp_unknown",
+    "tool_write",
+    "tool_unknown",
+    "kanban_write",
+    "web_api",
+    "model_api",
+    "homeassistant_write",
+}
+_OUTWARD_HISTORY_BUILTIN_VERB_RE = re.compile(
+    r"(?:^|[^a-z0-9])(share|invite|publish|add_collaborator|make_public|set_permissions|"
+    r"add_permission|grant)(?:[^a-z0-9]|$)",
+    re.I,
+)
+_OUTWARD_HISTORY_HINTS = frozenset({
+    "access",
+    "collaborator",
+    "collaborators",
+    "crosspost",
+    "external",
+    "grant",
+    "invite",
+    "permission",
+    "permissions",
+    "public",
+    "publish",
+    "share",
+    "sharing",
+})
+_OUTWARD_HISTORY_DETECTED_PARTS = frozenset({
+    "add",
+    "collaborator",
+    "grant",
+    "invite",
+    "make",
+    "permission",
+    "permissions",
+    "public",
+    "publish",
+    "set",
+    "share",
+})
+_OUTWARD_HISTORY_GENERIC_PARTS = frozenset({
+    "add",
+    "append",
+    "archive",
+    "batch",
+    "call",
+    "complete",
+    "create",
+    "delete",
+    "deliver",
+    "edit",
+    "fetch",
+    "find",
+    "get",
+    "insert",
+    "list",
+    "lookup",
+    "merge",
+    "modify",
+    "move",
+    "mcp",
+    "open",
+    "patch",
+    "post",
+    "query",
+    "read",
+    "rename",
+    "reply",
+    "retrieve",
+    "run",
+    "search",
+    "send",
+    "set",
+    "submit",
+    "sync",
+    "tool",
+    "update",
+    "upload",
+    "upsert",
+    "write",
+})
+
+
+def _outward_history_candidate_tokens(tool_name: Any, action_family: Any) -> list[str]:
+    family = str(action_family or "").strip().lower()
+    if family not in _OUTWARD_HISTORY_ACTION_FAMILIES:
+        return []
+    normalized = re.sub(r"[^a-z0-9_]+", "_", str(tool_name or "").strip().lower())
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    if not normalized:
+        return []
+
+    out: list[str] = []
+    match = _OUTWARD_HISTORY_BUILTIN_VERB_RE.search(normalized)
+    if match:
+        out.append(match.group(1).lower())
+
+    parts = [part for part in normalized.split("_") if part]
+    if len(parts) >= 3 and parts[0] == "mcp":
+        parts = parts[2:]
+    for index in range(len(parts)):
+        phrase_parts = parts[index:index + 3]
+        if not phrase_parts:
+            continue
+        if phrase_parts[0] in _OUTWARD_HISTORY_GENERIC_PARTS:
+            continue
+        if not any(part in _OUTWARD_HISTORY_HINTS for part in phrase_parts):
+            continue
+        if any(part in _OUTWARD_HISTORY_DETECTED_PARTS for part in phrase_parts):
+            continue
+        token = "_".join(phrase_parts)
+        if token and token not in out:
+            out.append(token)
+    return [
+        token
+        for token in out
+        if 3 <= len(token) <= 48 and token not in _OUTWARD_HISTORY_GENERIC_PARTS
+    ]
+
+
+def _outward_sharing_history_suggestions(outward_snapshot: dict[str, Any], *, limit: int = 40) -> list[str]:
+    excluded = {
+        str(item or "").strip().lower()
+        for item in list(outward_snapshot.get("builtin") or []) + list(outward_snapshot.get("extra") or [])
+    }
+    activity_store._ensure_activity_db()
+    try:
+        with activity_store._activity_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT tool_name, action_family, MAX(ts) AS latest
+                FROM activity
+                WHERE tool_name NOT IN ('', '*')
+                GROUP BY tool_name, action_family
+                ORDER BY latest DESC
+                LIMIT ?
+                """,
+                (max(1, min(int(limit or 40) * 5, 200)),),
+            ).fetchall()
+    except Exception:
+        return []
+
+    out: list[str] = []
+    for row in rows:
+        for token in _outward_history_candidate_tokens(row["tool_name"], row["action_family"]):
+            if token in excluded or token in out:
+                continue
+            out.append(token)
+            if len(out) >= limit:
+                return out
+    return out
+
+
 _RECENT_BLOCK_DECISIONS = ("blocked", "security_blocked")
 _RESOLVED_APPROVAL_DECISIONS = ("denied", "manual_approved")
 
@@ -1060,12 +1216,14 @@ def _destination_trust_seen(*, limit: int = 300, max_entries: int = 40) -> list[
 def _destination_trust_summary() -> dict[str, Any]:
     """The destination-trust summary block for status + dashboard (doc 03 §2, §3.1)."""
     self_snapshot = rules_mod._self_config_snapshot()
+    outward_sharing = rules_mod._outward_sharing_snapshot()
+    outward_sharing["suggestions"] = _outward_sharing_history_suggestions(outward_sharing)
     return {
         "tally": _destination_trust_tally(),
         "seen": _destination_trust_seen(),
         "self": self_snapshot,
         "trusted_recipients": rules_mod._trusted_recipients_snapshot(),
-        "outward_sharing": rules_mod._outward_sharing_snapshot(),
+        "outward_sharing": outward_sharing,
         "self_grants_present": rules_mod._self_grants_present(),
         "env_overrides": rules_mod._active_env_overrides(),
     }

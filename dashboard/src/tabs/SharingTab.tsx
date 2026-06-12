@@ -20,39 +20,6 @@ export interface SharingTabProps {
   onMoveRule: (rule: Rule, direction: "up" | "down") => void;
 }
 
-function AddRow(props: {
-  placeholder: string;
-  buttonLabel: string;
-  disabled?: boolean;
-  onAdd: (value: string) => void;
-}) {
-  const [value, setValue] = useState("");
-  const submit = () => {
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    props.onAdd(trimmed);
-    setValue("");
-  };
-  return (
-    <div className="hermes-guardian-dest-addrow">
-      <input
-        className="hermes-guardian-input"
-        type="text"
-        value={value}
-        placeholder={props.placeholder}
-        disabled={props.disabled}
-        onChange={(event) => setValue(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") submit();
-        }}
-      />
-      <Button variant="secondary" disabled={props.disabled} onClick={submit}>
-        {props.buttonLabel}
-      </Button>
-    </div>
-  );
-}
-
 // --- Trusted destinations: identities + commands you've consented to share with --
 function TrustedDestinations(props: { controller: DestinationsController }) {
   const { data, busy, removeTrusted } = props.controller;
@@ -280,9 +247,17 @@ function RuleCard(props: {
 // --- Outward sharing (moved out of DestinationsTab, doc 02 §Tab3.3) ----------
 function OutwardSharing(props: { controller: DestinationsController }) {
   const { data, busy, addSharing, removeSharing } = props.controller;
+  const [selectedSubtype, setSelectedSubtype] = useState("");
   const sharing = (data && data.outward_sharing) || {};
   const sharingBuiltin = sharing.builtin || [];
   const sharingExtra = sharing.extra || [];
+  const configured = new Set([...sharingBuiltin, ...sharingExtra]);
+  const sharingSuggestions = (sharing.suggestions || []).filter((item) => item && !configured.has(item));
+  const addSelectedSubtype = () => {
+    if (!selectedSubtype) return;
+    addSharing(selectedSubtype);
+    setSelectedSubtype("");
+  };
   return (
     <div className="hermes-guardian-card">
       <div className="hermes-guardian-card-head">
@@ -337,12 +312,35 @@ function OutwardSharing(props: { controller: DestinationsController }) {
             No extra sharing actions.
           </div>
         )}
-        <AddRow
-          placeholder="crosspost or send_invite"
-          buttonLabel="Add action name"
-          disabled={busy}
-          onAdd={(value) => addSharing(value)}
-        />
+        {sharingSuggestions.length ? (
+          <div className="hermes-guardian-widget-form hermes-guardian-outward-picker">
+            <select
+              className="hermes-guardian-select"
+              value={selectedSubtype}
+              disabled={busy}
+              aria-label="Choose a recent outward sharing action name"
+              onChange={(event) => setSelectedSubtype(event.target.value)}
+            >
+              <option value="">Choose from recent action history</option>
+              {sharingSuggestions.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+            <Button
+              variant="secondary"
+              disabled={busy || !selectedSubtype}
+              onClick={addSelectedSubtype}
+            >
+              Add action name
+            </Button>
+          </div>
+        ) : (
+          <div className="hermes-guardian-muted hermes-guardian-dest-empty">
+            No recent unconfigured sharing action names found yet.
+          </div>
+        )}
       </div>
     </div>
   );

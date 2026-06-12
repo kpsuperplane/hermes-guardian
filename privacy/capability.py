@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from .. import core
 from . import destinations
 from . import tool_policy
 
@@ -308,7 +309,18 @@ def _action_subtype_for(action_family: str, tool_name: str) -> str:
     match = _OUTWARD_SHARING_VERB_RE.search(lower)
     if match:
         return match.group(1).lower()
+    for subtype in _configured_outward_subtypes():
+        if re.search(r"(?:^|[^a-z0-9])" + re.escape(subtype) + r"(?:[^a-z0-9]|$)", lower):
+            return subtype
     return _FAMILY_TO_SUBTYPE.get(str(action_family or ""), "write")
+
+
+def _configured_outward_subtypes() -> list[str]:
+    try:
+        config = core._load_privacy_config()
+    except Exception:
+        return []
+    return sorted(destinations._outward_sharing_subtypes(config), key=lambda item: (-len(item), item))
 
 
 def _read_capability(tool_name: str, args: Any, session_id: str | None) -> Capability:

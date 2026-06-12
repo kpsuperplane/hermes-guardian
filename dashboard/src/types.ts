@@ -43,6 +43,7 @@ export interface TrustedCommandSuggestion {
 export interface OutwardSharing {
   builtin?: string[];
   extra?: string[];
+  suggestions?: string[];
 }
 
 export interface DestinationsSummary {

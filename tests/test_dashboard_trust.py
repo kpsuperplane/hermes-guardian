@@ -201,6 +201,55 @@ def test_policy_snapshot_exposes_destination_trust_summary():
         assert key in summary
 
 
+def test_outward_sharing_summary_suggests_custom_tokens_from_history():
+    plugin = load_plugin()
+    plugin._emit_activity(
+        "blocked",
+        session_id="s1",
+        tool_name="mcp_social_create_crosspost",
+        action_family="mcp_write",
+        destination="mcp:social",
+        data_classes=["communications"],
+        reason="requires approval",
+        destination_trust="external",
+    )
+    plugin._emit_activity(
+        "blocked",
+        session_id="s1",
+        tool_name="mcp_docs_share_document",
+        action_family="mcp_write",
+        destination="mcp:docs",
+        data_classes=["documents"],
+        reason="requires approval",
+        destination_trust="external",
+    )
+
+    suggestions = plugin._destination_trust_summary()["outward_sharing"]["suggestions"]
+    assert "crosspost" in suggestions
+    assert "share" not in suggestions
+    assert "share_document" not in suggestions
+
+    plugin._dashboard_sharing_add_action({"subtype": "crosspost"})
+    suggestions = plugin._destination_trust_summary()["outward_sharing"]["suggestions"]
+    assert "crosspost" not in suggestions
+
+
+def test_configured_custom_outward_sharing_subtype_is_detected_from_tool_name():
+    plugin = load_plugin()
+    assert plugin._action_subtype_for("mcp_write", "mcp_social_create_crosspost") == "create"
+
+    result, status = plugin._dashboard_self_add_action(
+        {"kind": "destination", "value": "mcp:social"}
+    )
+    assert status == 200 and result["ok"]
+    result, status = plugin._dashboard_sharing_add_action({"subtype": "crosspost"})
+    assert status == 200 and result["ok"]
+
+    capability = plugin.capability.classify("mcp_social_create_crosspost", {}, "s1")
+    assert capability.action_subtype == "crosspost"
+    assert capability.destination.trust == plugin._DestinationTrust.EXTERNAL
+
+
 # --- Commit 1: a pending block carries the trust pill + decision step (doc 03 §3.2). ---
 def test_pending_block_snapshot_carries_trust_and_decision_step():
     plugin = load_plugin()

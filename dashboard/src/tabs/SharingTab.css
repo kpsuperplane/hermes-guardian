@@ -50,6 +50,10 @@
   width: 100%;
 }
 
+.hermes-guardian-outward-picker .hermes-guardian-select {
+  flex: 1 1 14rem;
+}
+
 .hermes-guardian-rule-tile-track {
   align-items: stretch;
 }
