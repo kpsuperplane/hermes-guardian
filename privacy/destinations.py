@@ -1,10 +1,5 @@
 """Destination-trust resolution (doc 01).
 
-Phase 1 of the destination-trust refactor. This module is ADDITIVE / dead code:
-it is exec-loaded into the shared core namespace (see core.py
-``_CORE_LOGIC_MODULES``) and fully unit-tested in isolation, but it is NOT yet
-wired into any decision path. Wiring happens in Phase 2 (doc 02).
-
 The single public entry point is ``resolve_destination_trust``. It is a pure,
 local function: it reads only the loaded privacy config and the call arguments,
 and performs NO network I/O (no sockets, no DNS, no HTTP). A test asserts this.
@@ -15,16 +10,15 @@ an external destination as ``self``; every rule below pushes ambiguity away from
 that, and the literal final return is ``unknown`` (which the decision function
 treats exactly as ``external`` — doc 01 §3.6).
 
-This file follows the exec-loaded loader style (AGENTS.md "Loader And Namespace
-Rules"): it does NOT import sibling plugin modules; it references shared globals
-(e.g. ``_load_privacy_config``) directly. Only standard-library imports appear.
+The active capability classifier calls this resolver for sink destinations before
+the policy decision is made. The module imports ``core`` as a module object so
+tests and Hermes monkeypatches of shared config helpers are observed at call time.
 """
 
 from __future__ import annotations
 
-# Standard-library imports are fine in exec-loaded modules (AGENTS.md). ``re`` is
-# already a shared global from core.py, but importing it here too is harmless and
-# keeps this file self-describing; ``Enum`` is not otherwise imported by core.py.
+# Keep this module self-contained: ``re`` is also available through ``core``, but
+# importing it directly makes the resolver's dependencies explicit.
 import re
 from enum import Enum
 from typing import Any
@@ -396,13 +390,9 @@ def _is_public_host(host: Any) -> bool:
 
 
 # --- Facade bridging (AGENTS.md "Loader And Namespace Rules") -----------------
-# The Hermes facade (``__init__.py``) bridges only globals whose names start with
-# ``_`` (public, non-underscore names like ``resolve_destination_trust`` and the
-# ``DestinationTrust`` class are intentionally skipped, matching how existing
-# exec-loaded classes such as ``ToolAction`` stay core-only). Phase 1 resolver
-# code is dead, but the tests in tests/test_destination_trust.py drive it through
-# the facade, so we expose underscore-prefixed aliases the bridge will pick up.
-# These are plain aliases — no behavior of their own.
+# The Hermes facade (``__init__.py``) bridges selected underscore-prefixed internals.
+# These aliases give tests and dashboard-facing helpers a facade-reachable spelling
+# for the active resolver types without adding behavior of their own.
 _DestinationTrust = DestinationTrust
 
 

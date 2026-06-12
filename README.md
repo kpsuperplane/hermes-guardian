@@ -166,9 +166,11 @@ retain the prior safety.
 
 The entire risk posture lives in one policy document (the persisted Guardian config):
 privacy mode, the self allowlist (destinations / identities / hosts), declassification
-rules, and tool overrides. Existing configs keep working (older versions load with the
-conservative defaults injected). A wholly corrupt document falls back to `strict`, not
-to anything permissive.
+rules, and tool overrides. The on-disk file must use the v4 five-block schema; partial
+v4 documents fill omitted blocks from conservative defaults. Legacy or old-shape
+documents are not migrated or partially loaded: they fail closed to `strict` with a
+clear log line and must be re-authored in the v4 shape. A wholly corrupt document also
+falls back to `strict`, not to anything permissive.
 
 Security checks run before privacy checks. Privacy allow rules and approval
 commands cannot bypass Security Module blocks. Privacy rules are customization
@@ -288,13 +290,14 @@ This channel is deliberately narrow and fail-closed:
   no separate deterministic `exported_source_classes` provenance signal anymore;
   see Data Classes.)
 
-The verifier also receives the **real action payload** — with security-sensitive 
-content and credential-shaped tokens stripped — so it can check that content 
-matches the authorized intent. At-rest storage stays metadata-only apart from 
-the sanitized verdict rationale (best-effort redaction, see Limitations). 
-Enabling `llm` mode assumes the verifier LLM shares the agent's trust boundary; since 
-you choose which LLMs Hermes connects to, that assumption is yours to own. 
-The full trust-boundary rationale is in theory's 
+The verifier also receives the **real action payload** — with security-sensitive
+content and credential-shaped tokens stripped — so it can check that content
+matches the authorized intent. At-rest storage stays metadata-only apart from
+the sanitized verdict rationale (best-effort redaction, see Limitations) and the
+short-lived pending-approval permit targets described under Activity And State.
+Enabling `llm` mode assumes the verifier LLM shares the agent's trust boundary; since
+you choose which LLMs Hermes connects to, that assumption is yours to own.
+The full trust-boundary rationale is in theory's
 [Coarse declassification context](./theory.md#coarse-declassification-context).
 
 **Verifier latency.** By default the verifier runs on the agent's own model. If
@@ -901,6 +904,12 @@ verdict rationale (a best-effort-redacted, length-capped free-text string). It
 does not store raw tool arguments, email bodies, typed text, tokenized URLs,
 file contents, or message content. Recipient context is displayed as a stable
 pseudonymous `recipient_<hash>` identity rather than the raw recipient value.
+One storage exception is deliberately kept out of dashboard payloads: short-lived
+pending approvals may store bounded `permit_recipient`, `permit_host`, and
+`permit_command` values so an approved block can create a precise `mine` or
+`trust` rule. Those values are scoped to `pending_approvals`, expire with the
+approval, and are deleted when the approval is approved, dismissed, or pruned
+after expiry.
 
 ## Language Packs
 
@@ -908,7 +917,8 @@ Guardian uses declarative language packs for semantic security terms, auth-code
 labels, private-field labels, browser private-context hints, redaction markers,
 and sensitive-link terms.
 
-English is required and always enabled. Bundled pack IDs:
+English is required, always enabled, and the only pack enabled by default.
+Bundled pack IDs:
 
 ```text
 en, zh, hi, es, fr, ar, bn, pt, ru, ur, id, de, ja, pcm, mr, te, tr, ta, vi, tl, ko, fa
@@ -941,7 +951,7 @@ Persistent files live in the plugin directory (override the location with
 | File | Purpose |
 | --- | --- |
 | `guardian-rules.json` | Privacy mode, privacy allow/deny rules, security-rule toggles, and language-pack selection. |
-| `activity.sqlite3` | Sanitized activity history and pending approvals. |
+| `activity.sqlite3` | Sanitized activity history and pending approvals. Pending approval rows may temporarily hold bounded `permit_recipient`, `permit_host`, and `permit_command` values for precise `mine`/`trust` approvals; they expire with the approval and are removed on approve, dismiss, or expiry pruning. |
 | `.guardian-hmac-key` | Local key for exact-argument one-time approval binding. |
 | `.unsafe-diagnostics` | Opt-in unsafe diagnostics flag for development only. |
 
@@ -1046,10 +1056,11 @@ runtime safe by itself.
 
 ## Development
 
-Guardian is distributed as a Hermes user plugin (loaded by path), not as a
-pip-installable package, so there is no build step. Project metadata and the
-optional-dependency manifest live in `pyproject.toml`; the core plugin is pure
-standard-library Python with no runtime dependencies.
+Guardian is distributed as a Hermes user plugin (loaded by absolute path), not
+as a pip-installable package, so there is no build step. Project metadata, the
+hard runtime dependency (`phonenumbers`), and the optional-dependency manifest
+live in `pyproject.toml`; apart from phone-number classification, the core
+plugin is standard-library Python.
 
 Install the pinned dev/CI dependencies (currently just `pytest`):
 

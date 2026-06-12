@@ -11,6 +11,7 @@ placeholders.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,6 +34,23 @@ def _load_plugin_api():
 
 def _request(headers: dict | None = None):
     return SimpleNamespace(headers=headers or {})
+
+
+def _write_v4_runtime_config(plugin, dashboard_mutations: str) -> None:
+    plugin.state._PERSISTENT_RULES_PATH.write_text(
+        json.dumps(
+            {
+                "version": 4,
+                "protection": {
+                    "runtime": {
+                        "dashboard_mutations": dashboard_mutations,
+                    },
+                },
+            }
+        )
+    )
+    plugin.state._PERSISTENT_RULES_CACHE = None
+    plugin.state._PERSISTENT_RULES_MTIME = None
 
 
 # --- 8. Dashboard self-edit is admin + confirmation gated and persists. ---------------
@@ -93,6 +111,38 @@ def test_dashboard_mutations_disabled_blocks_admin(monkeypatch):
     monkeypatch.setenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", "0")
     with pytest.raises(api.HTTPException) as exc:
         api._require_dashboard_admin(_request())
+    assert exc.value.status_code == 403
+
+
+def test_dashboard_mutations_disabled_by_v4_runtime_config(monkeypatch):
+    api = _load_plugin_api()
+    monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", raising=False)
+    plugin = load_plugin()
+    _write_v4_runtime_config(plugin, "off")
+    sys.modules["_hermes_guardian_dashboard_facade"] = plugin
+    try:
+        with pytest.raises(api.HTTPException) as exc:
+            api._require_dashboard_admin(_request())
+    finally:
+        sys.modules.pop("_hermes_guardian_dashboard_facade", None)
+    assert exc.value.status_code == 403
+
+
+def test_dashboard_mutations_env_overrides_v4_runtime_config(monkeypatch):
+    api = _load_plugin_api()
+    plugin = load_plugin()
+    _write_v4_runtime_config(plugin, "off")
+    sys.modules["_hermes_guardian_dashboard_facade"] = plugin
+    try:
+        monkeypatch.setenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", "1")
+        api._require_dashboard_admin(_request())
+
+        _write_v4_runtime_config(plugin, "on")
+        monkeypatch.setenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", "0")
+        with pytest.raises(api.HTTPException) as exc:
+            api._require_dashboard_admin(_request())
+    finally:
+        sys.modules.pop("_hermes_guardian_dashboard_facade", None)
     assert exc.value.status_code == 403
 
 

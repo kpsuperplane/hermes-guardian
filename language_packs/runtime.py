@@ -62,7 +62,7 @@ def _pack_exists(pack_id: str) -> bool:
 
 
 _ALL_PACK_IDS = tuple(pack_id for pack_id in _KNOWN_LANGUAGE_PACKS if _pack_exists(pack_id))
-_DEFAULT_LANGUAGE_PACKS = _ALL_PACK_IDS or ("en",)
+_DEFAULT_LANGUAGE_PACKS = ("en",) if "en" in _ALL_PACK_IDS else (_ALL_PACK_IDS[:1] or ("en",))
 
 
 @dataclass(frozen=True)

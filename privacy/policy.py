@@ -1,20 +1,14 @@
-"""The single decision function ``decide`` (doc 02 §3, §6).
-
-Phase 2 of the destination-trust refactor. ADDITIVE / SHADOW: ``decide`` is the one
-arbiter (besides the security layer, which runs first and is unchanged). It is run
-alongside the authoritative decision and only logged in Phase 2; it becomes
-authoritative in Phase 3.
+"""The single privacy decision function ``decide`` (doc 02 §3, §6).
 
 ``decide`` is TOTAL and PURE: no side effects, no exceptions, no I/O. A property test
 (``tests/test_policy_engine.py``) asserts this. It reasons over the AMBIENT session taint
 (provenance retired, doc 02 §4) — never inferring "absence of detected private content
 means safe" (charter invariant #4).
 
-This file follows the exec-loaded loader style (AGENTS.md "Loader And Namespace Rules"):
-it does NOT import sibling plugin modules; it references shared globals
-(``DestinationTrust``, ``PRIVATE_POLICY_CLASSES``, ``_persistent_privacy_rules``,
-``re``, …) directly. Loaded AFTER ``privacy/capability`` and before ``privacy/module``
-(see ``core.py`` ``_CORE_LOGIC_MODULES``). Only standard-library imports appear.
+``decide`` is the deterministic arbiter for privacy egress after the security layer
+has already had first refusal. Verifier-assisted modes are modeled as caller-owned
+upgrades from ``APPROVE``; the pure policy function only returns the deterministic
+outcome for the current capability, taint, purpose, and mode.
 """
 
 from __future__ import annotations
@@ -29,8 +23,8 @@ from . import rules as rules_mod
 # --- Decision outcomes (doc 02 §3) -------------------------------------------
 # The codebase represents outcomes as plain strings in activity rows and hook returns
 # ("blocked"/"allowed"/"security_blocked"). ``decide`` works in a small, typed vocabulary
-# of three policy outcomes; the caller maps these onto the hook/activity strings in
-# Phase 3. APPROVE is "gate for human approval" — a GATE, not an allow.
+# of three policy outcomes; the caller maps these onto hook/activity behavior.
+# APPROVE is "gate for human approval" — a GATE, not an allow.
 ALLOW = "allow"
 APPROVE = "approve"
 BLOCK = "block"
@@ -66,9 +60,8 @@ def _mode_allows_verifier_upgrade(mode: Any) -> bool:
     """True iff ``mode`` permits the caller's verifier to upgrade a step-6 APPROVE to
     ALLOW (doc 02 §6). ``strict``/``read-only``/``off`` never upgrade.
 
-    SEAM (doc 02 §6): in shadow Phase 2 ``decide`` always returns the deterministic
-    APPROVE; the verifier-upgrade is wired through the caller in ``privacy/module.py``
-    /``privacy/llm.py``, gated by this predicate. ``decide`` stays pure.
+    The verifier-upgrade is wired through the caller in ``privacy/module.py`` /
+    ``privacy/llm.py``, gated by this predicate. ``decide`` stays pure.
     """
     return str(mode or "").strip().lower().replace("_", "-") in _VERIFIER_MODES
 

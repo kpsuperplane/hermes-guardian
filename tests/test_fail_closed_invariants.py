@@ -254,6 +254,17 @@ def test_tainted_final_response_to_unknown_destination_is_suppressed():
     assert "suppressed" in out.lower()
 
 
+def test_tainted_final_response_with_bound_owner_but_missing_destination_metadata_is_suppressed():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+
+    out = plugin._on_transform_llm_output("private summary", session_id="s1")
+
+    assert out is not None
+    assert "suppressed" in out.lower()
+
+
 def test_tainted_final_response_to_owner_private_destination_is_allowed():
     plugin = load_plugin()
     bind_owner(plugin)
@@ -266,6 +277,48 @@ def test_tainted_final_response_to_owner_private_destination_is_allowed():
         sender_id="owner",
         chat_type="private",
     )
+
+    assert out is None
+
+
+def test_tainted_final_response_to_matching_sender_without_private_chat_metadata_is_suppressed():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+
+    out = plugin._on_transform_llm_output(
+        "private summary",
+        session_id="s1",
+        platform="telegram",
+        sender_id="owner",
+    )
+
+    assert out is not None
+    assert "suppressed" in out.lower()
+
+
+def test_tainted_final_response_to_private_chat_without_sender_metadata_is_suppressed():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+
+    out = plugin._on_transform_llm_output(
+        "private summary",
+        session_id="s1",
+        platform="telegram",
+        chat_type="private",
+    )
+
+    assert out is not None
+    assert "suppressed" in out.lower()
+
+
+def test_tainted_final_response_to_cli_destination_is_allowed_without_sender_metadata():
+    plugin = load_plugin()
+    plugin._on_pre_llm_call(session_id="s1", platform="cli")
+    plugin._taint_session("s1", {"communications"})
+
+    out = plugin._on_transform_llm_output("private summary", session_id="s1", platform="cli")
 
     assert out is None
 

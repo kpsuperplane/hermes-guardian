@@ -75,8 +75,14 @@ def _json_result(result: tuple[dict[str, Any], int]) -> JSONResponse:
 
 
 def _dashboard_mutations_enabled() -> bool:
-    raw = os.environ.get("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", "1").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+    raw = os.environ.get("HERMES_GUARDIAN_DASHBOARD_MUTATIONS")
+    if raw is not None and str(raw).strip():
+        return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+    config = _guardian()._load_privacy_config()
+    dashboard = config.get("dashboard") if isinstance(config, dict) else {}
+    mode = str((dashboard or {}).get("mutations") or "auto").strip().lower()
+    return mode != "off"
 
 
 def _request_header(request: Request, name: str) -> str:

@@ -541,16 +541,14 @@ def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_r
     return {"action": "block", "message": approvals._guardian_block_message(approval)}
 
 
-# --- decide() is authoritative (Phase 3, doc 04 §5) --------------------------
-# The classify+decide engine now drives the privacy egress decision. The old scattered
-# family/destination gating and the taint->gate branching it owned are DELETED; their
-# behavior lives in ``decide`` (doc 02 §3). What remains here is the SURROUNDING
-# mechanics that decide does not own: the security-first short-circuit (runs before
-# decide, unchanged), the read-side classifier helpers, the approval-shape construction,
-# the persistent approval-source matching (``_approval_source`` — doc 04 §5
-# "Persistent privacy.rules semantics"), the verifier upgrade in llm mode, the read-only low-risk
-# auto-approve preset, activity emission, cron failure notification, and approval
-# binding.
+# --- Authoritative privacy egress decision (doc 04 §5) ------------------------
+# The classify+decide engine drives the privacy egress decision. This module owns the
+# surrounding mechanics that ``decide`` intentionally leaves outside the pure policy
+# function: the security-first short-circuit, read-side classifier helpers,
+# approval-shape construction, persistent approval-source matching
+# (``_approval_source`` — doc 04 §5 "Persistent privacy.rules semantics"), verifier
+# upgrade in llm mode, read-only low-risk auto-approve preset, activity emission, cron
+# failure notification, and approval binding.
 #
 # Mapping (doc 02 §3 -> this function):
 #   decide ALLOW   -> allow the call (intra-boundary self/draft write, or no private
@@ -989,16 +987,18 @@ def _final_destination_is_owner_private(
 ) -> bool:
     state = tool_policy._ensure_session(session_id)
     platform = str(platform or state.get("platform") or "unknown").strip().lower()
-    sender_id = str(sender_id or state.get("sender_id") or "").strip()
+    sender_id = str(sender_id or "").strip()
     chat_type = str(chat_type or "").strip().lower()
     if platform == "cli":
         return True
     if chat_type in {"group", "supergroup", "channel", "guild", "server", "room"}:
         return False
+    if chat_type not in {"private", "dm", "direct", "direct_message", "im", "one_to_one", "1:1"}:
+        return False
     owner_hash = str(state.get("owner_hash") or "")
     if sender_id:
         return tool_policy._hash_identity(platform or "unknown", sender_id) == owner_hash
-    return bool(owner_hash and platform and platform != "unknown")
+    return False
 
 
 def _privacy_transform_llm_output(response_text: str = "", **kwargs: Any) -> str | None:

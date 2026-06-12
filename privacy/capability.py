@@ -1,18 +1,12 @@
 """Capability model: one resolution that produces a ``Capability`` (doc 02 §2, §5, §7).
 
-Phase 2 of the destination-trust refactor. ADDITIVE / SHADOW: this module builds a
-``Capability`` for a tool call by ROUTING the existing classifier logic in
-``privacy/tool_policy.py`` (the §7 old->new mapping) and resolving the destination's
-trust via the Phase 1 resolver (``resolve_destination_trust`` in
-``privacy/destinations.py``). It is run alongside the authoritative decision in shadow
-mode (``privacy/module.py``); it is NOT yet authoritative (that is Phase 3).
+This module builds a ``Capability`` for a tool call by routing the existing action
+classifier in ``privacy/tool_policy.py`` and resolving the destination's trust via
+``privacy/destinations.py``. ``privacy/module.py`` feeds the resulting capability to
+the authoritative ``decide`` function.
 
-This file follows the exec-loaded loader style (AGENTS.md "Loader And Namespace
-Rules"): it does NOT import sibling plugin modules; it references shared globals
-(``_egress_tool_action``, ``_session_taint``, ``resolve_destination_trust``,
-``_classes_from_content``, ``_mcp_destination``, ``_browser_host``, …) directly. It is
-loaded AFTER ``privacy/tool_policy`` and ``privacy/destinations`` (see
-``core.py`` ``_CORE_LOGIC_MODULES``). Only standard-library imports appear.
+The module imports sibling logic as module objects so classifier and resolver
+monkeypatches are observed at call time.
 
 The policy-class / tag split (doc 02 §5): the fine source classes
 (communications/contacts/calendar/documents/memory) collapse to the single POLICY
@@ -343,10 +337,10 @@ def _read_capability(tool_name: str, args: Any, session_id: str | None) -> Capab
 def classify(tool_name: str = "", args: Any = None, session: Any = None) -> Capability:
     """Resolve a tool call to a ``Capability`` (doc 02 §2, §7).
 
-    ROUTES the existing classifier: ``_egress_tool_action`` decides whether the call is a
-    sink and which ``action_family`` / destination it has (the §7 family table, MCP /
-    browser / safe-destination helpers). A non-sink call is a read. The destination
-    string is fed to ``resolve_destination_trust`` (Phase 1) to get ``Destination.trust``.
+    Routes the existing classifier: ``_egress_tool_action`` decides whether the call is
+    a sink and which ``action_family`` / destination it has (the §7 family table, MCP /
+    browser / safe-destination helpers). A non-sink call is a read. Sink destination
+    data is fed to ``resolve_destination_trust`` to get ``Destination.trust``.
 
     ``session`` is the session id (string) or None — accepted positionally to match the
     doc 02 signature ``classify(tool_name, args, session)``.
@@ -360,7 +354,7 @@ def classify(tool_name: str = "", args: Any = None, session: Any = None) -> Capa
     action_family, _legacy_destination = action.as_tuple()
     if _is_draft_compose(tool_name, action_family):
         # Route a compose-draft to the user's own draft store (doc 02 §7). Resolves to
-        # self via the "draft:*" allowlist, removing the old gate.
+        # self via the "draft:*" allowlist.
         dest_kind = "draft"
         dest_id = _dest_id_for_action(action_family, action) or "draft"
         subtype = "draft"

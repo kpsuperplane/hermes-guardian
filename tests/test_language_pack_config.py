@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 
 from support import *  # noqa: F403
-from language_packs.runtime import _ALL_PACK_IDS
 
 
 def test_language_packs_default_enabled_in_policy_snapshot():
@@ -13,26 +12,26 @@ def test_language_packs_default_enabled_in_policy_snapshot():
 
     assert packs["en"]["enabled"] is True
     assert packs["en"]["required"] is True
-    assert packs["es"]["enabled"] is True
+    assert packs["es"]["enabled"] is False
 
 
-def test_disabling_spanish_language_pack_updates_scanner_and_json(tmp_path):
+def test_enabling_spanish_language_pack_updates_scanner_and_json(tmp_path):
     plugin = load_plugin()
     plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin.state._PERSISTENT_RULES_CACHE = None
 
-    assert plugin._sensitive_reason("Restablecer tu contraseña ahora") == "password reset"
+    assert plugin._sensitive_reason("Restablecer tu contraseña ahora") is None
 
-    ok, message = plugin._set_language_pack("es", False)
+    ok, message = plugin._set_language_pack("es", True)
 
     assert ok is True
-    assert "Disabled language pack es" in message
-    assert plugin._sensitive_reason("Restablecer tu contraseña ahora") is None
+    assert "Enabled language pack es" in message
+    assert plugin._sensitive_reason("Restablecer tu contraseña ahora") == "password reset"
     assert plugin._sensitive_reason("Reset your password now") == "password reset"
     data = json.loads((tmp_path / "rules.json").read_text())
     # v4 on-disk: protection.language_packs is a {pack_id: bool} toggle map.
     enabled = {pack_id for pack_id, on in data["protection"]["language_packs"].items() if on}
-    assert enabled == {pack_id for pack_id in _ALL_PACK_IDS if pack_id != "es"}
+    assert enabled == {"en", "es"}
 
 
 def test_language_pack_can_be_disabled_by_direct_json_edit(tmp_path):
@@ -62,7 +61,7 @@ def test_privacy_and_security_saves_preserve_language_pack_config(tmp_path):
     plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin.state._PERSISTENT_RULES_CACHE = None
 
-    assert plugin._set_language_pack("es", False)[0]
+    assert plugin._set_language_pack("es", True)[0]
     assert plugin._set_privacy_mode("read-only")[0]
     assert plugin._set_security_rule("sensitive_links", False)[0]
 
@@ -70,7 +69,7 @@ def test_privacy_and_security_saves_preserve_language_pack_config(tmp_path):
 
     assert data["review"]["mode"] == "read-only"
     enabled = {pack_id for pack_id, on in data["protection"]["language_packs"].items() if on}
-    assert enabled == {pack_id for pack_id in _ALL_PACK_IDS if pack_id != "es"}
+    assert enabled == {"en", "es"}
 
 
 def test_english_language_pack_cannot_be_disabled():
@@ -80,21 +79,21 @@ def test_english_language_pack_cannot_be_disabled():
 
     assert ok is False
     assert "English language pack is required" in message
-    assert plugin._language_pack_ids() == list(_ALL_PACK_IDS)
+    assert plugin._language_pack_ids() == ["en"]
 
 
 def test_language_pack_slash_command_lists_and_toggles_packs():
     plugin = load_plugin()
 
     listing = plugin._handle_guardian_command("protection language-packs")
-    disabled = plugin._handle_guardian_command("protection language-packs disable es")
-    enabled = plugin._handle_guardian_command("protection languages enable es")
+    enabled = plugin._handle_guardian_command("protection language-packs enable es")
+    listing_after_enable = plugin._handle_guardian_command("protection language-packs")
 
     assert "Hermes Guardian language packs" in listing
     assert "en: enabled required" in listing
-    assert "es: enabled" in listing
-    assert "Disabled language pack es" in disabled
+    assert "es: disabled" in listing
     assert "Enabled language pack es" in enabled
+    assert "es: enabled" in listing_after_enable
 
 
 def test_non_owner_cannot_toggle_language_pack():

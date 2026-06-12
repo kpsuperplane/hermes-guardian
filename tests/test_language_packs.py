@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from language_packs.runtime import (
     _ALL_PACK_IDS,
+    _DEFAULT_LANGUAGE_PACKS,
     _available_language_packs,
     _compile_language_packs,
     _enabled_pack_ids,
@@ -32,7 +33,8 @@ def test_bundled_language_packs_validate():
 
 
 def test_language_pack_selection_defaults_and_forces_english():
-    assert _enabled_pack_ids("") == _ALL_PACK_IDS
+    assert _DEFAULT_LANGUAGE_PACKS == ("en",)
+    assert _enabled_pack_ids("") == ("en",)
     assert _enabled_pack_ids("es") == ("en", "es")
     assert _enabled_pack_ids("all") == _ALL_PACK_IDS
 
@@ -42,7 +44,9 @@ def test_available_language_pack_metadata_lists_bundled_packs():
 
     assert packs["en"]["name"] == "English"
     assert packs["en"]["required"] is True
+    assert packs["en"]["default_enabled"] is True
     assert packs["es"]["name"] == "Spanish"
+    assert packs["es"]["default_enabled"] is False
     assert packs["zh"]["name"] == "Chinese"
     assert packs["ar"]["name"] == "Arabic"
     assert set(packs) == set(_ALL_PACK_IDS)

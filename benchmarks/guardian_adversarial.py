@@ -262,6 +262,9 @@ def run_benchmark(*, corpus_path: Path = CORPUS_PATH) -> dict[str, Any]:
     cases = list(corpus["cases"])
     with tempfile.TemporaryDirectory(prefix="hermes-guardian-adversarial-") as temp_name:
         plugin = _load_plugin(Path(temp_name))
+        config = plugin._load_privacy_config()
+        config["language_packs"] = {"enabled": ["all"]}
+        plugin._save_privacy_config(config)
         results = [_run_case(plugin, case) for case in cases]
         sanitization_violations = _scan_sanitization(
             plugin,

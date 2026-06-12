@@ -78,11 +78,10 @@ _DEFAULT_RETENTION_MAX_ROWS = 100
 _DEFAULT_RETENTION_MAX_AGE_DAYS = 7
 _DEFAULT_DASHBOARD_MUTATIONS = "auto"
 _DEFAULT_DASHBOARD_ADMIN_TOKEN_ENV = "HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN"
-# --- Destination-trust config defaults (doc 01 §4; Phase 1 plumbing) ---------
+# --- Destination-trust config defaults (doc 01 §4) ----------------------------
 # These seed the `self` / `trusted_recipients` / `outward_sharing` blocks of the
 # privacy config. The destination-trust resolver (privacy/destinations.py) reads
-# them. Phase 1 is additive: these blocks are parsed/normalized/defaulted, but no
-# decision path consumes them yet.
+# them during active capability classification.
 #
 # Conservative-but-useful defaults (doc 01 §4):
 #  - destinations: the first-party single-operator-owned Hermes stores + draft:*
@@ -624,10 +623,15 @@ def _language_pack_ids_from_config(data: dict[str, Any]) -> list[str]:
 def _apply_language_pack_config(data: dict[str, Any]) -> None:
     global _LANGUAGE_PACK_APPLIED_IDS
     ids = tuple(_language_pack_ids_from_config(data))
-    if ids == _LANGUAGE_PACK_APPLIED_IDS:
+    applied_ids = tuple(getattr(core._security._COMPILED_LANGUAGE_PACKS, "ids", ()))
+    if ids == _LANGUAGE_PACK_APPLIED_IDS and ids == applied_ids:
+        core._PRIVATE_FIELD_RE = core._security._PRIVATE_FIELD_RE
+        core._LANGUAGE_PACKS = core._security._COMPILED_LANGUAGE_PACKS
         return
     try:
         core._security._set_enabled_language_packs(",".join(ids))
+        core._PRIVATE_FIELD_RE = core._security._PRIVATE_FIELD_RE
+        core._LANGUAGE_PACKS = core._security._COMPILED_LANGUAGE_PACKS
         _LANGUAGE_PACK_APPLIED_IDS = ids
     except Exception as exc:
         core.logger.warning("%s: failed to apply language packs %s: %s", core._PLUGIN_NAME, ",".join(ids), exc)
@@ -847,7 +851,7 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
             "llm_verifier_model": _normalize_verifier_model(review.get("verifier_model")),
             # 3 — SHARING: standing authorization (decide step 5).
             "rules": _v4_sharing_rules(sharing.get("rules")),
-            # 5 — PROTECTION: tool classification overrides (engine plumbing).
+            # 5 — PROTECTION: tool classification overrides.
             "tools": _normalize_tool_overrides(protection.get("tools")),
         },
         # 2 — WHAT'S YOURS: destination trust (decide steps 2–3).
@@ -1093,11 +1097,9 @@ def _save_privacy_config(data: dict[str, Any]) -> bool:
 def _config_for_save(data: dict[str, Any], **overrides: Any) -> dict[str, Any]:
     """Rebuild the full config dict for a save, preserving EVERY block.
 
-    Phase 1 carryover bug fix (doc 03 carryover note): the rule-mutation helpers used
-    to rebuild the saved config from only version/privacy/security/language_packs, so an
-    operator-customized ``self`` / ``trusted_recipients`` / ``outward_sharing`` (and the
-    new ``retention`` / ``dashboard``) block would be DROPPED — re-defaulted on the next
-    mode/rule save. This helper round-trips all blocks through every mutation: it starts
+    Rule-mutation helpers preserve operator-customized ``self``,
+    ``trusted_recipients``, ``outward_sharing``, ``retention``, and ``dashboard``
+    blocks by round-tripping all blocks through every mutation. This helper starts
     from the loaded config and applies only the block(s) the caller is changing. Each
     mutation helper passes the one or two blocks it touches as ``overrides``; the rest
     survive verbatim (re-normalized on save, which is idempotent for an already-valid
@@ -1530,7 +1532,7 @@ def _tool_override_for(tool_name: str) -> dict[str, Any] | None:
 # --- Destination-trust config read/mutation (doc 03 §1.2, §2) ----------------
 # These expose the `self` / `trusted_recipients` / `outward_sharing` blocks for the
 # slash commands and dashboard. Every mutation round-trips the full config via
-# _config_for_save, so an edit to one block never drops another (the carryover fix).
+# _config_for_save, so an edit to one block never drops another.
 _SELF_DESTINATION_KINDS = {"destination", "identity", "host"}
 
 
@@ -1805,7 +1807,7 @@ def _remove_outward_sharing_subtype(subtype: str) -> tuple[bool, str]:
 
 # --- Retention / dashboard settings with env overrides (doc 03 §1.2) ----------
 def _retention_setting(key: str, env_var: str, default: int) -> tuple[int, bool]:
-    """Effective retention value + whether an env var is shadowing the document.
+    """Effective retention value + whether an env var overrides the document.
 
     The document is the source of truth, but the env var still overrides for ops; the
     boolean lets `/guardian status` surface the override so it is never invisible.
@@ -1834,7 +1836,7 @@ def _dashboard_setting(key: str, env_var: str, default: str) -> tuple[str, bool]
 
 
 def _active_env_overrides() -> list[str]:
-    """Labels for env vars currently shadowing the named config (doc 03 §1.2, §2).
+    """Labels for env vars currently overriding named config (doc 03 §1.2, §2).
 
     Surfaced in `/guardian status` so an operator can see which posture knobs are being
     driven by the environment rather than the policy document.

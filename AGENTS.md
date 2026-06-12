@@ -24,9 +24,10 @@ The plugin is distributed as a Hermes user plugin (cloned into
 `~/.hermes/plugins/hermes-guardian` and loaded by absolute path), not as a
 pip-installable package, so there is no `[build-system]` and no build step.
 
-`pyproject.toml` provides project metadata, a manifest of optional dependencies
-(`dashboard`, `telegram`, `dev` extras), and pytest configuration. The core
-plugin is pure standard-library Python with no runtime dependencies.
+`pyproject.toml` provides project metadata, the hard runtime dependency
+(`phonenumbers`), a manifest of optional dependencies (`dashboard`, `telegram`,
+`dev` extras), and pytest configuration. Apart from phone-number
+classification, the core plugin is standard-library Python.
 `requirements-dev.txt` pins the dev/CI dependencies (currently just `pytest`).
 There is no full transitive lockfile.
 

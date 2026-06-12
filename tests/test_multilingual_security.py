@@ -7,8 +7,16 @@ import pytest
 from support import *  # noqa: F403
 
 
-def test_spanish_security_sensitive_reasons_detected():
+def load_all_language_plugin():
     plugin = load_plugin()
+    config = plugin._load_privacy_config()
+    config["language_packs"] = {"enabled": ["all"]}
+    assert plugin._save_privacy_config(config)
+    return plugin
+
+
+def test_spanish_security_sensitive_reasons_detected():
+    plugin = load_all_language_plugin()
 
     cases = [
         ("Restablecer tu contraseña ahora", "password reset"),
@@ -25,7 +33,7 @@ def test_spanish_security_sensitive_reasons_detected():
 
 
 def test_spanish_sensitive_link_blocks_tool_args():
-    plugin = load_plugin()
+    plugin = load_all_language_plugin()
 
     result = plugin._on_pre_tool_call(
         "browser_navigate",
@@ -40,7 +48,7 @@ def test_spanish_sensitive_link_blocks_tool_args():
 
 
 def test_spanish_private_field_labels_taint_content_and_args():
-    plugin = load_plugin()
+    plugin = load_all_language_plugin()
     bind_owner(plugin)
 
     result = plugin._on_pre_tool_call(
@@ -55,7 +63,7 @@ def test_spanish_private_field_labels_taint_content_and_args():
 
 
 def test_spanish_browser_private_context_marks_browser_private_input():
-    plugin = load_plugin()
+    plugin = load_all_language_plugin()
     bind_owner(plugin)
     plugin._set_browser_host("s1", "https://example.com/cuenta")
 
@@ -72,7 +80,7 @@ def test_spanish_browser_private_context_marks_browser_private_input():
 
 
 def test_spanish_security_sensitive_final_output_suppressed():
-    plugin = load_plugin()
+    plugin = load_all_language_plugin()
 
     transformed = plugin._on_transform_llm_output("Tu código de verificación es 123456")
 
@@ -80,7 +88,7 @@ def test_spanish_security_sensitive_final_output_suppressed():
 
 
 def test_spanish_sensitive_tool_result_suppressed():
-    plugin = load_plugin()
+    plugin = load_all_language_plugin()
 
     transformed = plugin._on_transform_tool_result(
         tool_name="mcp_gmail_read",
@@ -124,7 +132,7 @@ def test_spanish_sensitive_tool_result_suppressed():
     ],
 )
 def test_world_language_security_sensitive_reasons_detected(text, expected):
-    plugin = load_plugin()
+    plugin = load_all_language_plugin()
 
     assert plugin._sensitive_reason(text) == expected
 
@@ -141,7 +149,7 @@ def test_world_language_security_sensitive_reasons_detected(text, expected):
     ],
 )
 def test_world_language_auth_code_labels_detected(text):
-    plugin = load_plugin()
+    plugin = load_all_language_plugin()
 
     assert plugin._sensitive_reason(text) == "auth code"
 
@@ -156,7 +164,7 @@ def test_world_language_auth_code_labels_detected(text):
     ],
 )
 def test_world_language_private_field_labels_taint_args(query, needle):
-    plugin = load_plugin()
+    plugin = load_all_language_plugin()
     bind_owner(plugin)
 
     result = plugin._on_pre_tool_call(
@@ -180,7 +188,7 @@ def test_world_language_private_field_labels_taint_args(query, needle):
     ],
 )
 def test_world_language_browser_private_context_terms_mark_private_input(snapshot):
-    plugin = load_plugin()
+    plugin = load_all_language_plugin()
     bind_owner(plugin)
     plugin._set_browser_host("s1", "https://example.com/account")
 
@@ -202,7 +210,7 @@ def test_world_language_browser_private_context_terms_mark_private_input(snapsho
     ],
 )
 def test_world_language_sensitive_links_block_tool_args(url):
-    plugin = load_plugin()
+    plugin = load_all_language_plugin()
 
     result = plugin._on_pre_tool_call(
         "browser_navigate",
@@ -232,7 +240,7 @@ def test_world_language_sensitive_links_block_tool_args(url):
     ],
 )
 def test_oauth_code_param_is_not_a_sensitive_link(url):
-    plugin = load_plugin()
+    plugin = load_all_language_plugin()
 
     # The scanner sees no sensitive-link signal in a bare "code" query parameter.
     assert plugin._sensitive_reason(url) is None

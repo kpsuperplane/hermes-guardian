@@ -69,7 +69,11 @@ def _purge_test_tmp_artifacts() -> None:
     cleans up after itself and inherits a clean slate from prior runs.
     """
     tmp = Path("/tmp")
-    for pattern in ("hermes-guardian-test-activity-*", "hermes-guardian-test-hmac-*"):
+    for pattern in (
+        "hermes-guardian-test-activity-*",
+        "hermes-guardian-test-hmac-*",
+        "hermes-guardian-test-rules-*",
+    ):
         for path in tmp.glob(pattern):
             try:
                 path.unlink()
