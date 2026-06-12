@@ -218,6 +218,14 @@ def _redacted_policy_snapshot() -> dict[str, Any]:
     return snapshot
 
 
+def _redacted_activity(rows: Any) -> list[dict[str, Any]]:
+    """Activity history rows carry the same live approve credential on pending blocks
+    (`runtime/activity_rows.py`), so the unauthenticated activity read routes redact it
+    exactly like the policy/approvals routes do. The engine payload keeps the id for the
+    authenticated slash/CLI surfaces; only the open HTTP channel blanks it."""
+    return _redact_approval_ids(rows)
+
+
 @router.get("/policy")
 async def policy() -> dict[str, Any]:
     return _redacted_policy_snapshot()
@@ -237,7 +245,7 @@ async def destinations() -> dict[str, Any]:
 @router.get("/activity")
 async def activity(limit: int = 200) -> dict[str, Any]:
     safe_limit = max(1, min(int(limit), 1000))
-    return {"activity": _guardian()._grouped_activity_rows({}, limit=safe_limit)}
+    return {"activity": _redacted_activity(_guardian()._grouped_activity_rows({}, limit=safe_limit))}
 
 
 @router.get("/approvals")
@@ -286,12 +294,18 @@ async def sharing_impact(body: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/activity/datatables")
 async def activity_datatables(request: Request) -> dict[str, Any]:
-    return _guardian()._activity_datatables_payload(dict(request.query_params))
+    payload = _guardian()._activity_datatables_payload(dict(request.query_params))
+    payload["data"] = _redacted_activity(payload.get("data"))
+    return payload
 
 
 @router.get("/activity/turns")
 async def activity_turns(request: Request) -> dict[str, Any]:
-    return _guardian()._activity_turns_payload(dict(request.query_params))
+    payload = _guardian()._activity_turns_payload(dict(request.query_params))
+    for turn in payload.get("turns") or []:
+        if isinstance(turn, dict):
+            turn["rows"] = _redacted_activity(turn.get("rows"))
+    return payload
 
 
 @router.post("/privacy/mode")

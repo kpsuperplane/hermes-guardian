@@ -701,6 +701,59 @@ def test_recent_blocks_in_policy_route_redact_approval_id(monkeypatch):
     assert real_id not in json.dumps(policy)
 
 
+def _activity_leak_setup(api, plugin):
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    plugin._on_pre_tool_call(
+        "send_message", {"to": "stranger@example.com", "text": "hi"}, session_id="s1"
+    )
+    real_id = first_pending_id(plugin)
+    assert re.fullmatch(r"[0-9]{4}", real_id), "precondition: a live 4-digit approval id exists"
+    return real_id
+
+
+def test_unauthenticated_activity_route_redacts_live_approval_id():
+    api = _load_plugin_api()
+    plugin = load_plugin()
+    real_id = _activity_leak_setup(api, plugin)
+
+    result = _drive_route_with_live_plugin(api, plugin, api.activity)
+
+    rows = [r for r in result["activity"] if r.get("action_family") == "message_send"]
+    assert rows, "the pending block should still surface in activity history"
+    assert rows[0]["approval_id"] == ""
+    assert real_id not in json.dumps(result)
+
+
+def test_unauthenticated_activity_datatables_route_redacts_live_approval_id():
+    api = _load_plugin_api()
+    plugin = load_plugin()
+    real_id = _activity_leak_setup(api, plugin)
+
+    request = SimpleNamespace(headers={}, query_params={"draw": "1", "start": "0", "length": "25"})
+    result = _drive_route_with_live_plugin(api, plugin, lambda: api.activity_datatables(request))
+
+    rows = [r for r in result["data"] if r.get("action_family") == "message_send"]
+    assert rows, "the pending block should still surface in the datatables payload"
+    assert rows[0]["approval_id"] == ""
+    assert real_id not in json.dumps(result)
+
+
+def test_unauthenticated_activity_turns_route_redacts_live_approval_id():
+    api = _load_plugin_api()
+    plugin = load_plugin()
+    real_id = _activity_leak_setup(api, plugin)
+
+    request = SimpleNamespace(headers={}, query_params={"draw": "1", "start": "0", "length": "25"})
+    result = _drive_route_with_live_plugin(api, plugin, lambda: api.activity_turns(request))
+
+    assert result["turns"], "the pending block should still surface as a turn"
+    for turn in result["turns"]:
+        for row in turn["rows"]:
+            assert row.get("approval_id", "") == ""
+    assert real_id not in json.dumps(result)
+
+
 # --- Security: the approve route fails closed without admin auth (no token configured) -
 def test_approve_route_without_token_passes_host_auth_gate(monkeypatch):
     """DEFAULT config (no token): the host dashboard's own authentication is the gate, so
