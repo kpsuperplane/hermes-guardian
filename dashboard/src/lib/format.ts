@@ -20,6 +20,23 @@ export function timeText(seconds: unknown): string {
   return new Date(value * 1000).toLocaleString();
 }
 
+export function dateTimeNoYearText(seconds: unknown): string {
+  const value = Number(seconds || 0);
+  if (!Number.isFinite(value) || value <= 0) return "n/a";
+  return new Date(value * 1000).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+}
+
+export function activityTimeNoYearText(value: unknown, fallbackSeconds: unknown): string {
+  const out = text(value).replace(/([A-Z][a-z]{2} \d{1,2}), \d{4} /g, "$1, ");
+  return out || dateTimeNoYearText(fallbackSeconds);
+}
+
 export function latencyText(milliseconds: unknown): string {
   const value = Number(milliseconds || 0);
   if (!Number.isFinite(value) || value <= 0) return "";

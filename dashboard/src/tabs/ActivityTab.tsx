@@ -3,7 +3,7 @@ import { Button } from "@/components/Button";
 import { DecisionStep } from "@/components/DecisionStep";
 import { TrustPill } from "@/components/TrustPill";
 import { HISTORY_PAGE_SIZES } from "@/constants";
-import { classesText, latencyText, text, timeText } from "@/lib/format";
+import { activityTimeNoYearText, classesText, latencyText, text, timeText } from "@/lib/format";
 import type { TabId } from "@/lib/deepLinks";
 import type { ActivityRow, ActivityTurn, PendingApproval, PermitOption } from "@/types";
 import type { ApprovalAction } from "@/hooks/useGuardianActions";
@@ -302,9 +302,9 @@ function TurnCard(props: { turn: ActivityTurn; onNavigate: (tab: TabId) => void 
   const rows = turn.rows || [];
   const prompt = text(turn.user_prompt);
   const first = rows[0] || {};
-  const when = text(first.time, timeText(turn.ts));
-  const n = rows.length;
+  const when = activityTimeNoYearText(first.time, turn.ts);
   const totalLatency = latencyText(turn.total_latency_ms);
+  const meta = when + (totalLatency ? " · Total " + totalLatency : "");
   return (
     <div
       className={"hermes-guardian-card hermes-guardian-turn-card" + (open ? " hermes-guardian-turn-card-open" : "")}
@@ -329,7 +329,7 @@ function TurnCard(props: { turn: ActivityTurn; onNavigate: (tab: TabId) => void 
           )}
         </div>
         <div className="hermes-guardian-turn-card-meta hermes-guardian-muted">
-          {when + " · " + n + (n === 1 ? " check" : " checks") + (totalLatency ? " · Total " + totalLatency : "")}
+          {meta}
         </div>
       </div>
       {open ? (
