@@ -43,39 +43,19 @@ runtime integrations may import FastAPI or Telegram libraries, but
 FastAPI installed.
 
 A second workflow (`.github/workflows/llm-verifier.yml`) runs the live LLM verifier
-judgment test in `tests/test_llm_verifier_live.py` against a real model. It is marked
-`@pytest.mark.llm` and **deselected by default** (`addopts = -m 'not llm'`), so the
-unit matrix above never hits the network. The live job re-selects it with `-m llm`
-and runs only on pushes to `main` and manual dispatch (not per-PR, since each run
-calls an external API and secrets are unavailable to fork PRs).
-
-The test feeds the verifier's REAL policy prompt (`_LLM_POLICY_INSTRUCTIONS`) and
-verdict schema over a batch of labeled allow/deny scenarios in a *single* API call,
-validates each verdict with the real `_validated_llm_security_verdict`, and asserts
-the outcome. It is a judgment test, not end-to-end (the hook/policy/sanitization path
-is covered by the unit suite); batching keeps it to ~2 calls (preflight + batch) and
-minimizes exposure to flaky free-tier endpoints. There is **no retry** — any API
-error (including upstream 5xx) fails the run by design.
-
-The facade adapter (`tests/live_llm.py`, standard-library `urllib` only) supports two
-backends, chosen from the environment (Google preferred when both are set):
-
-- **Google AI Studio** — `GEMINI_API_KEY` (free tier), via the *native*
-  `generateContent` + `responseSchema` API (e.g. `gemini-2.5-flash`, `gemma-4-31b-it`).
-  Thinking is auto-disabled for Gemini 2.5+ (`thinkingConfig.thinkingBudget=0`) so the
-  verdict fits the verifier's small output budget. Note many `gemini-2.0-*` models have
-  no free-tier quota (`limit: 0`); `gemini-2.5-flash` and `gemma-4-31b-it` do.
-- **OpenRouter** — `OPENROUTER_API_KEY`, via OpenAI-compatible chat-completions with
-  `provider.require_parameters` (e.g. `openai/gpt-4o-mini`).
-
-`GUARDIAN_LLM_TEST_MODEL` (repo variable) names the model — or a comma-separated list,
-which parametrizes the test per model to check the prompt across models. A preflight
-probe fails the run with an actionable message if a model can't return
-schema-conformant verdicts. Optional knobs: `GUARDIAN_LLM_TEST_TIMEOUT` (read-timeout
-floor, default 60s) and `GUARDIAN_LLM_TEST_SPACING` (min seconds between calls,
-default 3). If no backend key is set the test self-skips, so the job stays green. Run
+judgment test in `tests/test_llm_verifier_live.py` against a real model. Tests marked
+`@pytest.mark.llm` are skipped by a conftest hook unless explicitly opted in with
+`--run-llm` (or `GUARDIAN_RUN_LLM=1`), so the unit matrix above never hits the
+network; the live job passes `--run-llm` and runs only on pushes to `main` and manual
+dispatch. The test feeds the verifier's real policy prompt and verdict schema over a
+batch of labeled allow/deny scenarios in a single API call and validates each verdict
+with the real `_validated_llm_security_verdict`. There is **no retry** — any API
+error fails the run by design — and once opted in, a missing backend key fails the
+run rather than skipping. Backend selection (`GEMINI_API_KEY` or
+`OPENROUTER_API_KEY`), model choice (`GUARDIAN_LLM_TEST_MODEL`, comma-separated to
+parametrize per model), and tuning knobs are documented in `tests/live_llm.py`. Run
 locally with a gitignored `.env` (auto-loaded by `tests/conftest.py`) or inline:
-`GEMINI_API_KEY=... GUARDIAN_LLM_TEST_MODEL=gemma-4-31b-it python -m pytest -m llm`.
+`GEMINI_API_KEY=... GUARDIAN_LLM_TEST_MODEL=gemma-4-31b-it python -m pytest --run-llm -m llm`.
 
 Important local/runtime files are intentionally ignored by git:
 
@@ -128,45 +108,39 @@ agent files.
 
 Every module under `privacy/`, `runtime/`, `ui/`, `integrations/`, plus
 `hooks.py` and `state.py`, is a real, normally-importable module. `core.py`
-anchors a canonical package (`_hermes_guardian`) rooted at the plugin directory
-and imports the logic modules as its submodules, in the dependency order listed
-in `_CORE_LOGIC_MODULES`. Each module imports the names it uses: stdlib at the
-top, sibling/cross-package logic modules as module objects (`from . import
-rules`, `from ..runtime import activity_store`, `from .. import core`,
-`from . import state`), and references them as `rules._foo`, `state._LOCK`, etc.
-Cross-module calls go through the module object at call time, which tolerates the
-mutual-import cycles (rules↔llm, approvals↔cron_notifications, …).
-
-`core.py` defines the shared constants/regexes/policy text, binds `state` and the
-three reusable helpers (`_presentation`, `_security`, `_language`), then imports
-the logic modules at the BOTTOM (after all constants exist) and imports the
-specific entrypoints `register(ctx)` and the module-load-time wiring need
-(`from .hooks import ...`, `from .ui.commands import _handle_guardian_command`,
-…). There is no shared namespace and no sync bridge: each name has ONE home.
-`state` owns all mutable process state, the on-disk paths, and the clock/env
-helpers; rebinding `state.<name>` (or `plugin.state.<name>` from a test) is seen
-by every reader because they all reference the same `state` module. Tests/Hermes
-monkeypatch a function by patching the module that DEFINES it (the live call path
-goes through that module object, e.g. `plugin.policy.decide`,
-`plugin.rules._foo`), not the façade.
+anchors a canonical package (`_hermes_guardian`) rooted at the plugin directory,
+defines the shared constants/regexes/policy text, binds `state` and the three
+reusable helpers (`_presentation`, `_security`, `_language`), then imports the
+logic modules as its submodules at the BOTTOM of the file (after all constants
+exist), in `_CORE_LOGIC_MODULES` dependency order. There is no shared namespace
+and no sync bridge: each name has ONE home, and `state` owns all mutable process
+state, the on-disk paths, and the clock/env helpers.
 
 When editing this code:
 
+- Each module imports the names it uses: stdlib at the top, sibling/cross-package
+  logic modules as module objects (`from . import rules`, `from ..runtime import
+  activity_store`), referenced at call time (`rules._foo()`, `state._LOCK`).
+  Going through the module object tolerates the mutual-import cycles
+  (rules↔llm, approvals↔cron_notifications, …) and keeps test/Hermes
+  monkeypatching working — never `from .rules import _foo` for a cross-module
+  reference. Alias a module import when its leaf collides with a local (e.g.
+  `from ..privacy import rules as rules_mod`).
 - Add the import a name needs; do not rely on a shared namespace. Run
   `python3 scripts/_refactor_analysis.py check` to confirm a module has no
   unresolved free names.
 - Keep `core.py`'s logic-module import block at the bottom and in
-  `_CORE_LOGIC_MODULES` order; new constants must be defined above it.
-- Use module-object imports (`from . import rules`; call `rules._foo()`), not
-  `from .rules import _foo`, so cycles and test/Hermes monkeypatching keep
-  working. Alias a module import when its leaf collides with a local (e.g.
-  `from ..privacy import rules as rules_mod`).
+  `_CORE_LOGIC_MODULES` order; new constants must be defined above it. Update
+  that tuple and `tests/test_loader_contract.py` together when changing load
+  order or adding a module. Duplicate top-level definitions across modules must
+  be intentional and listed in `_CORE_LOGIC_ALLOWED_REBINDS`.
 - Keep reusable standalone modules importable on their own:
   `security/scanner.py`, `language_packs/runtime.py`, `ui/presentation.py`.
 - To monkeypatch a function in tests, patch the module that DEFINES it (e.g.
   `monkeypatch.setattr(plugin.rules, "_foo", ...)`); patch state/paths/clock via
-  `plugin.state.<name>`. The façade re-exports by reference, so patching the
-  façade name alone does not reach the live call path.
+  `plugin.state.<name>` — rebinding `state.<name>` is seen by every reader
+  because they all reference the same `state` module. The façade re-exports by
+  reference, so patching the façade name alone does not reach the live call path.
 - Dashboard API loading must continue to work outside the plugin current working
   directory; see `tests/test_hooks_registration.py`.
 
@@ -211,40 +185,37 @@ the tests/docs are updated accordingly:
   it can judge content against intent. This is deliberate: the verifier is the
   same model/provider (`ctx.llm`) the agent already uses to process all of this
   content, so redacting it from the verifier protects nothing against the
-  provider while crippling its judgment. The boundary still preserved is
+  provider while crippling its judgment. The boundary preserved is
   at-rest/storage, not model visibility: security-sensitive content is still
   stripped from the payload (`_payload_string_for_llm` — and such args are
   hard-blocked upstream anyway), credential-shaped tokens are removed, and the
   verdict rationale is sanitized (`_sanitize_rationale`) before it is shown or
-  stored. Persistent state stays metadata-only regardless (see below). This
-  relaxation assumes the configured verifier LLM shares the agent's trust
-  boundary; the owner is responsible for which LLMs they connect.
-  The one conversation-derived input
-  is `user_request_context`: a sanitized excerpt of the most recent inbound
-  message from an authenticated session owner (CLI or configured gateway owner),
-  captured at gateway dispatch after the Security Module clears it. It is the
-  user turn only (never system prompt, tool results, or model output), redacted,
-  held in volatile owner-keyed state, and treated as authorization evidence only —
-  it must not override `risk_level` or absolute deny rules, and
-  group/cron/unauthenticated senders must never populate it. It is not persisted
-  unless the operator opts into `protection.runtime.persist_prompts` (default off),
-  which writes this same redacted excerpt to the activity log for debugging.
-  Both context channels are gated by privacy booleans: `llm_user_context`
+  stored. Persistent state stays metadata-only regardless. This relaxation
+  assumes the configured verifier LLM shares the agent's trust boundary; the
+  owner is responsible for which LLMs they connect.
+- The one conversation-derived verifier input is `user_request_context`: a
+  sanitized excerpt of the most recent inbound message from an authenticated
+  session owner (CLI or configured gateway owner), captured at gateway dispatch
+  after the Security Module clears it. It is the user turn only (never system
+  prompt, tool results, or model output), redacted, held in volatile owner-keyed
+  state, and treated as authorization evidence only — it must not override
+  `risk_level` or absolute deny rules, and group/cron/unauthenticated senders
+  must never populate it. (Persisting this excerpt is the `persist_prompts`
+  exception above.)
+- Both context channels are gated by privacy booleans: `llm_user_context`
   (default on) gates the owner channel above; `llm_cron_context` (default off)
   gates a parallel `cron_context` channel that supplies a cron job's own
   sanitized stored instruction. Because cron runs unattended, a cron job may
   never self-authorize high-risk egress: a high-risk `allow` verdict on a cron
   session is always downgraded to manual approval, even with cron context on.
-  Authorization is data-class-scoped, not action-only. The verifier input
+- Authorization is data-class-scoped, not action-only. The verifier input
   carries the ambient `classes_in_scope` (the sanitized class labels the session
-  has read, never raw content) alongside the real `action_arguments` (the actual
-  payload, with security-sensitive content stripped). There is no separate
-  object-level provenance signal; the verifier does the narrowing/anti-laundering
-  itself by judging the payload's content against the authorized intent. Context
-  channels authorize only the data classes intrinsic to the request, so a payload
-  whose content points to a source the request did not call for (e.g. a calendar
-  event submitted into an email subscription form) is a mismatch that falls back
-  to manual approval.
+  has read, never raw content) alongside the real `action_arguments`, and does
+  the narrowing/anti-laundering itself by judging the payload's content against
+  the authorized intent. Context channels authorize only the data classes
+  intrinsic to the request, so a payload whose content points to a source the
+  request did not call for (e.g. a calendar event submitted into an email
+  subscription form) is a mismatch that falls back to manual approval.
 - Final model responses are egress. Tainted responses to owner-private CLI/DM
   destinations may pass; tainted responses to group, cron, or unknown
   destinations are suppressed.
@@ -256,10 +227,9 @@ the tests/docs are updated accordingly:
 `guardian-rules.json` is organized into the five IA concepts, in `decide` order —
 `whats_yours` → `sharing` → `review` → `protection`, plus `version`/meta (Activity
 is pure output, so it has no config block). The on-disk **v4 schema** is the only
-shape: there is no back-compat, no version detection, and the loader does NOT branch
-on `version`. An old-shape file is not migrated — it fails closed to strict with a
-clear log line (`"unrecognized config shape — re-author per the v4 schema"`) — and is
-re-authored to the schema below.
+shape the loader accepts: there is no version detection and the loader does NOT
+branch on `version`. A file that does not match it fails closed to strict with a
+clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
 
 ```json
 {
@@ -309,15 +279,16 @@ re-authored to the schema below.
 }
 ```
 
-Internally, `privacy/rules.py` keeps the SAME normalized in-memory structure the
-engine has always consumed (`privacy.{mode,unknown_tools,llm_user_context,
-llm_cron_context,llm_verifier_model,rules,tools}`, `self`, `trusted_recipients`,
+Internally, `privacy/rules.py` consumes a normalized in-memory structure
+(`privacy.{mode,unknown_tools,llm_user_context,llm_cron_context,
+llm_verifier_model,rules,tools}`, `self`, `trusted_recipients`,
 `outward_sharing`, `security.rules`, `language_packs.enabled`, `retention`,
-`dashboard`). Only the parsing front-end changed: `_normalize_privacy_config` parses
-the v4 file into that internal structure, `_serialize_config_to_v4` encodes it back
-out, and `_normalize_internal_config` re-normalizes the internal structure on save.
-`decide`, `classify`, and `resolve_destination_trust` never notice the file reshape.
-The conceptual file→internal map (doc 04 §3): `whats_yours.stores/.identities/.hosts`
+`dashboard`); these internal keys are what the engine and mutators use.
+`_normalize_privacy_config` parses the v4 file into that structure,
+`_serialize_config_to_v4` encodes it back out, and `_normalize_internal_config`
+re-normalizes it on save; `decide`, `classify`, and `resolve_destination_trust`
+only ever see the internal structure.
+The file→internal map (doc 04 §3): `whats_yours.stores/.identities/.hosts`
 → `self.destinations/.identities/.hosts`; `sharing.trusted_recipients` →
 `trusted_recipients.entries`; `sharing.rules` → `privacy.rules`;
 `sharing.outward.extra` → `outward_sharing.extra` (builtin subtypes are code-owned and
@@ -331,13 +302,8 @@ never read from / written to config); `review.mode/.owner_context/.cron_context/
 
 `protection.unknown_tools` is `gate` (default) or `allow`. In `gate`, an unrecognized
 tool (not a known built-in, not covered by a `privacy.tools` override) is classified
-as `tool_unknown` and gated under taint, mirroring `mcp_unknown`. `allow` restores
-the legacy permissive behavior and raises a runtime risk banner.
-
-The key names below (`privacy.tools`, `privacy.llm_*`, `privacy.llm_verifier_model`)
-are the INTERNAL in-memory keys the engine and mutators use; on disk they live under
-the v4 `protection.tools` / `review.owner_context` / `review.cron_context` /
-`review.verifier_model` keys per the file→internal map above.
+as `tool_unknown` and gated under taint, mirroring `mcp_unknown`. `allow` leaves
+unrecognized non-MCP tools ungated and raises a runtime risk banner.
 
 `privacy.tools` is the user-managed tool override registry. Each entry has a `match`
 (exact tool name or a single trailing-`*` prefix), optional `taints` (source classes
@@ -424,10 +390,10 @@ When adding a new Hermes tool family:
 The dashboard is integrated through `dashboard/manifest.json` at `/guardian`.
 API routes are mounted under `/api/plugins/hermes-guardian/`.
 
-`guardian.example.com` and the standalone
-`hermes-guardian-dashboard.service` are retired. Do not use, restart, or debug
-that standalone service for normal dashboard work. The supported UI surface is
-the Hermes dashboard plugin tab served by `hermes-dashboard.service`.
+The only supported UI surface is the Hermes dashboard plugin tab served by
+`hermes-dashboard.service`. There is no standalone Guardian dashboard: do not
+use, restart, or debug `hermes-guardian-dashboard.service` or
+`guardian.example.com`, even if remnants exist on a host.
 
 Keep `dashboard/plugin_api.py` as a thin adapter:
 
@@ -473,49 +439,12 @@ When adding or changing a pack:
 
 ## Slash And CLI Commands
 
-Slash command behavior lives in `ui/commands.py`.
-
-Important user-facing commands:
-
-Commands are grouped into the five IA concepts in `decide` order
-(`activity`/`mine`/`sharing`/`review`/`protection`), with `status`/`why` on
-top. The old top-level names (`self`, `rules`, the bare outward `sharing`,
-`security`, `tools`, `language-packs`, `privacy`, `history`, `failures`,
-`debug`) are removed, not aliased — each capability survives via the same
-underlying handler under its new group.
-
-```text
-/guardian status
-/guardian why <id>
-/guardian activity [limit]
-/guardian activity failures [limit]
-/guardian approvals
-/guardian approve <id> [once|session|always]
-/guardian deny <id>
-/guardian clear-taint
-/guardian mine
-/guardian mine add|remove destination|identity|host <value>
-/guardian check <destination|recipient>
-/guardian sharing
-/guardian sharing trusted add|remove <identity> [classes=a+b] [note=<text>]
-/guardian sharing rule add|delete|enable|disable|move ...
-/guardian sharing outward add|remove <subtype>
-/guardian sharing preview <action> <destination> <class>
-/guardian review mode strict|read-only|llm|off
-/guardian review owner-context on|off
-/guardian review cron-context on|off
-/guardian review verifier-model <model_id|default>
-/guardian protection security enable|disable <rule_id>
-/guardian protection tool set <match> [taints=a+b] [egress=ignore|gate|<family>] [destination=<dest>] [note=<text>]
-/guardian protection tool delete <match_or_id>
-/guardian protection tool enable|disable <id_or_match>
-/guardian protection unknown-tools gate|allow
-/guardian protection persist-prompts on|off
-/guardian protection language-packs enable|disable <pack_id>
-```
-
-`/guardian deny` is an alias for `dismiss`. `hermes guardian dashboard
-status|url|prune` is the CLI surface.
+Slash command behavior lives in `ui/commands.py`. Commands are grouped into the
+five IA concepts in `decide` order
+(`activity`/`mine`/`sharing`/`review`/`protection`), with `status`/`why` on top.
+The full command reference lives in `README.md` (Slash Commands) — keep it in
+sync with `ui/commands.py` when commands change; do not duplicate the list here.
+`hermes guardian dashboard status|url|prune` is the CLI surface.
 
 Owner checks matter. Non-CLI slash users can mutate global config only when
 their hashed identity is in configured owner env vars. Do not loosen these
@@ -536,9 +465,9 @@ Current `HERMES_GUARDIAN_*` variables include:
 - `HERMES_GUARDIAN_UNSAFE_DIAGNOSTICS`
 - `HERMES_GUARDIAN_LANGUAGE_PACKS`
 
-Tests intentionally delete legacy variables such as
-`HERMES_GUARDIAN_ALLOWLIST` and `HERMES_GUARDIAN_PRIVACY`. Do not reintroduce
-legacy env behavior unless that is a deliberate compatibility task with tests.
+`tests/conftest.py` deletes `HERMES_GUARDIAN_ALLOWLIST` and
+`HERMES_GUARDIAN_PRIVACY` so an inherited environment cannot affect tests; these
+variables have no effect in the code and should not be given one.
 
 Gateway owner helpers also read:
 
@@ -616,8 +545,7 @@ sharing process-global state across tests.
   plugin/Python change (the gateway loads the plugin from this directory by absolute
   path, so even uncommitted edits go live on restart), and `hermes-dashboard.service`
   for any dashboard asset change (rebuild `dashboard/dist` first). Restart both when
-  both changed. Never touch the retired `hermes-guardian-dashboard.service`. Do not
-  otherwise modify live `~/.hermes` state unless the user asks.
+  both changed. Do not otherwise modify live `~/.hermes` state unless the user asks.
 
 ## Common Pitfalls
 

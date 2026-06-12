@@ -166,11 +166,8 @@ retain the prior safety.
 
 The entire risk posture lives in one policy document (the persisted Guardian config):
 privacy mode, the self allowlist (destinations / identities / hosts), declassification
-rules, and tool overrides. The on-disk file must use the v4 five-block schema; partial
-v4 documents fill omitted blocks from conservative defaults. Legacy or old-shape
-documents are not migrated or partially loaded: they fail closed to `strict` with a
-clear log line and must be re-authored in the v4 shape. A wholly corrupt document also
-falls back to `strict`, not to anything permissive.
+rules, and tool overrides. The file format is shown under
+[Privacy Modes](#privacy-modes).
 
 Security checks run before privacy checks. Privacy allow rules and approval
 commands cannot bypass Security Module blocks. Privacy rules are customization
@@ -238,15 +235,15 @@ decision:
 }
 ```
 
-This v4 schema is the only shape: there is no back-compatibility with older files,
-no version detection, and the loader does not branch on `version`. An old-shape
-file is not migrated — it fails closed to strict with a clear log line, and is
-re-authored to the schema above. Any block may be omitted; missing blocks fill
-from safe defaults (`review.mode` defaults to `llm`, `whats_yours.stores` seeds the
-single-operator stores, `sharing` is empty). Outward-sharing builtin subtypes are
-code-owned and never read from config; only `sharing.outward.extra` adds to them.
-Mutations from the dashboard, the slash commands, and direct edits all persist this
-shape, and rule mutation helpers preserve every block.
+This v4 schema is the only shape the loader accepts: there is no version
+detection, and a file that does not match it (including a wholly corrupt one)
+fails closed to `strict` with a clear log line — never to anything permissive.
+Any block may be omitted; missing blocks fill from safe defaults (`review.mode`
+defaults to `llm`, `whats_yours.stores` seeds the single-operator stores,
+`sharing` is empty). Outward-sharing builtin subtypes are code-owned and never
+read from config; only `sharing.outward.extra` adds to them. Mutations from the
+dashboard, the slash commands, and direct edits all persist this shape, and rule
+mutation helpers preserve every block.
 
 ### LLM mode details
 
@@ -276,8 +273,8 @@ This channel is deliberately narrow and fail-closed:
   Guardian actually holds owner/cron authorization context for this owner this window
   (a fresh `user_request_context`, or a `cron_context` for a cron run). If that context
   is absent, the allow is downgraded to manual approval regardless of risk band — so a
-  "medium-risk" self-report can no longer wave a tainted export through on the model's
-  word alone. Intra-boundary flows (self / local system / model provider) never reach the
+  "medium-risk" self-report cannot wave a tainted export through on the model's word
+  alone. Intra-boundary flows (self / local system / model provider) never reach the
   verifier and are unaffected.
 - Authorization is scoped to the data actually being sent, not just the action.
   The verifier reads the real `action_arguments` (below) alongside the ambient
@@ -285,10 +282,7 @@ This channel is deliberately narrow and fail-closed:
   authorized intent. A request authorizes only the data classes intrinsic to it,
   so "subscribe me to this newsletter" cannot launder a calendar event into the
   form: a bare email address still auto-approves, but a calendar event in the same
-  field does not, even though both ran with the calendar ambiently in scope. (This
-  content/intent judgment is the verifier's, made from the real payload — there is
-  no separate deterministic `exported_source_classes` provenance signal anymore;
-  see Data Classes.)
+  field does not, even though both ran with the calendar ambiently in scope.
 
 The verifier also receives the **real action payload** — with security-sensitive
 content and credential-shaped tokens stripped — so it can check that content
@@ -425,12 +419,11 @@ session, and cron scope. `purpose` defaults to the safe token `unknown` on
 actions and to wildcard `*` on rules. `recipient_identity` defaults to `none`
 on actions and wildcard `*` on rules.
 
-For message sends, Guardian now classifies the route as
+For message sends, Guardian classifies the route as
 `action_family=message_send` and `destination=messaging`, with the concrete
-recipient represented as a stable `recipient_<hash>` value. Existing legacy
-rules that used the recipient string as `destination` still match live
-message-send calls, but new approvals and rules prefer the route plus hashed
-recipient form.
+recipient represented as a stable `recipient_<hash>` value. A rule that uses a
+raw recipient string as `destination` also matches live message-send calls, but
+approvals and new rules prefer the route plus hashed recipient form.
 
 Example persistent allow rule:
 
@@ -573,7 +566,7 @@ logged-in/account markers. Business or public-facing addresses (`support@…`, o
 any address at a non-consumer domain such as `hello@kevinpei.com`) never taint on
 their own, so browsing public pages does not accrue noise taint. Structurally
 unambiguous signals (an SSN, an email-record header block) still taint regardless
-of context. The legacy `email` class is accepted in persisted rules and maps to
+of context. The `email` class is accepted in persisted rules as an alias for
 `communications`.
 
 Document reads are tiered by **source provenance**, so a relaxation that is safe for
@@ -596,23 +589,6 @@ the outgoing payload. There is no per-payload narrowing of which classes are
 "we couldn't detect private content in this payload" as grounds to allow an
 outward flow). Narrowing happens only in `llm` mode, where the verifier reads the
 real payload and judges its content against the authorized intent.
-
-> **Provenance was retired.** Earlier versions kept a volatile, metadata-only
-> *provenance* index — keyed HMAC fingerprints of copied phrases from tainting
-> tool results — to deterministically catch a payload that copied private content
-> verbatim out of an authorized action ("laundering"). That layer was retired in
-> favor of the verifier (the destination-trust model in How It Works now handles
-> intra-boundary flows, and the verifier reads the real payload in `llm` mode). The trade is
-> honest and scoped: in `strict` mode the contract is already "a human reviews
-> every tainted egress," so the human is the laundering catch and provenance was an
-> optimization at odds with that contract; in `llm` mode the verifier reads the
-> real payload and catches the laundering case semantically (including paraphrased
-> copies, which exact-fingerprint provenance never caught) — but it loses the
-> deterministic backstop, so an adversary who fools the verifier on a *verbatim*
-> laundering payload that provenance would have caught now succeeds. This is the
-> one place in the design where a protection was intentionally reduced; it is
-> reversible (the mechanism can be reintroduced scoped to external destinations if
-> a deterministic backstop ever becomes a requirement).
 
 ## Egress Surfaces
 
@@ -658,9 +634,8 @@ taint, exactly like unknown MCP tools. This is the `unknown_tools` mode:
 
 - `gate` (default): unrecognized tools require approval once private data is in
   scope. Untainted sessions are unaffected.
-- `allow`: restores the older permissive behavior (unrecognized non-MCP tools are
-  not gated). This is a footgun and surfaces a risk banner in `/guardian status`
-  and the dashboard.
+- `allow`: unrecognized non-MCP tools are not gated. This is a footgun and
+  surfaces a risk banner in `/guardian status` and the dashboard.
 
 ```text
 /guardian protection unknown-tools gate|allow
@@ -696,6 +671,8 @@ Override fields:
   "this tool reads my email" case). Independent of egress.
 - `egress`: `ignore` (safe non-sink, allowed under taint), `gate` (force approval
   under taint), or a concrete action family such as `message_send` or `web_api`.
+- `direction`: `read` or `write`, overriding the read/write direction otherwise
+  inferred from the tool name or MCP annotation. Empty keeps the inference.
 - `source`: the document-read classification *mode* — `reference` (scan the read
   leniently, like a skill doc) or `private` (always taint as personal data). Empty
   uses the tiered default. Because MCP tools are server-prefixed, a prefix match
@@ -780,23 +757,13 @@ sit on top as the everyday commands.
 # PROTECTION — the floor that always holds
 /guardian protection
 /guardian protection security enable|disable <rule_id>
-/guardian protection tool set <match> [taints=class+class] [egress=ignore|gate|<family>] [source=reference|private] [destination=<dest>] [note=<text>]
+/guardian protection tool set <match> [taints=class+class] [egress=ignore|gate|<family>] [direction=read|write] [source=reference|private] [destination=<dest>] [note=<text>]
 /guardian protection tool delete <match_or_id>
 /guardian protection tool enable|disable <id_or_match>
 /guardian protection source suggest|set <server> reference|private
 /guardian protection unknown-tools gate|allow
 /guardian protection persist-prompts on|off
 /guardian protection language-packs enable|disable <pack_id>
-```
-
-Helpful commands:
-
-```text
-/guardian status
-/guardian activity 20
-/guardian activity failures
-/guardian check stranger@example.com
-/guardian sharing preview message_send messaging communications
 ```
 
 `/guardian deny` is an alias for `dismiss`. `/guardian activity failed` is an
@@ -1011,14 +978,9 @@ The implementation is split by responsibility:
 | `language_packs/` | Declarative semantic detection packs. |
 | `tests/` | Behavior-focused pytest suite. |
 
-The logic files are real, normally-importable modules. `core.py` imports them in
-dependency order at the bottom of the file (after its constants), using the list
-in `_CORE_LOGIC_MODULES`; update that tuple and `tests/test_loader_contract.py`
-together when changing load order or adding a module. Cross-module references use
-module-object imports (`from . import rules`; call `rules._foo()`) so the
-import cycles and test/Hermes monkeypatching keep working. Duplicate top-level
-definitions across modules must be intentional and listed in
-`_CORE_LOGIC_ALLOWED_REBINDS`.
+The logic files are real, normally-importable modules wired together by
+`core.py`; the loader contract and module-import rules are documented in
+[AGENTS.md](./AGENTS.md).
 
 Guardian registers these Hermes hooks:
 
@@ -1128,8 +1090,9 @@ controls. DNS-label-only exfiltration is tracked as a non-gating known gap.
 prompt-injection-against-tool-use benchmark used by LlamaFirewall and Invariant.
 The optional adapter drives Guardian's real Security + Privacy hooks over
 AgentDojo's ground-truth tool-call traces and reports Guardian-specific
-egress-monitor metrics. AgentDojo is intentionally a lazy optional import and is
-not installed by CI or required for normal Guardian development:
+egress-monitor metrics. AgentDojo is a lazy optional import, not installed by CI
+or required for normal Guardian development; if it is missing, the adapter
+prints install instructions and exits non-zero **without fabricating numbers**.
 
 ```bash
 python3 -m venv .venv-agentdojo
@@ -1137,9 +1100,6 @@ python3 -m venv .venv-agentdojo
 .venv-agentdojo/bin/python -m benchmarks.agentdojo_guardian --summary
 .venv-agentdojo/bin/python -m benchmarks.agentdojo_guardian --pretty --out agentdojo_metrics.json
 ```
-
-If AgentDojo is not installed the adapter prints install instructions and exits
-non-zero **without fabricating numbers**.
 
 **What it measures.** Guardian is an *egress monitor*, not an agent. The adapter
 does not run AgentDojo's agent pipeline or any LLM and cannot score end-to-end
@@ -1172,23 +1132,19 @@ tell a legitimate payment from an attacker payment — that decision is the
 operator's. Read-only utility tasks (most of `travel`) pass clean, which is why
 its FP rate is far lower.
 
-**Modeling assumptions** (all emitted in the metrics JSON and bounding the
-numbers): (1) AgentDojo's tools are unknown to Guardian, so the adapter supplies
-an explicit, auditable source/sink mapping via Guardian's `privacy.tools`
-override registry — without it the run would only measure "AgentDojo's vocabulary
-is unknown to Guardian"; (2) every session is tainted, reflecting AgentDojo's
-threat model in which the agent has read attacker-controlled content before
-acting; (3) runs use `strict` mode with the deterministic verifier.
-
-> **Caveat — no real-LLM judgment, and limited comparability.** These figures
-> use Guardian's *deterministic* gating only; no number here reflects real-model
-> (`llm` mode) judgment. Only label a Guardian number as a real-model result if
-> it was produced with an actual verifier, not the deterministic benchmark path.
-> The numbers are also **not directly comparable** to LlamaFirewall or Invariant
-> AgentDojo scores: those tools measure *attack success / utility under a live
-> agent rollout*, whereas Guardian measures *whether its egress gate fires on the
-> canonical ground-truth trace*. The denominators, the unit of evaluation, and
-> the meaning of "prevented" all differ.
+**Assumptions and comparability** (all emitted in the metrics JSON and bounding
+the numbers): (1) AgentDojo's tools are unknown to Guardian, so the adapter
+supplies an explicit, auditable source/sink mapping via Guardian's
+`privacy.tools` override registry — without it the run would only measure
+"AgentDojo's vocabulary is unknown to Guardian"; (2) every session is tainted,
+reflecting AgentDojo's threat model in which the agent has read
+attacker-controlled content before acting; (3) runs use `strict` mode with the
+deterministic verifier — no number here reflects real-model (`llm` mode)
+judgment. The numbers are also **not directly comparable** to LlamaFirewall or
+Invariant AgentDojo scores: those tools measure *attack success / utility under
+a live agent rollout*, whereas Guardian measures *whether its egress gate fires
+on the canonical ground-truth trace* — the denominators, the unit of evaluation,
+and the meaning of "prevented" all differ.
 
 GitHub Actions runs `python -m pytest -q` on Python 3.11, 3.12, and 3.13.
 
@@ -1215,10 +1171,10 @@ systemctl restart hermes-gateway.service
 - Session taint is intentionally coarse and conservative: egress decisions reason
   over the full ambient session taint, never narrowing on the basis that a payload
   "looks clean." The only narrowing is the `llm`-mode verifier reading the real
-  payload. The verbatim-laundering deterministic catch (provenance) was retired in
-  favor of that verifier (see Data Classes), so a verbatim laundering payload that
-  fools the verifier in `llm` mode is no longer separately caught; `strict` mode
-  still reviews every tainted egress.
+  payload — there is no separate deterministic check for payloads that copy
+  private content verbatim, so a laundering payload that fools the verifier in
+  `llm` mode is not otherwise caught; `strict` mode still reviews every tainted
+  egress.
 - The persisted verdict rationale is a sanitized, length-capped free-text
   string, not structured metadata. Redaction of emails, phones, and
   credential-shaped tokens is best-effort, so a paraphrased private detail that
