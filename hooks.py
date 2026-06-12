@@ -10,6 +10,7 @@ from . import core
 from .privacy import action_details
 from .privacy import approvals
 from .privacy import module as privacy_module
+from .privacy import rules
 from .privacy import tool_policy
 from .runtime import activity_store
 from .security import module as security_module
@@ -72,12 +73,19 @@ def _on_pre_llm_call_impl(
     platform: str = "",
     sender_id: str = "",
     **_: Any,
-) -> None:
+) -> str | None:
     owner_hash = tool_policy._hash_identity(platform or "cli", sender_id or "")
     state = tool_policy._ensure_session(session_id, owner_hash)
     state["platform"] = str(platform or "")
     state["sender_id"] = str(sender_id or "")
-    return None
+    # While the session is still clean, hand the agent an ephemeral hygiene note
+    # (Hermes appends it to the current turn's user message at API-call time only).
+    # Once tainted — or with privacy checks off — the note has nothing to protect.
+    if rules._privacy_mode() == "off":
+        return None
+    if tool_policy._session_taint(session_id):
+        return None
+    return core._TAINT_HYGIENE_NOTE
 
 
 def _on_pre_llm_call(
@@ -85,7 +93,7 @@ def _on_pre_llm_call(
     platform: str = "",
     sender_id: str = "",
     **kwargs: Any,
-) -> None:
+) -> str | None:
     try:
         return _on_pre_llm_call_impl(
             session_id=session_id,

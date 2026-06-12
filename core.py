@@ -327,6 +327,17 @@ _LOCAL_SYSTEM_NO_TAINT_FILTER_RE = re.compile(
     r"^\s*(grep|wc|head|tail)(\s|$)",
     re.I,
 )
+# Ephemeral per-turn hygiene note returned from the pre_llm_call hook while a session
+# is still untainted. Injected by Hermes into the current turn's user message at
+# API-call time only (never persisted), steering the agent away from content-bearing
+# local reads that would taint the session and gate later egress.
+_TAINT_HYGIENE_NOTE = (
+    "Guardian: this session is currently untainted. Terminal reads of local file "
+    "contents (configs, ~/.hermes/.env, logs) taint it and add privacy checks to "
+    "later web/network use. For environment preflights, prefer metadata-only "
+    'commands: [ -n "$VAR" ] presence tests, command -v, whoami/pwd/date, and '
+    "printf/echo with literal text."
+)
 _UNTRUSTED_DROPBOX_ENDPOINT_RE = re.compile(
     r"\b(attacker[- ]?controlled|webhook\.site|requestbin|pastebin\.com|ngrok|interact\.sh|burpcollaborator)\b",
     re.I,

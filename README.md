@@ -508,6 +508,12 @@ env-assignment prefixes (`TZ=… date`), and output-discarding `>/dev/null`
 redirects. Any segment outside that set (content-bearing reads, `$`-expansion in
 output, real redirects, network tools, substitution) taints the whole command.
 
+While a session is still untainted (and privacy mode is not `off`), Guardian's
+`pre_llm_call` hook returns a short static hygiene note that Hermes appends to
+the current turn's user message at API-call time only — never persisted — steering
+the agent toward those metadata-only preflight commands so routine environment
+checks do not taint the session and gate later egress.
+
 Web and browser reads are confidence-gated: contact-shaped content (an address, a
 phone number, an `address`/`contact` field label) only taints when the host
 carries private context — the operator typed credentials there, or the page shows
