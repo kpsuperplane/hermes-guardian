@@ -74,7 +74,7 @@ The attacker’s objective is unauthorized disclosure or unauthorized action. Th
 
 Final responses are outside the Privacy-module egress gate. They are still scanned
 by the non-approvable Security Module for credentials, OTPs, reset links, security
-alerts, and similar account-security content.
+alerts, private keys, and similar account-security content.
 
 ### Trusted components
 

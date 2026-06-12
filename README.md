@@ -39,11 +39,13 @@ Agents also have many outbound surfaces: messages, MCP writes, browser forms,
 URLs, search queries, terminal commands, code execution, model APIs, cron jobs,
 and final responses.
 
-Guardian treats those surfaces as egress. Once a session has observed private
-data, the active privacy mode evaluates classified outbound actions before they
-run. Some actions are auto-approved, some are blocked immediately, and some
-fall back to manual approval. Security-sensitive content is stricter: it is
-blocked or suppressed outright, even if privacy mode is off.
+Guardian treats mediated actions as Privacy-module egress. Once a session has
+observed private data, the active privacy mode evaluates classified outbound
+actions before they run. Some actions are auto-approved, some are blocked
+immediately, and some fall back to manual approval. Final responses are not
+privacy-gated, but the Security Module still scans them before delivery.
+Security-sensitive content is stricter: it is blocked or suppressed outright,
+even if privacy mode is off.
 
 Use Guardian when you want:
 
@@ -292,7 +294,7 @@ short-lived pending-approval permit targets described under Activity And State.
 Enabling `llm` mode assumes the verifier LLM shares the agent's trust boundary; since
 you choose which LLMs Hermes connects to, that assumption is yours to own.
 The full trust-boundary rationale is in theory's
-[Coarse declassification context](./theory.md#coarse-declassification-context).
+[Coarse declassification context](./THEORY.md#coarse-declassification-context).
 
 **Verifier latency.** By default the verifier runs on the agent's own model. If
 that is a large or reasoning model, each gated egress can take several seconds. A
@@ -1211,7 +1213,7 @@ systemctl restart hermes-gateway.service
 
 ## Further Reading
 
-- [`theory.md`](./theory.md): Guardian's defense theory, assumptions, and
+- [`THEORY.md`](./THEORY.md): Guardian's defense theory, assumptions, and
   comparisons.
 - [Hermes security guide](https://hermes-agent.nousresearch.com/docs/user-guide/security)
 - [Hermes security policy](https://github.com/NousResearch/hermes-agent/blob/main/SECURITY.md)

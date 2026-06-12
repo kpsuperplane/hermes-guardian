@@ -99,7 +99,7 @@ runtime state unless the task explicitly requires it.
 - `tests/`: behavior-focused pytest suite. `tests/support.py` loads the plugin
   from `__init__.py` and redirects rule/activity/HMAC state into `/tmp`.
 - `README.md`: user-facing documentation and operational model.
-- `theory.md`: defense theory, assumptions, limitations, and comparisons.
+- `THEORY.md`: defense theory, assumptions, limitations, and comparisons.
 
 The `.agents/` and `.codex/` directories currently contain no repository-local
 agent files.
@@ -179,8 +179,8 @@ the tests/docs are updated accordingly:
 - Session taint is intentionally coarse. Do not weaken it to content-only
   detection for known private source tools.
 - Unknown or ambiguous egress surfaces should be classified conservatively,
-  especially MCP tools, terminal/code execution, browser console/CDP, model
-  APIs, and final responses.
+  especially MCP tools, terminal/code execution, browser console/CDP, and model
+  APIs.
 - `privacy.mode=off` disables private-egress approval checks only. It must not
   disable Security Module blocking/suppression.
 - `read-only` mode should auto-approve only metadata-verified low-risk actions.
@@ -220,11 +220,10 @@ the tests/docs are updated accordingly:
   intrinsic to the request, so a payload whose content points to a source the
   request did not call for (e.g. a calendar event submitted into an email
   subscription form) is a mismatch that falls back to manual approval.
-- Final model responses are egress. Tainted responses to owner-private CLI/DM
-  destinations may pass; tainted responses to group or unknown destinations are
-  suppressed. A cron run's own final output is treated as owner-configured and
-  allowed under taint (trust `self`), unless an explicit `final_response` deny
-  rule applies.
+- Final model responses are not Privacy-module egress-gated. They still pass
+  through the non-approvable Security Module, so credentials, OTPs, reset links,
+  security alerts, private keys, and similar account-security content remain
+  suppressed.
 - Cron failure notifications include safe metadata only and are sent at most
   once per cron session.
 
@@ -373,7 +372,6 @@ Important classifier families include:
 - `web_read`, `web_api`, `model_api`, `delegate_task`
 - `tool_unknown` (secure-by-default fallback for unrecognized non-MCP tools under
   taint; see `_recognized_builtin_tool` and `_unknown_tools_mode`)
-- `final_response`
 
 `_recognized_builtin_tool` separates a known built-in whose specific call is a
 read/no-op (which stays allowed) from a genuinely unknown tool (gated under taint).
@@ -544,7 +542,7 @@ sharing process-global state across tests.
   change.
 - Update `README.md` when user-facing commands, modes, env vars, security
   rules, dashboard routes, or operational semantics change.
-- Update `theory.md` only when the defense model, assumptions, or limitations
+- Update `THEORY.md` only when the defense model, assumptions, or limitations
   change.
 - After making changes, restart the affected service(s) at the end of the turn so
   the running system matches the committed code: `hermes-gateway.service` for any
@@ -564,8 +562,8 @@ sharing process-global state across tests.
   persisted state must still be sanitized.)
 - Letting privacy allow rules bypass Security Module findings.
 - Treating unknown MCP tools as safe reads under taint.
-- Allowing URL paths, query strings, search text, browser typed text, shell
-  commands, or final responses to carry tainted data without classification.
+- Allowing URL paths, query strings, search text, browser typed text, or shell
+  commands to carry tainted data without classification.
 - Clearing taint on `on_session_end`; current behavior intentionally prunes
   volatile state only because Hermes may fire it at run-conversation
   boundaries.
