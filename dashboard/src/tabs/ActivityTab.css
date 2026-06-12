@@ -148,7 +148,7 @@
   width: min(11.5rem, 100%);
   max-width: 100%;
   flex: 0 1 11.5rem;
-  min-height: 2rem;
+  height: 2rem;
   border-color: var(--color-border);
   background: color-mix(in srgb, var(--color-card) 70%, transparent);
   font-size: 0.82rem;
