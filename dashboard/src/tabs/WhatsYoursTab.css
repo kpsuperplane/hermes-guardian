@@ -68,51 +68,10 @@
   width: 100%;
 }
 
-/* Stores / Identities / Hosts as three columns (What's yours).
-   Collapses to a single column (stacked rows) on narrow viewports. */
-.hermes-guardian-dest-columns {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1rem;
-  margin-top: 0.85rem;
-}
-
-.hermes-guardian-dest-columns .hermes-guardian-dest-group {
-  margin-top: 0;
-  min-width: 0;
-}
-
-@media (max-width: 720px) {
-  .hermes-guardian-dest-columns {
-    grid-template-columns: 1fr;
-  }
-}
-
 .hermes-guardian-dest-group-title {
   font-weight: 650;
   font-size: 0.82rem;
   margin-bottom: 0.4rem;
-}
-
-.hermes-guardian-dest-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.hermes-guardian-dest-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  padding: 0.4rem 0.55rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--color-card) 92%, transparent);
 }
 
 .hermes-guardian-dest-seen-label {
@@ -123,7 +82,7 @@
   min-width: 0;
 }
 
-.hermes-guardian-dest-item code {
+.hermes-guardian-self-tile code {
   font-size: 0.8rem;
   word-break: break-all;
 }
@@ -133,15 +92,41 @@
   padding: 0.3rem 0;
 }
 
-.hermes-guardian-dest-addrow {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 0.45rem;
+.hermes-guardian-self-tile {
+  min-height: 6.6rem;
 }
 
-.hermes-guardian-dest-addrow .hermes-guardian-input {
-  flex: 1 1 auto;
-  min-width: 0;
+.hermes-guardian-suggestion-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.hermes-guardian-suggestion-chip {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-card) 86%, var(--color-background));
+  color: var(--color-foreground);
+  cursor: pointer;
+  min-height: 2rem;
+  max-width: 100%;
+  padding: 0.28rem 0.55rem;
+}
+
+.hermes-guardian-suggestion-chip:hover,
+.hermes-guardian-suggestion-chip:focus-visible {
+  border-color: color-mix(in srgb, var(--color-ring) 55%, var(--color-border));
+}
+
+.hermes-guardian-suggestion-chip:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+.hermes-guardian-suggestion-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 /* --- What's Yours / shared widgets (doc 02 §Tab2): grant banner + widget results. --- */

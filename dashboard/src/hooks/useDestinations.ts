@@ -20,7 +20,7 @@ export interface DestinationsController {
   error: string;
   busy: boolean;
   refetch: () => Promise<void>;
-  addSelf: (kind: string, value: string, confirmText?: string) => void;
+  addSelf: (kind: string, value: string, confirmText?: string, skipConfirm?: boolean) => void;
   removeSelf: (kind: string, value: string) => void;
   addTrusted: (identity: string, classes?: string, note?: string, skipConfirm?: boolean) => void;
   addCommand: (value: string, classes?: string, note?: string, skipConfirm?: boolean) => void;
@@ -82,13 +82,14 @@ export function useDestinations(showToast: ShowToast): DestinationsController {
   );
 
   const addSelf = useCallback(
-    (kind: string, value: string, confirmText?: string) => {
+    (kind: string, value: string, confirmText?: string, skipConfirm?: boolean) => {
       run(
         confirmText ||
           'Add "' +
             value +
             '" to your self-allowlist? Writes there will no longer be gated as a boundary crossing.',
         () => addSelfDestination(kind, value),
+        skipConfirm,
       );
     },
     [run],

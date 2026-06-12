@@ -1,11 +1,12 @@
 import { React, useState } from "@/sdk";
 import { Button } from "@/components/Button";
 import { CheckDestination } from "@/components/CheckDestination";
+import { Field } from "@/components/Field";
 import { Mono } from "@/components/Mono";
 import { TrustPill } from "@/components/TrustPill";
 import { text } from "@/lib/format";
 import type { DestinationsController } from "@/hooks/useDestinations";
-import type { SeenDestination } from "@/types";
+import type { SeenDestination, SelfAllowlist } from "@/types";
 
 export interface WhatsYoursTabProps {
   controller: DestinationsController;
@@ -33,6 +34,7 @@ function trustRank(trust: string): number {
 // web search, …) that are NOT a store, recipient, or host — so Stores stops being
 // a junk drawer. Rendered one row per non-empty category.
 type SeenCategory = "stores" | "identities" | "hosts" | "other";
+type SelfItemKind = "destination" | "identity" | "host";
 
 const SEEN_CATEGORIES: Array<{ key: SeenCategory; title: string }> = [
   { key: "stores", title: "Stores" },
@@ -42,6 +44,76 @@ const SEEN_CATEGORIES: Array<{ key: SeenCategory; title: string }> = [
 ];
 
 const SEEN_STORE_LABELS = ["local", "memory", "todo", "file", "kanban"];
+
+const SELF_ITEM_OPTIONS: Array<{
+  kind: SelfItemKind;
+  title: string;
+  modalLabel: string;
+  placeholder: string;
+  emptyHint: string;
+  suggested: string[];
+}> = [
+  {
+    kind: "destination",
+    title: "Stores",
+    modalLabel: "Store",
+    placeholder: "store:crm or draft:*",
+    emptyHint: "No owned stores.",
+    suggested: ["store:files", "store:memory", "store:todo", "store:calendar", "store:drive", "draft:*"],
+  },
+  {
+    kind: "identity",
+    title: "Identities (send-to-self)",
+    modalLabel: "Identity",
+    placeholder: "you@example.com",
+    emptyHint:
+      "No identities declared — sends to any address are treated as external (the safe default).",
+    suggested: [],
+  },
+  {
+    kind: "host",
+    title: "Hosts (own infrastructure)",
+    modalLabel: "Host",
+    placeholder: "myvps.example.com",
+    emptyHint: "No hosts declared — every host is treated as external until you add it.",
+    suggested: [],
+  },
+];
+
+function selfOption(kind: SelfItemKind) {
+  return SELF_ITEM_OPTIONS.find((option) => option.kind === kind) || SELF_ITEM_OPTIONS[0];
+}
+
+function selfItems(self: SelfAllowlist, kind: SelfItemKind): string[] {
+  if (kind === "identity") return self.identities || [];
+  if (kind === "host") return self.hosts || [];
+  return self.destinations || [];
+}
+
+function uniqueValues(values: string[]): string[] {
+  const seen: Record<string, boolean> = {};
+  const result: string[] = [];
+  values.forEach((value) => {
+    const trimmed = value.trim();
+    const key = trimmed.toLowerCase();
+    if (!trimmed || seen[key]) return;
+    seen[key] = true;
+    result.push(trimmed);
+  });
+  return result;
+}
+
+function selfSuggestions(kind: SelfItemKind, seen: SeenDestination[], self: SelfAllowlist): string[] {
+  const existing = selfItems(self, kind).map((value) => value.toLowerCase());
+  const fromSeen = seen
+    .map((entry) => entry.suggest)
+    .filter((suggest): suggest is { kind: string; value: string } => Boolean(suggest))
+    .filter((suggest) => suggest.kind === kind)
+    .map((suggest) => text(suggest.value));
+  return uniqueValues(selfOption(kind).suggested.concat(fromSeen)).filter(
+    (value) => existing.indexOf(value.toLowerCase()) === -1,
+  );
+}
 
 // Bucket an observed destination by what it actually is. Categorization tracks
 // claimability: the backend's self-grant suggestion is authoritative when present
@@ -72,60 +144,182 @@ function seenDisplay(entry: SeenDestination): string {
   return destination;
 }
 
-// A single add-input + button row used by every editable list.
-function AddRow(props: {
-  placeholder: string;
-  buttonLabel: string;
-  disabled?: boolean;
-  onAdd: (value: string) => void;
+function AddSelfItemModal(props: {
+  controller: DestinationsController;
+  self: SelfAllowlist;
+  seen: SeenDestination[];
+  onCancel: () => void;
 }) {
+  const { busy, addSelf } = props.controller;
+  const [kind, setKind] = useState<SelfItemKind>("destination");
   const [value, setValue] = useState("");
-  const submit = () => {
+  const [formError, setFormError] = useState("");
+  const option = selfOption(kind);
+  const suggestions = selfSuggestions(kind, props.seen, props.self).slice(0, 8);
+  const listId = "hermes-guardian-self-suggestions-" + kind;
+
+  function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     const trimmed = value.trim();
-    if (!trimmed) return;
-    props.onAdd(trimmed);
+    if (!trimmed) {
+      setFormError("Enter a value to add.");
+      return;
+    }
+    addSelf(kind, trimmed, undefined, true);
+    props.onCancel();
+  }
+
+  function updateKind(next: SelfItemKind) {
+    setKind(next);
     setValue("");
-  };
+    setFormError("");
+  }
+
   return (
-    <div className="hermes-guardian-dest-addrow">
-      <input
-        className="hermes-guardian-input"
-        type="text"
-        value={value}
-        placeholder={props.placeholder}
+    <div
+      className="hermes-guardian-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) props.onCancel();
+      }}
+    >
+      <form className="hermes-guardian-modal" onSubmit={submit}>
+        <div className="hermes-guardian-card-head">
+          <div>
+            <h2 className="hermes-guardian-title">Add item</h2>
+            <div className="hermes-guardian-subtitle">
+              Declare a store, identity, or host that should resolve as yours.
+            </div>
+          </div>
+          <Button variant="secondary" onClick={props.onCancel}>
+            Close
+          </Button>
+        </div>
+        <div className="hermes-guardian-modal-body">
+          <div className="hermes-guardian-radio-row">
+            {SELF_ITEM_OPTIONS.map((item) => (
+              <label key={item.kind} className="hermes-guardian-check">
+                <input
+                  type="radio"
+                  checked={kind === item.kind}
+                  onChange={() => updateKind(item.kind)}
+                />
+                {item.modalLabel}
+              </label>
+            ))}
+          </div>
+
+          <Field label={option.modalLabel}>
+            <input
+              className="hermes-guardian-input"
+              type="text"
+              value={value}
+              list={listId}
+              placeholder={option.placeholder}
+              disabled={busy}
+              onChange={(event) => {
+                setValue(event.target.value);
+                setFormError("");
+              }}
+            />
+            <datalist id={listId}>
+              {suggestions.map((item) => (
+                <option key={item} value={item} />
+              ))}
+            </datalist>
+          </Field>
+
+          {suggestions.length ? (
+            <div className="hermes-guardian-suggestion-row" aria-label="Suggested values">
+              {suggestions.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className="hermes-guardian-suggestion-chip"
+                  disabled={busy}
+                  onClick={() => {
+                    setValue(item);
+                    setFormError("");
+                  }}
+                >
+                  <Mono>{item}</Mono>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="hermes-guardian-banner">
+            Items you add here are treated as yours. Outbound writes to matching destinations are
+            not gated as a boundary crossing; the security layer still blocks sensitive
+            account-security content.
+          </div>
+          {formError ? <div className="hermes-guardian-banner">{formError}</div> : null}
+          <div className="hermes-guardian-actions">
+            <Button type="submit" disabled={busy}>
+              Add item
+            </Button>
+            <Button variant="secondary" onClick={props.onCancel}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function SelfTile(props: {
+  kind: SelfItemKind;
+  value: string;
+  disabled?: boolean;
+  onRemove: (kind: SelfItemKind, value: string) => void;
+}) {
+  return (
+    <div className="hermes-guardian-seen-tile hermes-guardian-self-tile">
+      <div className="hermes-guardian-seen-tile-head">
+        <TrustPill trust="self" />
+      </div>
+      <div className="hermes-guardian-seen-tile-dest">
+        <Mono>{props.value}</Mono>
+      </div>
+      <Button
+        variant="secondary"
         disabled={props.disabled}
-        onChange={(event) => setValue(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") submit();
-        }}
-      />
-      <Button variant="secondary" disabled={props.disabled} onClick={submit}>
-        {props.buttonLabel}
+        onClick={() => props.onRemove(props.kind, props.value)}
+      >
+        Remove
       </Button>
     </div>
   );
 }
 
-function EditableList(props: {
+function EditableSelfRow(props: {
+  kind: SelfItemKind;
+  title: string;
   items: string[];
   emptyHint: string;
   disabled?: boolean;
-  onRemove: (value: string) => void;
+  onRemove: (kind: SelfItemKind, value: string) => void;
 }) {
-  if (!props.items.length) {
-    return <div className="hermes-guardian-muted hermes-guardian-dest-empty">{props.emptyHint}</div>;
-  }
   return (
-    <ul className="hermes-guardian-dest-list">
-      {props.items.map((item) => (
-        <li key={item} className="hermes-guardian-dest-item">
-          <Mono>{item}</Mono>
-          <Button variant="secondary" disabled={props.disabled} onClick={() => props.onRemove(item)}>
-            Remove
-          </Button>
-        </li>
-      ))}
-    </ul>
+    <div className="hermes-guardian-seen-cat">
+      <div className="hermes-guardian-seen-cat-title">{props.title}</div>
+      {props.items.length ? (
+        <div className="hermes-guardian-seen-track">
+          {props.items.map((item) => (
+            <SelfTile
+              key={item}
+              kind={props.kind}
+              value={item}
+              disabled={props.disabled}
+              onRemove={props.onRemove}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="hermes-guardian-muted hermes-guardian-dest-empty">{props.emptyHint}</div>
+      )}
+    </div>
   );
 }
 
@@ -227,6 +421,7 @@ function SeenSection(props: {
 
 export function WhatsYoursTab({ controller }: WhatsYoursTabProps) {
   const { data, loading, error, busy, addSelf, removeSelf } = controller;
+  const [showAddModal, setShowAddModal] = useState(false);
 
   if (loading && !data) {
     return <div className="hermes-guardian-muted">Loading destinations...</div>;
@@ -236,9 +431,9 @@ export function WhatsYoursTab({ controller }: WhatsYoursTabProps) {
   }
 
   const self = (data && data.self) || {};
-  const stores = self.destinations || [];
   const identities = self.identities || [];
   const hosts = self.hosts || [];
+  const seen = (data && data.seen) || [];
   const grantActive = identities.length > 0 || hosts.length > 0;
 
   return (
@@ -253,7 +448,7 @@ export function WhatsYoursTab({ controller }: WhatsYoursTabProps) {
       </div>
 
       <SeenSection
-        seen={(data && data.seen) || []}
+        seen={seen}
         tally={(data && data.tally) || {}}
         busy={busy}
         onAddToSelf={(suggest, destination) =>
@@ -285,60 +480,33 @@ export function WhatsYoursTab({ controller }: WhatsYoursTabProps) {
               never gated.
             </div>
           </div>
+          <Button onClick={() => setShowAddModal(true)} disabled={busy}>
+            Add item
+          </Button>
         </div>
 
-        <div className="hermes-guardian-dest-columns">
-          <div className="hermes-guardian-dest-group">
-            <div className="hermes-guardian-dest-group-title">Stores</div>
-            <EditableList
-              items={stores}
-              disabled={busy}
-              emptyHint="No owned stores."
-              onRemove={(value) => removeSelf("destination", value)}
-            />
-            <AddRow
-              placeholder="store:crm or draft:*"
-              buttonLabel="Add store"
-              disabled={busy}
-              onAdd={(value) => addSelf("destination", value)}
-            />
-          </div>
-
-          <div className="hermes-guardian-dest-group">
-            <div className="hermes-guardian-dest-group-title">Identities (send-to-self)</div>
-            <EditableList
-              items={identities}
-              disabled={busy}
-              emptyHint="No identities declared — sends to any address are treated as external (the safe default)."
-              onRemove={(value) => removeSelf("identity", value)}
-            />
-            <AddRow
-              placeholder="you@example.com"
-              buttonLabel="Add identity"
-              disabled={busy}
-              onAdd={(value) => addSelf("identity", value)}
-            />
-          </div>
-
-          <div className="hermes-guardian-dest-group">
-            <div className="hermes-guardian-dest-group-title">Hosts (own infrastructure)</div>
-            <EditableList
-              items={hosts}
-              disabled={busy}
-              emptyHint="No hosts declared — every host is treated as external until you add it."
-              onRemove={(value) => removeSelf("host", value)}
-            />
-            <AddRow
-              placeholder="myvps.example.com"
-              buttonLabel="Add host"
-              disabled={busy}
-              onAdd={(value) => addSelf("host", value)}
-            />
-          </div>
-        </div>
+        {SELF_ITEM_OPTIONS.map((item) => (
+          <EditableSelfRow
+            key={item.kind}
+            kind={item.kind}
+            title={item.title}
+            items={selfItems(self, item.kind)}
+            disabled={busy}
+            emptyHint={item.emptyHint}
+            onRemove={removeSelf}
+          />
+        ))}
       </div>
 
       <CheckDestination />
+      {showAddModal ? (
+        <AddSelfItemModal
+          controller={controller}
+          self={self}
+          seen={seen}
+          onCancel={() => setShowAddModal(false)}
+        />
+      ) : null}
     </div>
   );
 }
