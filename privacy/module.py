@@ -969,7 +969,7 @@ def _final_response_destination(
     state = tool_policy._ensure_session(session_id)
     platform = str(platform or state.get("platform") or "unknown").strip().lower() or "unknown"
     recipient = str(recipient or "").strip()
-    chat_type = str(chat_type or "").strip().lower()
+    chat_type = str(chat_type or state.get("chat_type") or "").strip().lower()
     parts = [platform]
     if chat_type:
         parts.append(chat_type)
@@ -987,8 +987,8 @@ def _final_destination_is_owner_private(
 ) -> bool:
     state = tool_policy._ensure_session(session_id)
     platform = str(platform or state.get("platform") or "unknown").strip().lower()
-    sender_id = str(sender_id or "").strip()
-    chat_type = str(chat_type or "").strip().lower()
+    sender_id = str(sender_id or state.get("sender_id") or "").strip()
+    chat_type = str(chat_type or state.get("chat_type") or "").strip().lower()
     if platform == "cli":
         return True
     if chat_type in {"group", "supergroup", "channel", "guild", "server", "room"}:

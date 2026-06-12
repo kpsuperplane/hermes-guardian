@@ -72,12 +72,20 @@ def _on_pre_llm_call_impl(
     session_id: str = "",
     platform: str = "",
     sender_id: str = "",
-    **_: Any,
+    **kwargs: Any,
 ) -> str | None:
     owner_hash = tool_policy._hash_identity(platform or "cli", sender_id or "")
     state = tool_policy._ensure_session(session_id, owner_hash)
     state["platform"] = str(platform or "")
     state["sender_id"] = str(sender_id or "")
+    chat_type = str(
+        kwargs.get("chat_type")
+        or kwargs.get("channel_type")
+        or kwargs.get("conversation_type")
+        or ""
+    )
+    if chat_type:
+        state["chat_type"] = chat_type
     # While the session is still clean, hand the agent an ephemeral hygiene note
     # (Hermes appends it to the current turn's user message at API-call time only).
     # Once tainted — or with privacy checks off — the note has nothing to protect.
