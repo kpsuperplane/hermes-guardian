@@ -3,6 +3,7 @@ import { Button } from "@/components/Button";
 import { Mono } from "@/components/Mono";
 import { ImpactPreview } from "@/components/ImpactPreview";
 import { PreviewSend } from "@/components/PreviewSend";
+import { TrustPill } from "@/components/TrustPill";
 import { TrustedDestinationModal } from "@/components/TrustedDestinationModal";
 import { displayText, expiryPillText, ruleScopeText, text } from "@/lib/format";
 import type { DestinationsController } from "@/hooks/useDestinations";
@@ -69,23 +70,26 @@ function TrustedDestinations(props: { controller: DestinationsController }) {
         </div>
       </div>
       {trusted.length ? (
-        <ul className="hermes-guardian-dest-list">
+        <div className="hermes-guardian-sharing-tile-track">
           {trusted.map((entry) => {
             const kind = text(entry.kind) || "identity";
             const value = text(entry.value) || text(entry.identity);
             const isCommand = kind === "command";
             return (
-              <li key={kind + ":" + value} className="hermes-guardian-dest-item">
-                <span className="hermes-guardian-dest-seen-label">
-                  <span className="hermes-guardian-dest-kind" title={isCommand ? "command" : "recipient"}>
-                    {isCommand ? "🖥" : "👤"}
-                  </span>
+              <div key={kind + ":" + value} className="hermes-guardian-sharing-tile">
+                <div className="hermes-guardian-sharing-tile-head">
+                  <TrustPill trust="trusted_recipient" />
+                  <span className="hermes-guardian-pill">{isCommand ? "command" : "recipient"}</span>
+                </div>
+                <div className="hermes-guardian-sharing-tile-main">
                   <Mono>{value}</Mono>
-                  {entry.classes && entry.classes.length ? (
-                    <span className="hermes-guardian-muted">{entry.classes.join(", ")}</span>
-                  ) : null}
-                  {entry.note ? <span className="hermes-guardian-muted">{entry.note}</span> : null}
-                </span>
+                </div>
+                {entry.classes && entry.classes.length ? (
+                  <div className="hermes-guardian-sharing-tile-meta">{entry.classes.join(", ")}</div>
+                ) : null}
+                {entry.note ? (
+                  <div className="hermes-guardian-sharing-tile-meta">{entry.note}</div>
+                ) : null}
                 <Button
                   variant="secondary"
                   disabled={busy}
@@ -93,10 +97,10 @@ function TrustedDestinations(props: { controller: DestinationsController }) {
                 >
                   Remove
                 </Button>
-              </li>
+              </div>
             );
           })}
-        </ul>
+        </div>
       ) : (
         <div className="hermes-guardian-muted hermes-guardian-dest-empty">
           No trusted destinations — every recipient and command is treated as external until you add
@@ -131,47 +135,27 @@ function RuleCard(props: {
   const { rule, index, total, onEditRule, onPatchRule, onDeleteRule, onMoveRule } = props;
   const disabled = rule.enabled === false;
   const expiry = expiryPillText(rule);
-  const classes = ["hermes-guardian-card"];
+  const effect = text(rule.effect, "allow") === "deny" ? "deny" : "allow";
+  const classes = ["hermes-guardian-sharing-tile", "hermes-guardian-rule-tile"];
   if (disabled) classes.push("hermes-guardian-rule-disabled");
   return (
     <div className={classes.join(" ")}>
-      <div className="hermes-guardian-rule-head">
+      <div className="hermes-guardian-sharing-tile-head">
+        <span className={"hermes-guardian-pill hermes-guardian-rule-effect-" + effect}>
+          {effect}
+        </span>
+        {expiry ? <span className="hermes-guardian-pill">{expiry}</span> : null}
+      </div>
+      <div className="hermes-guardian-rule-head hermes-guardian-rule-tile-head">
         <div className="hermes-guardian-rule-main">
           <div className="hermes-guardian-rule-title">
-            {text(rule.effect, "allow") +
-              " " +
-              displayText(rule.action_family, "*") +
+            {displayText(rule.action_family, "*") +
               " → " +
               displayText(rule.destination, "*")}
           </div>
           <div className="hermes-guardian-rule-subline">
             <span className="hermes-guardian-rule-id">{rule.rule_id}</span>
-            {expiry ? <span className="hermes-guardian-pill">{expiry}</span> : null}
           </div>
-        </div>
-        <div className="hermes-guardian-actions">
-          <Button variant="secondary" disabled={index === 0} onClick={() => onMoveRule(rule, "up")}>
-            Up
-          </Button>
-          <Button
-            variant="secondary"
-            disabled={index === total - 1}
-            onClick={() => onMoveRule(rule, "down")}
-          >
-            Down
-          </Button>
-          <Button variant="secondary" onClick={() => onEditRule(rule)}>
-            Edit
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => onPatchRule(rule.rule_id as string, { enabled: !rule.enabled })}
-          >
-            {rule.enabled === false ? "Enable" : "Disable"}
-          </Button>
-          <Button variant="danger" onClick={() => onDeleteRule(rule.rule_id as string)}>
-            Delete
-          </Button>
         </div>
       </div>
       <div className="hermes-guardian-rule-meta">
@@ -185,6 +169,30 @@ function RuleCard(props: {
             {cls === "*" ? "all data classes" : cls}
           </span>
         ))}
+      </div>
+      <div className="hermes-guardian-actions hermes-guardian-rule-tile-actions">
+        <Button variant="secondary" disabled={index === 0} onClick={() => onMoveRule(rule, "up")}>
+          Up
+        </Button>
+        <Button
+          variant="secondary"
+          disabled={index === total - 1}
+          onClick={() => onMoveRule(rule, "down")}
+        >
+          Down
+        </Button>
+        <Button variant="secondary" onClick={() => onEditRule(rule)}>
+          Edit
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={() => onPatchRule(rule.rule_id as string, { enabled: !rule.enabled })}
+        >
+          {rule.enabled === false ? "Enable" : "Disable"}
+        </Button>
+        <Button variant="danger" onClick={() => onDeleteRule(rule.rule_id as string)}>
+          Delete
+        </Button>
       </div>
       {/* Impact preview for the existing rule: replays it against recent activity. */}
       <ImpactPreview
@@ -282,7 +290,7 @@ export function SharingTab(props: SharingTabProps) {
           </div>
         </div>
         {rules.length ? (
-          <div className="hermes-guardian-grid">
+          <div className="hermes-guardian-sharing-tile-track hermes-guardian-rule-tile-track">
             {rules.map((rule, index) => (
               <RuleCard
                 key={rule.rule_id}

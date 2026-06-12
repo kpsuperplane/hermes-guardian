@@ -1,5 +1,104 @@
 /* --- Sharing tab (doc 02 §Tab3): impact preview chrome. Lists, rules, and form
    primitives reuse the shared card/pill/dest classes from the other tab CSS. --- */
+.hermes-guardian-sharing-tile-track {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  min-width: 0;
+  margin-top: 0.85rem;
+  padding-bottom: 0.4rem;
+}
+
+.hermes-guardian-sharing-tile {
+  flex: 0 0 12rem;
+  width: 12rem;
+  min-height: 7.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-card) 92%, transparent);
+  min-width: 0;
+}
+
+.hermes-guardian-sharing-tile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.hermes-guardian-sharing-tile-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.hermes-guardian-sharing-tile-meta {
+  color: var(--color-muted-foreground);
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+
+.hermes-guardian-sharing-tile > .hermes-guardian-button,
+.hermes-guardian-sharing-tile > .hermes-guardian-secondary,
+.hermes-guardian-sharing-tile > .hermes-guardian-danger {
+  width: 100%;
+}
+
+.hermes-guardian-rule-tile-track {
+  align-items: stretch;
+}
+
+.hermes-guardian-rule-tile {
+  flex-basis: 19rem;
+  width: 19rem;
+  min-height: 13.5rem;
+}
+
+.hermes-guardian-rule-tile-head {
+  display: block;
+}
+
+.hermes-guardian-rule-tile .hermes-guardian-rule-title {
+  overflow-wrap: anywhere;
+}
+
+.hermes-guardian-rule-tile .hermes-guardian-rule-meta {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0;
+}
+
+.hermes-guardian-rule-tile .hermes-guardian-chips {
+  margin-top: 0;
+}
+
+.hermes-guardian-rule-tile-actions {
+  margin-top: auto;
+}
+
+.hermes-guardian-rule-tile-actions .hermes-guardian-secondary,
+.hermes-guardian-rule-tile-actions .hermes-guardian-danger {
+  flex: 1 1 calc(50% - 0.4rem);
+}
+
+.hermes-guardian-rule-effect-allow {
+  border-color: color-mix(in srgb, #22c55e 45%, var(--color-border));
+  background: color-mix(in srgb, #22c55e 14%, var(--color-card));
+  color: color-mix(in srgb, #16a34a 55%, var(--color-foreground));
+}
+
+.hermes-guardian-rule-effect-deny {
+  border-color: color-mix(in srgb, var(--color-destructive) 55%, var(--color-border));
+  background: color-mix(in srgb, var(--color-destructive) 12%, var(--color-card));
+  color: var(--color-destructive);
+}
+
 .hermes-guardian-impact {
   margin-top: 0.65rem;
   display: grid;
@@ -15,12 +114,4 @@
 
 .hermes-guardian-impact-list {
   margin-top: 0.25rem;
-}
-
-/* Trusted destinations: kind badge. */
-.hermes-guardian-dest-kind {
-  flex: 0 0 auto;
-  font-size: 0.95rem;
-  line-height: 1;
-  opacity: 0.8;
 }
