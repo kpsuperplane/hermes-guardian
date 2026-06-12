@@ -144,6 +144,12 @@ or `unknown`. This is what lets Guardian tell "save my inbox summary to my own N
 (self, allowed) from "email my inbox summary to a stranger" (external, gated) instead
 of gating both. Resolution is **local** — it calls no vendor service.
 
+Trusted-recipient entries resolve as `trusted_recipient` for more than message
+sends: an identity entry that names a store connector id (for example `notion`)
+also covers writes to that store (`mcp:notion`), so trusting a destination once
+covers it across action families. Trusted entries can also be exact terminal
+commands (see the `trust` approval option and `sharing destination suggest`).
+
 The defaults are conservative and fail closed. A destination whose ownership cannot
 be *proven* is `unknown`, and `unknown` is treated exactly as `external`. Mislabeling
 an external destination as `self` is the *only* way this design leaks, so every
@@ -195,7 +201,7 @@ decision:
 {
   "version": 4,
   "whats_yours": {
-    "stores": ["store:files", "store:notes", "store:calendar", "store:drive", "draft:*"],
+    "stores": ["store:files", "store:memory", "store:todo", "store:calendar", "store:notion", "store:drive", "draft:*"],
     "identities": [],
     "hosts": []
   },
@@ -310,7 +316,8 @@ smaller model is faster but less sharp on subtle content/intent calls, so prefer
 capable "mini"/"flash"-class model over the smallest. Guardian also caches *deny*
 verdicts briefly per session, so a retried blocked action does not re-pay the
 verifier latency (denials only — a cached deny can never become a false allow).
-Watch the effect in the **Performance** tab.
+Watch the effect in the verifier scoreboard on the **Review** tab and the
+per-check timing table on the **Protection** tab.
 
 Both context channels are toggleable, in the dashboard Review tab, by slash
 command, or directly in `guardian-rules.json` under `review`:
@@ -330,8 +337,9 @@ receives `cron_context`, a sanitized excerpt of the cron job's own stored
 instruction (sourced from the job record, redacted the same way). Because cron
 runs unattended with no human to catch a bad auto-approval, a cron job can **never
 self-authorize high-risk egress** — high-risk cron actions always fall back to
-manual approval even with cron context on, and enabling it raises a runtime risk
-banner. Enabling cron context from the dashboard requires explicit confirmation.
+manual approval even with cron context on. The cron-context state is surfaced in
+the policy snapshot, and enabling it from the dashboard requires explicit
+confirmation.
 
 ## Approvals
 
@@ -363,10 +371,31 @@ Approval options:
 | `trust` | Adds an available Trusted Destination option, scoped to the data classes in the block. |
 | `mine` | Adds an available Ownership option, such as a self identity, store, or host. |
 
+The block message lists only the options that would actually permit that
+action: `trust` and `mine` resolve by action context (a messaging block offers
+the recipient identity, a store write offers the destination, a terminal block
+offers the host or exact command), so not every option appears on every block.
+The structural `trust`/`mine` options are admin-gated — they require the CLI
+owner or a configured gateway owner.
+
 Blocked tool calls are not paused and resumed. After approval, the agent must
 retry the action.
 
 There is no global "allow everything" approval.
+
+### Cross-channel lockdown
+
+Once a private export to an external destination has been withheld in a turn,
+Guardian arms a turn-scoped lockdown for the withheld data classes: another
+export of those classes to any external destination in the same turn cannot be
+auto-approved — not by `read-only` mode's metadata-verified set and not by the
+`llm` verifier — regardless of which tool or channel the retry uses. The
+re-route is gated for manual review with a `cross-channel lockdown` reason.
+This closes channel-shopping: a gated terminal export cannot be re-tried
+through a browser form or another softer channel to dodge the review the first
+block asked for. The lockdown is volatile and turn-scoped — it clears on the
+next owner message and on session reset, and is never persisted. Explicit
+approvals still work: approving the block and retrying proceeds as normal.
 
 ## Privacy Rules
 
@@ -459,6 +488,13 @@ without preventing any leak — the token is still blocked if the agent later tr
 to send it anywhere. Hard secrets (private keys, AWS access keys, and
 `*_PASSWORD=` / `*_PRIVATE_KEY=` assignments) stay suppressed even inbound, as
 does all `account_security_content` (OTPs, reset/recovery, magic links).
+
+Secret-assignment matching targets hardcoded literal values assigned to
+secret-named variables. Variables that merely *reference* a secret (names
+ending in `_path`, `_file`, `_dir`, `_url`, `_uri`, `_name`) and
+expression-valued assignments (`secret = json.loads(secret_path.read_text())`,
+`api_key = os.environ["KEY"]`) are not flagged — they locate or load a secret
+rather than containing one.
 
 One scoped exception applies to `web_extract` results only: full-page web reads
 routinely embed login-form boilerplate ("Forgot your password?", "Sign in",
@@ -708,7 +744,10 @@ sit on top as the everyday commands.
 
 # SHARING — what you've authorized to leave you
 /guardian sharing
-/guardian sharing trusted add|remove <identity> [classes=<class+class>] [note=<text>]
+/guardian sharing destination add|remove <identity> [classes=<class+class>] [note=<text>]
+/guardian sharing destination suggest        list trusted-command suggestions
+/guardian sharing destination trust <n> [classes=<class+class>] [note=<text>]
+/guardian sharing destination remove command <n>
 /guardian sharing rule add allow|deny action=<family|*> destination=<dest|*> classes=<class+class|*> [tool=<tool_name|*>] [purpose=<token|*>] [recipient=<id|raw|*>]
 /guardian sharing rule delete|enable|disable <rule_id>
 /guardian sharing rule move <rule_id> before|after <other_rule_id>
@@ -745,7 +784,8 @@ Helpful commands:
 ```
 
 `/guardian deny` is an alias for `dismiss`. `/guardian activity failed` is an
-alias for `/guardian activity failures`.
+alias for `/guardian activity failures`. `/guardian sharing trusted` is an
+alias for `/guardian sharing destination`.
 
 ## Dashboard
 
@@ -758,7 +798,8 @@ mine → is it covered by a grant → who judges the rest → the floor):
 
 - **Activity**: the decided stream as **turn cards** — each card is one turn (one user
   prompt and the checks it drove), paginated by turn, with its checks nested inside and
-  expandable to the full resolved capability (the dashboard twin of `/guardian why`).
+  expandable to the full resolved capability (the dashboard twin of `/guardian why`),
+  with per-check and per-turn Guardian latency.
   Plus a pinned *Pending approvals* list with same-screen Approve / Dismiss, a session
   **taint strip** with *Clear session taint*, per-check **trust pills**, and
   **deep-linked decision steps** whose clauses jump to the tab that governs them.
@@ -792,9 +833,12 @@ GET /api/plugins/hermes-guardian/policy
 GET /api/plugins/hermes-guardian/performance
 GET /api/plugins/hermes-guardian/activity
 GET /api/plugins/hermes-guardian/activity/datatables
+GET /api/plugins/hermes-guardian/activity/turns
 GET /api/plugins/hermes-guardian/approvals
 GET /api/plugins/hermes-guardian/destinations
 GET /api/plugins/hermes-guardian/destinations/resolve
+GET /api/plugins/hermes-guardian/destinations/suggestions
+GET /api/plugins/hermes-guardian/tools/source-suggestions
 GET /api/plugins/hermes-guardian/sharing/preview
 POST /api/plugins/hermes-guardian/sharing/impact
 POST /api/plugins/hermes-guardian/privacy/mode
@@ -811,6 +855,8 @@ DELETE /api/plugins/hermes-guardian/rules/{rule_id}
 POST /api/plugins/hermes-guardian/tools
 PATCH /api/plugins/hermes-guardian/tools/{override_id}
 DELETE /api/plugins/hermes-guardian/tools/{override_id}
+POST /api/plugins/hermes-guardian/tools/source
+POST /api/plugins/hermes-guardian/protection/persist-prompts
 POST /api/plugins/hermes-guardian/approvals/{approval_id}/approve
 POST /api/plugins/hermes-guardian/approvals/{approval_id}/dismiss
 POST /api/plugins/hermes-guardian/destinations/self
@@ -869,7 +915,8 @@ language-independent.
 
 ## Activity And State
 
-Persistent files live in the plugin directory and are ignored by git:
+Persistent files live in the plugin directory (override the location with
+`HERMES_GUARDIAN_STATE_DIR`) and are ignored by git:
 
 | File | Purpose |
 | --- | --- |

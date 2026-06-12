@@ -43,7 +43,7 @@ _GUARDIAN_HELP_LINES = [
     "",
     "WHAT'S YOURS — where you end and the world begins",
     "  mine                    show self stores/identities/hosts",
-    "  mine add|remove store|identity|host <value>",
+    "  mine add|remove destination|identity|host <value>",
     "  check <destination|recipient>        resolve trust preview",
     "",
     "SHARING — what you've authorized to leave you",

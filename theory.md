@@ -100,7 +100,7 @@ Guardian can be described as a coarse-grained dynamic information-flow-control l
 
 Guardian assigns private data labels to source categories such as:
 
-- `email`
+- `communications`
 - `contacts`
 - `documents`
 - `calendar`
@@ -150,6 +150,8 @@ The security property depends on correct sink classification. Unknown or open-en
 Guardian therefore classifies conservatively in both directions. A tool that matches no known built-in family is treated as an unrecognized sink and gated under taint (the `tool_unknown` family), mirroring the treatment of unknown MCP tools, rather than being allowed by default. This removes an earlier asymmetry in which unrecognized non-MCP tools failed open. The operator can revert to permissive handling globally, but that choice is explicit and surfaced as a runtime risk.
 
 A browser console eval is classified by what its expression does, not by the tool name alone. Reading page state — DOM nodes, form field values, page text, attributes — and returning it to the agent is a read, not a sink: the agent already has page read access through the ungated read tools, and any later attempt to send that data onward is itself independently gated. Guardian recognizes this through a fail-closed allowlist — the eval is treated as a read only when every operation is a known pure-read accessor — so anything it cannot prove read-only falls through to gating. An eval that writes into the page (assigning to DOM/element properties, inserting nodes, setting attributes), submits, navigates, reads a credential store, runs dynamic code, or hits a network sink is a sink. The page-write case matters even with no network call in the eval: writing tainted data into an attacker-controlled DOM is an exfiltration channel, because page-resident script can read the mutation back out. This is the same "reading is not egress" principle applied to in-page operations.
+
+A turn-scoped deterministic rule — the cross-channel lockdown — complements the per-action decision: once an export of private classes to an external destination has been withheld in a turn, no export of those same policy classes to an external destination may be *auto*-approved for the rest of the turn — not by the read-only preset and not by the LLM verifier — whatever tool or channel the retry uses. A task-driven agent's natural response to a block is to re-route (a gated terminal export re-tried through a browser form), and the lockdown denies the re-route a softer channel, so the human review the first block requested cannot be shopped around. The lockdown state is volatile and clears on the next owner message; explicit approvals and standing rules still apply, since they are themselves the human review the lockdown preserves.
 
 Because conservative classification produces false positives for genuinely benign custom tools, Guardian pairs it with an operator-managed tool override registry. An override is a trusted operator declaration about a specific tool or tool-name prefix: which private classes its results carry (a source declaration), and whether it is a safe non-sink, a forced-gate sink, or a specific action family (a sink declaration). Overrides are trusted for classification but are not declassification of access-sensitive content: they never bypass the non-approvable Security Module or the intrinsic same-call hard blocks.
 
