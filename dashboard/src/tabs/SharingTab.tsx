@@ -1,13 +1,13 @@
 import { React, useState } from "@/sdk";
+import { sharingImpact } from "@/api/client";
 import { Button } from "@/components/Button";
 import { Mono } from "@/components/Mono";
-import { ImpactPreview } from "@/components/ImpactPreview";
 import { PreviewSend } from "@/components/PreviewSend";
 import { TrustPill } from "@/components/TrustPill";
 import { TrustedDestinationModal } from "@/components/TrustedDestinationModal";
-import { displayText, expiryPillText, ruleScopeText, text } from "@/lib/format";
+import { classesText, displayText, expiryPillText, ruleScopeText, text, timeText } from "@/lib/format";
 import type { DestinationsController } from "@/hooks/useDestinations";
-import type { Rule } from "@/types";
+import type { ImpactPreview as ImpactPreviewData, Rule } from "@/types";
 
 export interface SharingTabProps {
   controller: DestinationsController;
@@ -122,6 +122,65 @@ function TrustedDestinations(props: { controller: DestinationsController }) {
   );
 }
 
+type RuleIconName = "left" | "right" | "eye" | "edit" | "power" | "trash";
+
+function RuleIcon({ name }: { name: RuleIconName }) {
+  const common = {
+    fill: "none",
+    stroke: "currentColor",
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    strokeWidth: 2,
+  };
+  if (name === "left") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" className="hermes-guardian-rule-icon">
+        <path {...common} d="M15 18l-6-6 6-6" />
+      </svg>
+    );
+  }
+  if (name === "right") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" className="hermes-guardian-rule-icon">
+        <path {...common} d="M9 6l6 6-6 6" />
+      </svg>
+    );
+  }
+  if (name === "eye") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" className="hermes-guardian-rule-icon">
+        <path {...common} d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
+        <circle {...common} cx="12" cy="12" r="2.5" />
+      </svg>
+    );
+  }
+  if (name === "edit") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" className="hermes-guardian-rule-icon">
+        <path {...common} d="M4 20h4l11-11-4-4L4 16v4z" />
+        <path {...common} d="M13 7l4 4" />
+      </svg>
+    );
+  }
+  if (name === "power") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" className="hermes-guardian-rule-icon">
+        <path {...common} d="M12 3v8" />
+        <path {...common} d="M7 6.5a8 8 0 1 0 10 0" />
+      </svg>
+    );
+  }
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="hermes-guardian-rule-icon">
+      <path {...common} d="M4 7h16" />
+      <path {...common} d="M10 11v6" />
+      <path {...common} d="M14 11v6" />
+      <path {...common} d="M6 7l1 14h10l1-14" />
+      <path {...common} d="M9 7V4h6v3" />
+    </svg>
+  );
+}
+
 // --- Allow / deny rules (ported from RulesTab, doc 02 §Tab3.2) ---------------
 function RuleCard(props: {
   rule: Rule;
@@ -133,21 +192,69 @@ function RuleCard(props: {
   onMoveRule: (rule: Rule, direction: "up" | "down") => void;
 }) {
   const { rule, index, total, onEditRule, onPatchRule, onDeleteRule, onMoveRule } = props;
+  const [impact, setImpact] = useState<ImpactPreviewData | null>(null);
+  const [impactError, setImpactError] = useState("");
+  const [impactBusy, setImpactBusy] = useState(false);
   const disabled = rule.enabled === false;
   const expiry = expiryPillText(rule);
   const effect = text(rule.effect, "allow") === "deny" ? "deny" : "allow";
   const classes = ["hermes-guardian-sharing-tile", "hermes-guardian-rule-tile"];
   if (disabled) classes.push("hermes-guardian-rule-disabled");
+  const ruleId = rule.rule_id as string;
+  const impactCandidate = {
+    effect: text(rule.effect, "allow"),
+    match: {
+      action_family: displayText(rule.action_family, "*"),
+      destination: displayText(rule.destination, "*"),
+      purpose: displayText(rule.purpose, "*"),
+      data_classes: rule.data_classes && rule.data_classes.length ? rule.data_classes : ["*"],
+    },
+  };
+  const impactCount = impact ? Number(impact.matched_count || 0) : 0;
+  const impactVerb = (impact && impact.verb) || "covered";
+
+  function previewImpact() {
+    setImpactBusy(true);
+    setImpactError("");
+    sharingImpact(impactCandidate)
+      .then((payload: ImpactPreviewData) => setImpact(payload || null))
+      .catch((err: unknown) => {
+        setImpact(null);
+        setImpactError(String((err as Error)?.message || err));
+      })
+      .finally(() => setImpactBusy(false));
+  }
+
   return (
     <div className={classes.join(" ")}>
-      <div className="hermes-guardian-sharing-tile-head">
+      <div className="hermes-guardian-sharing-tile-head hermes-guardian-rule-toolbar">
         <div className="hermes-guardian-rule-order-group">
           <span className="hermes-guardian-rule-order">{"#" + (index + 1)}</span>
           <span className={"hermes-guardian-pill hermes-guardian-rule-effect-" + effect}>
             {effect}
           </span>
+          {expiry ? <span className="hermes-guardian-pill">{expiry}</span> : null}
         </div>
-        {expiry ? <span className="hermes-guardian-pill">{expiry}</span> : null}
+        <div className="hermes-guardian-rule-move-actions">
+          <Button
+            variant="secondary"
+            disabled={index === 0}
+            title="Move rule left"
+            aria-label={"Move rule " + (index + 1) + " left"}
+            onClick={() => onMoveRule(rule, "up")}
+          >
+            <RuleIcon name="left" />
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={index === total - 1}
+            title="Move rule right"
+            aria-label={"Move rule " + (index + 1) + " right"}
+            onClick={() => onMoveRule(rule, "down")}
+          >
+            <RuleIcon name="right" />
+          </Button>
+        </div>
       </div>
       <div className="hermes-guardian-rule-head hermes-guardian-rule-tile-head">
         <div className="hermes-guardian-rule-main">
@@ -174,42 +281,70 @@ function RuleCard(props: {
         ))}
       </div>
       <div className="hermes-guardian-actions hermes-guardian-rule-tile-actions">
-        <Button variant="secondary" disabled={index === 0} onClick={() => onMoveRule(rule, "up")}>
-          Up
+        <Button
+          variant="secondary"
+          disabled={impactBusy}
+          title="Preview impact"
+          aria-label={"Preview impact for rule " + (index + 1)}
+          onClick={previewImpact}
+        >
+          <RuleIcon name="eye" />
         </Button>
         <Button
           variant="secondary"
-          disabled={index === total - 1}
-          onClick={() => onMoveRule(rule, "down")}
+          title="Edit rule"
+          aria-label={"Edit rule " + (index + 1)}
+          onClick={() => onEditRule(rule)}
         >
-          Down
-        </Button>
-        <Button variant="secondary" onClick={() => onEditRule(rule)}>
-          Edit
+          <RuleIcon name="edit" />
         </Button>
         <Button
           variant="secondary"
-          onClick={() => onPatchRule(rule.rule_id as string, { enabled: !rule.enabled })}
+          title={rule.enabled === false ? "Enable rule" : "Disable rule"}
+          aria-label={(rule.enabled === false ? "Enable" : "Disable") + " rule " + (index + 1)}
+          onClick={() => onPatchRule(ruleId, { enabled: !rule.enabled })}
         >
-          {rule.enabled === false ? "Enable" : "Disable"}
+          <RuleIcon name="power" />
         </Button>
-        <Button variant="danger" onClick={() => onDeleteRule(rule.rule_id as string)}>
-          Delete
+        <Button
+          variant="danger"
+          title="Delete rule"
+          aria-label={"Delete rule " + (index + 1)}
+          onClick={() => onDeleteRule(ruleId)}
+        >
+          <RuleIcon name="trash" />
         </Button>
       </div>
-      {/* Impact preview for the existing rule: replays it against recent activity. */}
-      <ImpactPreview
-        candidate={{
-          effect: text(rule.effect, "allow"),
-          match: {
-            action_family: displayText(rule.action_family, "*"),
-            destination: displayText(rule.destination, "*"),
-            purpose: displayText(rule.purpose, "*"),
-            data_classes: rule.data_classes && rule.data_classes.length ? rule.data_classes : ["*"],
-          },
-        }}
-        label="Preview impact"
-      />
+      {impact ? (
+        <div className="hermes-guardian-muted hermes-guardian-rule-impact-summary">
+          {"Would have " +
+            impactVerb +
+            " " +
+            impactCount +
+            " of the last " +
+            Number(impact.considered || 0) +
+            " recorded actions."}
+        </div>
+      ) : null}
+      {impactError ? <div className="hermes-guardian-banner">{impactError}</div> : null}
+      {impact && impactCount ? (
+        <ul className="hermes-guardian-dest-list hermes-guardian-impact-list hermes-guardian-rule-impact-list">
+          {(impact.matched || []).map((row, rowIndex) => (
+            <li key={text(row.id) + ":" + rowIndex} className="hermes-guardian-dest-item">
+              <span className="hermes-guardian-dest-seen-label">
+                <span className="hermes-guardian-pill">{text(row.decision)}</span>
+                <Mono>{text(row.action_family) + " -> " + text(row.destination)}</Mono>
+                <span className="hermes-guardian-muted">{classesText(row.data_classes)}</span>
+              </span>
+              <span className="hermes-guardian-muted">{timeText(row.created_at)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : impact ? (
+        <div className="hermes-guardian-muted hermes-guardian-rule-impact-summary">
+          No recent actions would have been affected by this rule.
+        </div>
+      ) : null}
     </div>
   );
 }
