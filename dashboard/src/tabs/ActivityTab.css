@@ -136,15 +136,22 @@
 
 .hermes-guardian-approval-actions {
   display: flex;
-  align-items: flex-start;
-  gap: 0.65rem;
+  align-items: center;
+  gap: 0.5rem;
   flex-wrap: wrap;
   justify-content: flex-end;
+  flex: 0 1 28rem;
+  min-width: min(100%, 18rem);
 }
 
-.hermes-guardian-approval-action-group {
-  display: grid;
-  gap: 0.25rem;
+.hermes-guardian-approval-actions .hermes-guardian-approval-select {
+  width: min(22rem, 100%);
+  max-width: 100%;
+  flex: 1 1 16rem;
+}
+
+.hermes-guardian-approval-actions button {
+  flex: 0 0 auto;
 }
 
 .hermes-guardian-block-meta {
@@ -154,6 +161,17 @@
   margin-top: 0.5rem;
   font-size: 0.8rem;
   color: var(--color-muted-foreground);
+}
+
+@media (max-width: 720px) {
+  .hermes-guardian-approval-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .hermes-guardian-approval-actions .hermes-guardian-approval-select {
+    flex-basis: 100%;
+  }
 }
 
 /* --- Turn cards: history grouped by turn ------------------------------------

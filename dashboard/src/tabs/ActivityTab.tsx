@@ -1,7 +1,6 @@
 import { React, useState } from "@/sdk";
 import { Button } from "@/components/Button";
 import { DecisionStep } from "@/components/DecisionStep";
-import { Mono } from "@/components/Mono";
 import { TrustPill } from "@/components/TrustPill";
 import { HISTORY_PAGE_SIZES } from "@/constants";
 import { classesText, text, timeText } from "@/lib/format";
@@ -99,6 +98,18 @@ function ApprovalCard(props: {
       ),
     }))
     .filter((entry) => entry.options.length);
+  const selectableOptions = groups.flatMap((entry) =>
+    entry.options.filter((option) => option.structural || !covered),
+  );
+  const optionByMethod = new Map<string, PermitOption>();
+  groups.forEach((entry) => {
+    entry.options.forEach((option) => optionByMethod.set(option.method, option));
+  });
+  const approvalTitle = covered && !selectableOptions.length ? coveredTitle : "Choose an approval action";
+  const optionLabel = (option: PermitOption) =>
+    option.structural && option.value
+      ? option.label + " " + option.value
+      : option.label;
   return (
     <div className="hermes-guardian-card hermes-guardian-approval-card">
       <div className="hermes-guardian-block-head">
@@ -113,38 +124,37 @@ function ApprovalCard(props: {
           </div>
         </div>
         <div className="hermes-guardian-approval-actions">
-          {groups.map((entry) => (
-            <div key={entry.group} className="hermes-guardian-approval-action-group">
-              <div className="hermes-guardian-rule-subline">{entry.group}</div>
-              <div className="hermes-guardian-actions">
+          <select
+            className="hermes-guardian-select hermes-guardian-approval-select"
+            aria-label={"Approve pending approval " + text(approval.id)}
+            defaultValue=""
+            disabled={!selectableOptions.length}
+            title={approvalTitle}
+            onChange={(event) => {
+              const method = event.currentTarget.value;
+              event.currentTarget.value = "";
+              const option = optionByMethod.get(method);
+              if (!option) return;
+              onAction(approval, {
+                kind: "permit",
+                method: option.method,
+                structural: option.structural,
+              });
+            }}
+          >
+            <option value="" disabled>
+              Approve...
+            </option>
+            {groups.map((entry) => (
+              <optgroup key={entry.group} label={entry.group}>
                 {entry.options.map((option) => (
-                  <Button
-                    key={option.method}
-                    variant={option.structural ? "secondary" : undefined}
-                    // A rule already covering this retry makes approval unnecessary, but a
-                    // structural ownership/trust choice is still a meaningful config edit.
-                    disabled={!option.structural && covered}
-                    title={(!option.structural && coveredTitle) || option.detail || undefined}
-                    onClick={() =>
-                      onAction(approval, {
-                        kind: "permit",
-                        method: option.method,
-                        structural: option.structural,
-                      })
-                    }
-                  >
-                    {option.label}
-                    {option.structural && option.value ? (
-                      <>
-                        {" "}
-                        <Mono>{option.value}</Mono>
-                      </>
-                    ) : null}
-                  </Button>
+                  <option key={option.method} value={option.method} disabled={!option.structural && covered}>
+                    {optionLabel(option)}
+                  </option>
                 ))}
-              </div>
-            </div>
-          ))}
+              </optgroup>
+            ))}
+          </select>
           <Button variant="secondary" onClick={() => onAction(approval, { kind: "dismiss" })}>
             Dismiss
           </Button>
