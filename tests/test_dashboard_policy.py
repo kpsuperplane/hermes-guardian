@@ -831,3 +831,86 @@ def test_approve_route_allows_with_token(monkeypatch):
     assert response.status_code == 200
     assert response.content["ok"] is True
     assert approval_id not in plugin._PENDING_APPROVALS
+
+
+# --- Security: every mutation route enforces the admin gate (guard-wiring tripwire) ---
+# A token IS configured but the request carries the wrong/no header, so each route must
+# 403 at _require_dashboard_admin before doing any work. If a route ever loses that call,
+# exactly one parameter here flips to a non-403 and fails. Routes are invoked with
+# placeholder args (the admin check runs first, before args are used).
+def _mutation_route_invokers(api):
+    req = _request({})  # no x-hermes-guardian-token header -> wrong credential
+    return {
+        "set_privacy_mode": lambda: api.set_privacy_mode(req, {"mode": "strict"}),
+        "update_security_rule": lambda: api.update_security_rule(req, "sensitive_links", {"enabled": False}),
+        "update_language_pack": lambda: api.update_language_pack(req, "es", {"enabled": True}),
+        "create_rule": lambda: api.create_rule(req, {}),
+        "update_rule": lambda: api.update_rule(req, "rule_x", {}),
+        "delete_rule": lambda: api.delete_rule(req, "rule_x"),
+        "approve": lambda: api.approve(req, "1234", {"method": "rule_5m"}),
+        "dismiss": lambda: api.dismiss(req, "1234"),
+        "clear_taint": lambda: api.clear_taint(req),
+        "set_unknown_tools": lambda: api.set_unknown_tools(req, {"mode": "gate"}),
+        "set_user_context": lambda: api.set_user_context(req, {"enabled": True}),
+        "set_cron_context": lambda: api.set_cron_context(req, {"enabled": False}),
+        "set_verifier_model": lambda: api.set_verifier_model(req, {"model": ""}),
+        "set_persist_prompts": lambda: api.set_persist_prompts(req, {"enabled": False}),
+        "create_tool_override": lambda: api.create_tool_override(req, {"match": "acme_*"}),
+        "update_tool_override": lambda: api.update_tool_override(req, "tool_x", {}),
+        "delete_tool_override": lambda: api.delete_tool_override(req, "tool_x"),
+        "classify_source": lambda: api.classify_source(req, {"tool_name": "acme_read", "source": "private"}),
+        "add_self_destination": lambda: api.add_self_destination(req, {"kind": "identity", "value": "x@example.com"}),
+        "remove_self_destination": lambda: api.remove_self_destination(req, {"kind": "identity", "value": "x@example.com"}),
+        "add_trusted_recipient": lambda: api.add_trusted_recipient(req, {"identity": "x@example.com"}),
+        "remove_trusted_recipient": lambda: api.remove_trusted_recipient(req, {"identity": "x@example.com"}),
+        "add_sharing_subtype": lambda: api.add_sharing_subtype(req, {"subtype": "share"}),
+        "remove_sharing_subtype": lambda: api.remove_sharing_subtype(req, {"subtype": "share"}),
+    }
+
+
+@pytest.mark.parametrize("route_name", list(_mutation_route_invokers(_load_plugin_api()).keys()))
+def test_every_mutation_route_requires_admin(monkeypatch, route_name):
+    api = _load_plugin_api()
+    monkeypatch.setenv("HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN", "s3cret")
+    monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", raising=False)
+    invoke = _mutation_route_invokers(api)[route_name]
+    with pytest.raises(api.HTTPException) as exc:
+        asyncio.run(invoke())
+    assert exc.value.status_code == 403
+
+
+# --- Security: confirmation-gated weakening actions reject without the token (no admin
+# token configured, so the admin gate passes and the confirmation gate is what 400s). ---
+def _confirmation_gate_invokers(api):
+    req = _request({})
+    return {
+        "privacy-off": lambda: api.set_privacy_mode(req, {"mode": "off"}),
+        "wildcard-allow": lambda: api.create_rule(
+            req,
+            {
+                "effect": "allow",
+                "match": {
+                    "tool_name": "*",
+                    "action_family": "*",
+                    "destination": "*",
+                    "purpose": "*",
+                    "recipient_identity": "*",
+                    "data_classes": ["*"],
+                },
+            },
+        ),
+        "unknown-tools-allow": lambda: api.set_unknown_tools(req, {"mode": "allow"}),
+        "tool-ignore": lambda: api.create_tool_override(req, {"match": "acme_*", "egress": "ignore"}),
+        "source-reference": lambda: api.classify_source(req, {"tool_name": "acme_read", "source": "reference"}),
+    }
+
+
+@pytest.mark.parametrize("action", list(_confirmation_gate_invokers(_load_plugin_api()).keys()))
+def test_weakening_action_requires_confirmation(monkeypatch, action):
+    api = _load_plugin_api()
+    monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN", raising=False)
+    monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", raising=False)
+    invoke = _confirmation_gate_invokers(api)[action]
+    with pytest.raises(api.HTTPException) as exc:
+        asyncio.run(invoke())
+    assert exc.value.status_code == 400
