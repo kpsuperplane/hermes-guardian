@@ -155,23 +155,40 @@ def test_privacy_deny_rule_blocks_before_default_approval():
     assert rows[0]["rule_effect"] == "deny"
 
 
-def test_privacy_rule_remaining_invocations_count_down_and_delete():
+def test_privacy_rule_expires_by_timestamp(monkeypatch):
+    now = {"value": 1_000}
     plugin = load_plugin()
+    monkeypatch.setattr(plugin.state, "_now", lambda: now["value"])
     save_privacy_config(plugin, rules=[
         privacy_rule(
-            rule_id="rule_once",
+            rule_id="rule_temporary",
             action_family="message_send",
             destination="friend",
             data_classes=["communications"],
-            remaining_invocations=1,
+            expires_at=1_300,
         )
     ])
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
-    assert plugin._persistent_privacy_rules() == []
+    assert len(plugin._persistent_privacy_rules()) == 1
+    now["value"] = 1_301
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "again"}, session_id="s1") is not None
+
+
+def test_legacy_finite_invocation_rule_fails_closed():
+    plugin = load_plugin()
+    save_privacy_config(plugin, rules=[
+        privacy_rule(
+            rule_id="rule_legacy_once",
+            action_family="message_send",
+            destination="friend",
+            data_classes=["communications"],
+            remaining_invocations=1,
+        )
+    ])
+    assert plugin._persistent_privacy_rules() == []
 
 
 def test_message_send_uses_messaging_destination_with_hashed_recipient_identity():

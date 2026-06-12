@@ -34,8 +34,8 @@ export interface GuardianActionDeps {
   showToast: (message?: unknown, variant?: ToastVariant) => void;
 }
 
-// Same-screen approval verbs (Activity tab). A permit grants one doc-06 method
-// (rule_once/.../self_host/trusted_identity); a dismiss drops the pending approval.
+// Same-screen approval verbs (Activity tab). A permit grants one approval/ownership/
+// trusted-destination method; a dismiss drops the pending approval.
 // `structural` marks a trust-boundary-widening method that needs the admin confirm.
 export type ApprovalAction =
   | { kind: "permit"; method: string; structural?: boolean }
@@ -523,7 +523,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
   function clearTaintAction() {
     if (
       !window.confirm(
-        "Clear session taint and session approvals for your active Guardian sessions?",
+        "Clear Guardian taint for your active Guardian sessions?",
       )
     ) {
       return;

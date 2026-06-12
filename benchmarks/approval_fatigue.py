@@ -46,7 +46,7 @@ class Step:
     false_positive_if_prompted: bool = False
     safe_to_auto_approve: bool = False
     expected_security_block: bool = False
-    approve_scope: str = "once"
+    approve_scope: str = "5m"
 
 
 @dataclass(frozen=True)

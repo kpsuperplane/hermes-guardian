@@ -298,13 +298,14 @@ def test_security_sensitive_args_are_blocked_even_with_approval():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
-    plugin._SESSION_APPROVALS["s1"] = [{
-        "owner_hash": plugin._SESSIONS["s1"]["owner_hash"],
-        "action_family": "browser_type",
-        "destination": "example.com",
-        "data_classes": ["communications"],
-        "fingerprint": "anything",
-    }]
+    save_privacy_config(plugin, rules=[
+        privacy_rule(
+            action_family="browser_type",
+            destination="example.com",
+            data_classes=["communications"],
+            owner_hash=plugin._SESSIONS["s1"]["owner_hash"],
+        )
+    ])
 
     result = plugin._on_pre_tool_call(
         tool_name="browser_type",

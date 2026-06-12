@@ -50,7 +50,7 @@ def test_cron_message_send_block_recorded_in_dashboard_history(monkeypatch):
     assert result is not None and result["action"] == "block"
     assert wait_for(lambda: len(sent) == 1)
     message, _target = sent[0]
-    approval = re.search(r"(?m)^/guardian approve (\d{4}) always$", message)
+    approval = re.search(r"(?m)^/guardian approve (\d{4}) forever$", message)
     assert approval, message
     approval_id = approval.group(1)
     assert "Action: message_send" in message

@@ -171,7 +171,7 @@ def test_guardian_rules_command_uses_readable_card_format(tmp_path):
             destination="example.com",
             data_classes=["communications", "contacts"],
             owner_hash="cli",
-            remaining_invocations=3,
+            expires_at=int(plugin.state._now() + 300),
             enabled=False,
         ),
     ])
@@ -184,7 +184,7 @@ def test_guardian_rules_command_uses_readable_card_format(tmp_path):
     assert "Scope: Runs everywhere" in response
     assert "🏷️ `all data classes`" in response
     assert "⏸️ **DENY (disabled)** `browser_type -> example.com`" in response
-    assert "`rule_limited` · 3 invocations left" in response
+    assert "`rule_limited` · expires " in response
     assert "Scope: Owner scoped" in response
     assert "🏷️ `communications,contacts`" in response
     assert "scope=" not in response

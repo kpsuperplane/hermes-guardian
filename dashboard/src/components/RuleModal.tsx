@@ -200,26 +200,28 @@ export function RuleModal({
             ))}
           </div>
           <div className="hermes-guardian-form-grid">
-            <Field label="Invocation count">
+            <Field label="Expiry">
               <select
                 className="hermes-guardian-select"
-                value={form.lifetime}
+                value={form.expiry}
                 onChange={(event) =>
-                  update("lifetime", event.target.value as RuleForm["lifetime"])
+                  update("expiry", event.target.value as RuleForm["expiry"])
                 }
               >
-                <option value="always">Forever</option>
-                <option value="once">Once</option>
-                <option value="custom">Custom</option>
+                <option value="forever">Forever</option>
+                <option value="5m">5 minutes</option>
+                <option value="1h">1 hour</option>
+                <option value="custom">Unix timestamp</option>
               </select>
             </Field>
-            {form.lifetime === "custom" ? (
-              <Field label="Custom count">
+            {form.expiry === "custom" ? (
+              <Field label="Expires at">
                 <input
                   className="hermes-guardian-input"
                   inputMode="numeric"
-                  value={form.remaining_invocations}
-                  onChange={(event) => update("remaining_invocations", event.target.value)}
+                  value={form.expires_at}
+                  placeholder="Unix timestamp"
+                  onChange={(event) => update("expires_at", event.target.value)}
                 />
               </Field>
             ) : null}
@@ -231,14 +233,6 @@ export function RuleModal({
                 value={form.owner_hash}
                 placeholder="Any owner"
                 onChange={(event) => update("owner_hash", event.target.value)}
-              />
-            </Field>
-            <Field label="Session ID">
-              <input
-                className="hermes-guardian-input"
-                value={form.session_id}
-                placeholder="Any session"
-                onChange={(event) => update("session_id", event.target.value)}
               />
             </Field>
             <Field label="Cron scope">

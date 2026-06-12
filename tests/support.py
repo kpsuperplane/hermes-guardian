@@ -43,13 +43,13 @@ def privacy_rule(
     recipient_identity: str = "*",
     data_classes: list[str] | None = None,
     owner_hash: str = "*",
-    session_id: str = "",
     cron_job_id: str = "",
     cron_job_name: str = "",
-    remaining_invocations: int = -1,
+    expires_at: int = 0,
+    remaining_invocations: int | None = None,
     enabled: bool = True,
 ):
-    return {
+    rule = {
         "id": rule_id,
         "effect": effect,
         "enabled": enabled,
@@ -63,13 +63,16 @@ def privacy_rule(
         },
         "scope": {
             "owner_hash": owner_hash,
-            "session_id": session_id,
             "cron_job_id": cron_job_id,
             "cron_job_name": cron_job_name,
         },
-        "remaining_invocations": remaining_invocations,
+        "expires_at": expires_at,
         "created_at": 0,
     }
+    if remaining_invocations is not None:
+        rule.pop("expires_at", None)
+        rule["remaining_invocations"] = remaining_invocations
+    return rule
 
 
 def save_privacy_config(plugin, *, mode: str = "strict", rules: list[dict] | None = None):

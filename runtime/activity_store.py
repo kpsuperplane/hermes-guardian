@@ -13,9 +13,16 @@ from ..privacy import rules
 from ..privacy import tool_policy
 
 
+class _ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> bool:
+        result = super().__exit__(exc_type, exc_value, traceback)
+        self.close()
+        return result
+
+
 def _activity_connect() -> sqlite3.Connection:
     state._ACTIVITY_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(state._ACTIVITY_DB_PATH), timeout=2.0)
+    conn = sqlite3.connect(str(state._ACTIVITY_DB_PATH), timeout=2.0, factory=_ClosingConnection)
     conn.row_factory = sqlite3.Row
     # WAL lets dashboard reads (e.g. the history page) proceed against a
     # consistent snapshot while activity writes are in flight, instead of

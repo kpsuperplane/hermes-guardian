@@ -233,7 +233,7 @@ def test_policy_snapshot_marks_pending_block_covered_by_new_allow_rule(tmp_path)
             destination="messaging",
             recipient_identity=recipient_identity,
             data_classes=["communications"],
-            remaining_invocations=1,
+            expires_at=int(plugin.state._now() + 300),
         )
     ])
 
@@ -246,7 +246,7 @@ def test_policy_snapshot_marks_pending_block_covered_by_new_allow_rule(tmp_path)
     assert block["covered_by_rule"] is True
     assert block["covered_rule_id"] == "rule_cover_friend"
     assert block["covered_rule_source"] == "persistent"
-    assert rules[0]["remaining_invocations"] == 1
+    assert rules[0]["expires_at"] > int(plugin.state._now())
 
 
 def test_policy_snapshot_does_not_mark_pending_block_covered_by_new_deny_rule(tmp_path):
@@ -380,7 +380,7 @@ def test_dashboard_approval_actions_remove_pending_blocks():
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
 
-    payload, status = plugin._dashboard_approval_action(approval_id, "approve", "once")
+    payload, status = plugin._dashboard_approval_action(approval_id, "approve", "5m")
 
     assert status == 200
     assert payload["ok"] is True
@@ -391,7 +391,7 @@ def test_dashboard_approval_actions_remove_pending_blocks():
     assert rule["action_family"] == "message_send"
     assert rule["destination"] == "messaging"
     assert rule["recipient_identity"] == plugin._recipient_identity_from_value("friend")
-    assert rule["remaining_invocations"] == 1
+    assert rule["expires_at"] > int(plugin.state._now())
 
     bind_owner(plugin, session_id="s2")
     plugin._taint_session("s2", {"communications"})
@@ -417,7 +417,9 @@ def test_pending_snapshot_carries_context_permit_options():
     assert len(pending) == 1
     methods = {opt["method"] for opt in pending[0]["permit_options"]}
     # Rule rows always, plus the messaging structural dimensions.
-    assert {"rule_once", "rule_session", "rule_keep", "self_identity", "trusted_identity"} <= methods
+    assert {"rule_5m", "rule_forever", "self_identity", "trusted_identity"} <= methods
+    groups = {opt["group"] for opt in pending[0]["permit_options"]}
+    assert {"Approval options", "Trusted Destination Options", "Ownership options"} <= groups
     self_identity = next(o for o in pending[0]["permit_options"] if o["method"] == "self_identity")
     assert self_identity["value"] == "me@example.com" and self_identity["structural"] is True
 
@@ -445,8 +447,8 @@ def test_dashboard_structural_method_detection_and_unknown_rejected():
     # The HTTP layer uses this to decide whether to require the destination-trust confirm.
     assert plugin._dashboard_permit_method_is_structural("self_identity") is True
     assert plugin._dashboard_permit_method_is_structural("trusted_identity") is True
-    assert plugin._dashboard_permit_method_is_structural("once") is False  # legacy scope alias
-    assert plugin._dashboard_permit_method_is_structural("rule_keep") is False
+    assert plugin._dashboard_permit_method_is_structural("5m") is False
+    assert plugin._dashboard_permit_method_is_structural("rule_forever") is False
 
     payload, status = plugin._dashboard_approval_action(approval_id, "approve", "bogus_method")
     assert status == 400 and payload["ok"] is False

@@ -75,8 +75,6 @@ _LOCK = threading.RLock()
 _SESSIONS: dict[str, dict[str, Any]] = {}
 _OWNER_SESSIONS: dict[str, set[str]] = {}
 _PENDING_APPROVALS: dict[str, dict[str, Any]] = {}
-_ONCE_APPROVALS: dict[str, list[dict[str, Any]]] = {}
-_SESSION_APPROVALS: dict[str, list[dict[str, Any]]] = {}
 _RECENT_COMMAND_OWNERS: dict[str, list[tuple[float, str]]] = {}
 # Volatile, owner-keyed cache of the most recent sanitized user request captured
 # at gateway dispatch. Used only as authorization evidence for the LLM verifier.

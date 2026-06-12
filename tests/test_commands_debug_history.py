@@ -78,15 +78,17 @@ def test_guardian_debug_command_accepts_contextual_fields():
     assert f"Recipient identity: {recipient_identity}" in response
 
 
-def test_guardian_debug_command_does_not_consume_once_approval():
+def test_guardian_debug_command_does_not_consume_expiring_rule():
     plugin = load_plugin()
-    plugin._ONCE_APPROVALS[plugin._GLOBAL_SESSION_ID] = [{
-        "owner_hash": plugin._CLI_OWNER_HASH,
-        "action_family": "browser_type",
-        "destination": "example.com",
-        "data_classes": ["communications"],
-        "fingerprint": "debug",
-    }]
+    save_privacy_config(plugin, rules=[
+        privacy_rule(
+            action_family="browser_type",
+            destination="example.com",
+            data_classes=["communications"],
+            owner_hash=plugin._CLI_OWNER_HASH,
+            expires_at=int(plugin.state._now() + 300),
+        )
+    ])
 
     first = plugin._guardian_debug_command(
         ["debug", "action=browser_type", "destination=example.com", "classes=communications"]
@@ -97,7 +99,7 @@ def test_guardian_debug_command_does_not_consume_once_approval():
 
     assert "Decision: allowed" in first
     assert "Decision: allowed" in second
-    assert len(plugin._ONCE_APPROVALS[plugin._GLOBAL_SESSION_ID]) == 1
+    assert len(plugin._persistent_privacy_rules()) == 1
 
 
 def test_guardian_debug_command_reports_privacy_off(monkeypatch):

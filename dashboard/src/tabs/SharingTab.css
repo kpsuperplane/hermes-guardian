@@ -17,25 +17,10 @@
   margin-top: 0.25rem;
 }
 
-/* Trusted destinations: kind badge + command picker row. */
+/* Trusted destinations: kind badge. */
 .hermes-guardian-dest-kind {
   flex: 0 0 auto;
   font-size: 0.95rem;
   line-height: 1;
   opacity: 0.8;
-}
-
-.hermes-guardian-command-picker {
-  flex-wrap: wrap;
-  margin-top: 0.4rem;
-}
-
-.hermes-guardian-command-picker select.hermes-guardian-input {
-  flex: 1 1 18rem;
-  min-width: 12rem;
-}
-
-.hermes-guardian-command-classes {
-  flex: 0 1 16rem;
-  min-width: 10rem;
 }

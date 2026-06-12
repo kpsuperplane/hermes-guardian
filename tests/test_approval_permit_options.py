@@ -25,7 +25,7 @@ def _option(plugin, approval, method):
     raise AssertionError(f"{method} not offered; got {_methods(plugin, approval)}")
 
 
-_RULE_METHODS = {"rule_once", "rule_session", "rule_keep", "rule_keep_exact"}
+_RULE_METHODS = {"rule_5m", "rule_forever"}
 
 
 def _approval(**overrides):
@@ -40,12 +40,14 @@ def _approval(**overrides):
     return base
 
 
-# --- 1. The four rule rows are always present, narrowest -> broadest. ----------
+# --- 1. The two approval rows are always present, short-lived -> permanent. ----
 def test_rule_rows_always_offered_in_breadth_order():
     plugin = load_plugin()
     methods = [opt["method"] for opt in plugin._approval_permit_options(_approval())]
-    # exact-command persistence is narrower than shape-only persistence, so it precedes it.
-    assert methods[:4] == ["rule_once", "rule_session", "rule_keep_exact", "rule_keep"]
+    assert methods[:2] == ["rule_5m", "rule_forever"]
+    labels = [opt["label"] for opt in plugin._approval_permit_options(_approval())]
+    assert labels[:2] == ["Approve for 5 minutes", "Approve forever"]
+    assert {opt["group"] for opt in plugin._approval_permit_options(_approval())} == {"Approval options"}
 
 
 # --- 2. Messaging offers self-identity + trusted-recipient on the recipient. ---
@@ -189,8 +191,39 @@ def test_apply_trusted_identity_scopes_to_classes():
     assert entry["classes"] == expected_classes  # scoped to the block, not "*"
 
 
-# --- 11. Apply: a rule method preserves the legacy approve behavior. -----------
-def test_apply_rule_keep_creates_persistent_rule():
+# --- 11. Apply: 5m creates an expiring shape rule. ----------------------------
+def test_apply_rule_5m_creates_expiring_rule(monkeypatch):
+    now = {"value": 1_000}
+    plugin = load_plugin()
+    monkeypatch.setattr(plugin.state, "_now", lambda: now["value"])
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    blocked = plugin._on_pre_tool_call(
+        "send_message", {"to": "peer@example.com", "text": "hi"}, session_id="s1"
+    )
+    assert blocked is not None
+    approval_id = first_pending_id(plugin)
+
+    ok, message = plugin._apply_permit_option(plugin._CLI_OWNER_HASH, approval_id, "rule_5m")
+    assert ok
+    assert "Approved message_send" in message
+    rules = plugin._persistent_privacy_rules()
+    assert len(rules) == 1
+    assert rules[0]["expires_at"] == 1_300
+    assert "remaining_invocations" not in rules[0]
+    assert "session_id" not in rules[0]["scope"]
+
+    assert plugin._on_pre_tool_call(
+        "send_message", {"to": "peer@example.com", "text": "retry"}, session_id="s1"
+    ) is None
+    now["value"] = 1_301
+    assert plugin._on_pre_tool_call(
+        "send_message", {"to": "peer@example.com", "text": "again"}, session_id="s1"
+    ) is not None
+
+
+# --- 11b. Apply: forever creates a non-expiring shape rule. -------------------
+def test_apply_rule_forever_creates_persistent_rule():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
@@ -200,47 +233,35 @@ def test_apply_rule_keep_creates_persistent_rule():
     assert blocked is not None
     approval_id = first_pending_id(plugin)
 
-    ok, message = plugin._apply_permit_option(plugin._CLI_OWNER_HASH, approval_id, "rule_keep")
-    assert ok
-    assert "Approved message_send" in message
-    assert len(plugin._persistent_privacy_rules()) == 1
-    assert plugin._persistent_privacy_rules()[0]["remaining_invocations"] == -1
-
-
-# --- 11b. keep-exact: persistent trust pinned to the byte-identical command. ----
-def test_apply_rule_keep_exact_persists_only_the_exact_command():
-    plugin = load_plugin()
-    bind_owner(plugin)
-    plugin._taint_session("s1", {"communications"})
-
-    # A compound command: trusted_command can't derive a safe prefix, so only keep-exact
-    # can persistently permit it.
-    cmd = "echo one && echo two"
-    blocked = plugin._on_pre_tool_call("terminal", {"command": cmd}, session_id="s1")
-    assert blocked is not None
-    approval_id = first_pending_id(plugin)
-
-    offered = {
-        opt["method"] for opt in plugin._approval_permit_options(plugin._PENDING_APPROVALS[approval_id])
-    }
-    assert "rule_keep_exact" in offered
-    assert "trusted_command" not in offered  # no prefix is derivable from a compound command
-
-    ok, message = plugin._apply_permit_option(plugin._CLI_OWNER_HASH, approval_id, "rule_keep_exact")
+    ok, message = plugin._apply_permit_option(plugin._CLI_OWNER_HASH, approval_id, "rule_forever")
     assert ok, message
     rules = plugin._persistent_privacy_rules()
     assert len(rules) == 1
-    assert rules[0]["remaining_invocations"] == -1  # persistent
-    assert rules[0].get("fingerprint")              # pinned to the exact action
-
-    # The byte-identical command is now allowed with no new prompt.
-    assert plugin._on_pre_tool_call("terminal", {"command": cmd}, session_id="s1") is None
-
-    # A one-byte-different command is NOT covered — it re-blocks (no prefix-riding).
+    assert rules[0]["expires_at"] == 0
+    assert not rules[0].get("fingerprint")
+    assert plugin._on_pre_tool_call(
+        "send_message", {"to": "peer@example.com", "text": "retry"}, session_id="s1"
+    ) is None
     altered = plugin._on_pre_tool_call(
-        "terminal", {"command": "echo one && echo three"}, session_id="s1"
+        "send_message", {"to": "attacker@example.com", "text": "retry"}, session_id="s1"
     )
     assert altered is not None
+
+
+def test_rule_approval_is_owner_scoped_not_session_scoped():
+    plugin = load_plugin()
+    bind_owner(plugin, session_id="s1", user_id="owner")
+    bind_owner(plugin, session_id="s2", user_id="owner")
+    plugin._taint_session("s1", {"communications"})
+    plugin._taint_session("s2", {"communications"})
+    plugin._on_pre_tool_call("send_message", {"to": "peer@example.com", "text": "hi"}, session_id="s1")
+    approval_id = first_pending_id(plugin)
+
+    ok, message = plugin._apply_permit_option(plugin._CLI_OWNER_HASH, approval_id, "rule_forever")
+    assert ok, message
+    assert plugin._on_pre_tool_call(
+        "send_message", {"to": "peer@example.com", "text": "retry"}, session_id="s2"
+    ) is None
 
 
 # --- 12. The structural admin gate: a non-admin owner cannot widen trust. ------
@@ -268,7 +289,7 @@ def test_structural_requires_admin_but_rule_methods_do_not(monkeypatch):
     assert approval_id in plugin._PENDING_APPROVALS
 
     # The same owner CAN still take a rule method (approval-owner gate only).
-    ok, message = plugin._apply_permit_option(owner, approval_id, "rule_once")
+    ok, message = plugin._apply_permit_option(owner, approval_id, "rule_5m")
     assert ok, message
     assert approval_id not in plugin._PENDING_APPROVALS
 
@@ -318,18 +339,19 @@ def test_slash_trust_resolves_to_the_context_trusted_option():
     assert approval_id not in plugin._PENDING_APPROVALS
 
 
-def test_slash_keep_is_persistent_and_always_is_an_alias():
+def test_slash_forever_is_persistent_and_old_scope_words_are_removed():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
     plugin._on_pre_tool_call("send_message", {"to": "peer@example.com", "text": "hi"}, session_id="s1")
     approval_id = first_pending_id(plugin)
 
-    out = plugin._handle_guardian_command(f"approve {approval_id} keep")
+    out = plugin._handle_guardian_command(f"approve {approval_id} forever")
     assert "Approved message_send" in out
     rules = plugin._persistent_privacy_rules()
-    assert len(rules) == 1 and rules[0]["remaining_invocations"] == -1
-    assert "always" in plugin._SCOPE_KEYWORD_TO_METHOD  # back-compat alias retained
+    assert len(rules) == 1 and rules[0]["expires_at"] == 0
+    assert "always" not in plugin._SCOPE_KEYWORD_TO_METHOD
+    assert "once" not in plugin._SCOPE_KEYWORD_TO_METHOD
 
 
 def test_slash_mine_for_a_terminal_block_adds_the_host():

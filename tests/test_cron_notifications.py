@@ -57,9 +57,9 @@ def test_cron_block_sends_one_sanitized_home_channel_notification(monkeypatch):
     assert "Decision:" not in message
     assert "Approve future runs:" not in message
     assert "Approve only this run:" not in message
-    assert re.search(r"(?m)^/guardian approve \d{4} always$", message)
-    assert " always" in message
-    assert " once" not in message
+    assert re.search(r"(?m)^/guardian approve \d{4} forever$", message)
+    assert " forever" in message
+    assert " 5m" not in message
     assert "Review: /guardian failures" not in message
     assert "raw private sentence" not in message
 
@@ -115,14 +115,14 @@ def test_cron_notification_uses_telegram_copy_button_sender(monkeypatch):
     )
 
     plugin._send_cron_notification_message(
-        "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 always\n",
+        "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 forever\n",
         "telegram:-1000000000000:75",
     )
 
     assert sent == [(
-        "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 always\n",
+        "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 forever\n",
         "telegram:-1000000000000:75",
-        "/guardian approve 1234 always",
+        "/guardian approve 1234 forever",
     )]
 
 
@@ -152,13 +152,13 @@ def test_cron_notification_telegram_copy_markup_has_one_approval_button(monkeypa
         ),
     )
 
-    markup = plugin._telegram_copy_reply_markup("/guardian approve 1234 always")
+    markup = plugin._telegram_copy_reply_markup("/guardian approve 1234 forever")
 
     assert len(markup.rows) == 1
     assert len(markup.rows[0]) == 1
     button = markup.rows[0][0]
     assert button.text == "Copy approval"
-    assert button.copy_text.text == "/guardian approve 1234 always"
+    assert button.copy_text.text == "/guardian approve 1234 forever"
 
 
 def test_cron_notification_falls_back_to_cli_when_telegram_copy_sender_fails(monkeypatch):
@@ -173,14 +173,14 @@ def test_cron_notification_falls_back_to_cli_when_telegram_copy_sender_fails(mon
     )
 
     plugin._send_cron_notification_message(
-        "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 always\n",
+        "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 forever\n",
         "telegram:-1000000000000:75",
     )
 
     assert calls
     command, kwargs = calls[0]
     assert command == [plugin._hermes_cli_path(), "send", "--to", "telegram:-1000000000000:75", "--quiet", "--file", "-"]
-    assert kwargs["input"] == "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 always\n"
+    assert kwargs["input"] == "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 forever\n"
 
 
 def test_cron_notification_can_be_disabled(monkeypatch):

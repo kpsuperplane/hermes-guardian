@@ -59,10 +59,9 @@ export const DEFAULT_FORM: RuleForm = {
   recipient_identity: "",
   tool_name: "",
   data_classes: ["*"],
-  lifetime: "always",
-  remaining_invocations: 5,
+  expiry: "forever",
+  expires_at: "",
   owner_hash: "",
-  session_id: "",
   cron_job_id: "",
   cron_job_name: "",
 };

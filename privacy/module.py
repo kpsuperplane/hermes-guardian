@@ -522,10 +522,9 @@ def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_r
 # behavior lives in ``decide`` (doc 02 §3). What remains here is the SURROUNDING
 # mechanics that decide does not own: the security-first short-circuit (runs before
 # decide, unchanged), the read-side classifier helpers, the approval-shape construction,
-# the runtime/persistent approval-source matching + consumption (``_approval_source`` —
-# which covers once/session user approvals decide cannot see, doc 04 §5 "Persistent
-# privacy.rules semantics"), the verifier upgrade in llm mode, the read-only low-risk
-# auto-approve preset, activity emission, cron failure notification, and HMAC approval
+# the persistent approval-source matching (``_approval_source`` — doc 04 §5
+# "Persistent privacy.rules semantics"), the verifier upgrade in llm mode, the read-only low-risk
+# auto-approve preset, activity emission, cron failure notification, and approval
 # binding.
 #
 # Mapping (doc 02 §3 -> this function):
@@ -723,12 +722,10 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
         decision_step=decision_step,
     )
 
-    # Runtime + persistent approval matching (once/session/persistent privacy.rules) with
-    # consumption + HMAC-bound rule mutation. decide step 5 (match_declassification_rule)
-    # only reads persistent rules and cannot see/consume once/session user approvals, so
-    # this stays the authoritative source for an explicit user-granted allow/deny (doc 04
-    # §5 "Persistent privacy.rules semantics"). When a source matches it wins, exactly as
-    # before.
+    # Persistent approval matching. decide step 5 (match_declassification_rule) stays pure;
+    # this richer matcher is the authoritative source for an explicit user-granted
+    # allow/deny (doc 04 §5 "Persistent privacy.rules semantics"). When a source matches
+    # it wins.
     source = rules._approval_source(shape)
     if source:
         if source.get("effect") == "deny":

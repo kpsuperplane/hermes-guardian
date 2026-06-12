@@ -16,8 +16,6 @@ def _on_session_reset(session_id: str = "", old_session_id: str = "", **_: Any) 
         deleted_approval_ids: list[str] = []
         for sid in {tool_policy._normalize_session_id(session_id), tool_policy._normalize_session_id(old_session_id)}:
             state._SESSIONS.pop(sid, None)
-            state._ONCE_APPROVALS.pop(sid, None)
-            state._SESSION_APPROVALS.pop(sid, None)
             state._TURN_DENIED_EXTERNAL.pop(sid, None)
             state._PENDING_TOOL_ARGS.pop(sid, None)
             state._CRON_NOTIFICATIONS_SENT.discard(sid)

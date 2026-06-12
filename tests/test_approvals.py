@@ -15,8 +15,10 @@ import pytest
 from support import *  # noqa: F403
 
 
-def test_approval_once_allows_matching_retry_then_expires():
+def test_approval_5m_allows_matching_retry_until_expiry(monkeypatch):
+    now = {"value": 1_000}
     plugin = load_plugin()
+    monkeypatch.setattr(plugin.state, "_now", lambda: now["value"])
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -24,16 +26,18 @@ def test_approval_once_allows_matching_retry_then_expires():
     assert blocked is not None
     approval_id = first_pending_id(plugin)
 
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} once"))
-    response = plugin._handle_guardian_command(f"approve {approval_id} once")
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} 5m"))
+    response = plugin._handle_guardian_command(f"approve {approval_id} 5m")
     assert "Approved message_send" in response
     rules = plugin._persistent_privacy_rules()
     assert len(rules) == 1
-    assert rules[0]["remaining_invocations"] == 1
-    assert rules[0]["fingerprint"]
+    assert rules[0]["expires_at"] == 1_300
+    assert not rules[0].get("fingerprint")
+    assert "session_id" not in rules[0]["scope"]
 
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
-    assert plugin._persistent_privacy_rules() == []
+    assert len(plugin._persistent_privacy_rules()) == 1
+    now["value"] = 1_301
     blocked_again = plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     assert blocked_again is not None
 
@@ -49,7 +53,8 @@ def test_pending_approval_id_is_contextual_without_llm():
 
     assert re.fullmatch(r"\d{4}", approval_id)
     assert f"Approval ID: {approval_id}" in blocked["message"]
-    assert f"/guardian approve {approval_id} once" in blocked["message"]
+    assert f"/guardian approve {approval_id} 5m" in blocked["message"]
+    assert f"/guardian approve {approval_id} forever" in blocked["message"]
 
 
 def test_block_message_carries_metadata_plus_anti_circumvention_directive():
@@ -66,7 +71,9 @@ def test_block_message_carries_metadata_plus_anti_circumvention_directive():
     approval_id = first_pending_id(plugin)
 
     # Metadata retained for the agent to surface to the user.
-    assert f"/guardian approve {approval_id} once" in message
+    assert f"/guardian approve {approval_id} 5m" in message
+    assert "Trusted Destination Options:" in message
+    assert "Ownership options:" in message
     assert "Reason:" in message
     assert "Data classes:" in message
     # Explicit anti-circumvention directive present.
@@ -119,8 +126,8 @@ def test_approval_accepts_four_digit_id():
     approval_id = first_pending_id(plugin)
     compact_id = approval_id.replace("-", "")
 
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {compact_id} once"))
-    response = plugin._handle_guardian_command(f"approve {compact_id} once")
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {compact_id} 5m"))
+    response = plugin._handle_guardian_command(f"approve {compact_id} 5m")
 
     assert "Approved message_send" in response
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
@@ -171,24 +178,24 @@ def test_approval_id_generation_reuses_codes_after_seven_days(monkeypatch):
     assert first_pending_id(plugin) == "1234"
 
 
-def test_approval_session_allows_same_destination_only_same_session():
+def test_approval_forever_applies_across_sessions_for_same_owner():
     plugin = load_plugin()
-    bind_owner(plugin, session_id="s1")
-    bind_owner(plugin, session_id="s2")
+    bind_owner(plugin, session_id="s1", user_id="owner")
+    bind_owner(plugin, session_id="s2", user_id="owner")
     plugin._taint_session("s1", {"communications"})
     plugin._taint_session("s2", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} session"))
-    assert "Approved" in plugin._handle_guardian_command(f"approve {approval_id} session")
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} forever"))
+    assert "Approved" in plugin._handle_guardian_command(f"approve {approval_id} forever")
 
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
     assert plugin._on_pre_tool_call("send_message", {"to": "other", "text": "hello"}, session_id="s1") is not None
-    assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s2") is not None
+    assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s2") is None
 
 
-def test_approval_always_persists_narrow_rule(tmp_path):
+def test_approval_forever_persists_narrow_rule(tmp_path):
     plugin = load_plugin()
     plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin.state._PERSISTENT_RULES_CACHE = None
@@ -197,8 +204,8 @@ def test_approval_always_persists_narrow_rule(tmp_path):
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always"))
-    assert "Approved" in plugin._handle_guardian_command(f"approve {approval_id} always")
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} forever"))
+    assert "Approved" in plugin._handle_guardian_command(f"approve {approval_id} forever")
 
     data = json.loads((tmp_path / "rules.json").read_text())
     assert len(data["sharing"]["rules"]) == 1
@@ -208,25 +215,27 @@ def test_approval_always_persists_narrow_rule(tmp_path):
     assert rule["match"]["purpose"] == "unknown"
     assert rule["match"]["recipient_identity"] == plugin._recipient_identity_from_value("friend")
     assert rule["effect"] == "allow"
-    assert rule["remaining_invocations"] == -1
+    assert rule["expires_at"] == 0
+    assert "remaining_invocations" not in rule
+    assert "session_id" not in rule["scope"]
     assert "hello" not in json.dumps(rule)
     assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "retry"}, session_id="s1") is None
     assert plugin._on_pre_tool_call("send_message", {"to": "attacker", "text": "retry"}, session_id="s1") is not None
 
 
-def test_approval_always_save_failure_keeps_pending_approval(monkeypatch):
+def test_approval_forever_save_failure_keeps_pending_approval(monkeypatch):
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always"))
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} forever"))
     monkeypatch.setattr(plugin.rules, "_save_persistent_privacy_rules", lambda _rules: False)
 
-    response = plugin._handle_guardian_command(f"approve {approval_id} always")
+    response = plugin._handle_guardian_command(f"approve {approval_id} forever")
 
-    assert "Failed to save persistent privacy approval" in response
+    assert "Failed to save privacy approval" in response
     assert approval_id in plugin._PENDING_APPROVALS
 
 
@@ -264,8 +273,8 @@ def test_wrong_sender_cannot_approve():
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} once", user_id="attacker"))
-    response = plugin._handle_guardian_command(f"approve {approval_id} once")
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} 5m", user_id="attacker"))
+    response = plugin._handle_guardian_command(f"approve {approval_id} 5m")
 
     assert "different user/session" in response
     assert approval_id in plugin._PENDING_APPROVALS
@@ -280,8 +289,8 @@ def test_configured_telegram_owner_can_approve_cron_approval(monkeypatch):
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id=cron_session)
     approval_id = first_pending_id(plugin)
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always", user_id="owner"))
-    response = plugin._handle_guardian_command(f"approve {approval_id} always")
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} forever", user_id="owner"))
+    response = plugin._handle_guardian_command(f"approve {approval_id} forever")
 
     assert "Approved message_send" in response
     assert approval_id not in plugin._PENDING_APPROVALS
@@ -308,8 +317,8 @@ def test_cron_approval_can_be_approved_from_separate_process(monkeypatch, tmp_pa
     approver.state._ACTIVITY_DB_INITIALIZED = False
     approver.state._PERSISTENT_RULES_PATH = rules_path
     approver.state._PERSISTENT_RULES_CACHE = {"rules": []}
-    approver._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always", user_id="owner"))
-    response = approver._handle_guardian_command(f"approve {approval_id} always")
+    approver._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} forever", user_id="owner"))
+    response = approver._handle_guardian_command(f"approve {approval_id} forever")
 
     assert "Approved message_send" in response
     assert approval_id not in approver._PENDING_APPROVALS
@@ -324,10 +333,12 @@ def test_cron_approval_can_be_approved_from_separate_process(monkeypatch, tmp_pa
     assert data["sharing"]["rules"][0]["match"]["recipient_identity"] == creator._recipient_identity_from_value("friend")
 
 
-def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
+def test_5m_approval_can_be_approved_and_expire_across_processes(monkeypatch, tmp_path):
+    now = {"value": 2_000}
     activity_path = tmp_path / "activity.sqlite3"
     rules_path = tmp_path / "rules.json"
     creator = load_plugin()
+    monkeypatch.setattr(creator.state, "_now", lambda: now["value"])
     creator.state._ACTIVITY_DB_PATH = activity_path
     creator.state._ACTIVITY_DB_INITIALIZED = False
     creator.state._PERSISTENT_RULES_PATH = rules_path
@@ -339,22 +350,24 @@ def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
     approval_id = first_pending_id(creator)
 
     approver = load_plugin()
+    monkeypatch.setattr(approver.state, "_now", lambda: now["value"])
     approver.state._ACTIVITY_DB_PATH = activity_path
     approver.state._ACTIVITY_DB_INITIALIZED = False
     approver.state._PERSISTENT_RULES_PATH = rules_path
     approver.state._PERSISTENT_RULES_CACHE = None
-    approver._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} once", user_id="owner"))
-    response = approver._handle_guardian_command(f"approve {approval_id} once")
+    approver._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} 5m", user_id="owner"))
+    response = approver._handle_guardian_command(f"approve {approval_id} 5m")
 
     assert "Approved message_send" in response
     assert approval_id not in approver._PENDING_APPROVALS
     data = json.loads(rules_path.read_text())
     rule = data["sharing"]["rules"][0]
-    assert rule["remaining_invocations"] == 1
-    assert rule["scope"]["session_id"] == "s1"
-    assert rule["fingerprint"]
+    assert rule["expires_at"] == 2_300
+    assert "session_id" not in rule["scope"]
+    assert not rule.get("fingerprint")
 
     runner = load_plugin()
+    monkeypatch.setattr(runner.state, "_now", lambda: now["value"])
     runner.state._ACTIVITY_DB_PATH = activity_path
     runner.state._ACTIVITY_DB_INITIALIZED = False
     runner.state._PERSISTENT_RULES_PATH = rules_path
@@ -363,8 +376,8 @@ def test_once_approval_can_be_approved_and_consumed_across_processes(tmp_path):
     runner._taint_session("s1", {"communications"})
 
     assert runner._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is None
+    now["value"] = 2_301
     data = json.loads(rules_path.read_text())
-    assert data["sharing"]["rules"] == []
     assert runner._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1") is not None
 
 
@@ -382,10 +395,10 @@ def test_cron_always_approval_is_scoped_to_same_cron_job(monkeypatch, tmp_path):
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id=first_run)
     approval_id = first_pending_id(plugin)
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} always", user_id="owner"))
-    response = plugin._handle_guardian_command(f"approve {approval_id} always")
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} forever", user_id="owner"))
+    response = plugin._handle_guardian_command(f"approve {approval_id} forever")
 
-    assert "always for cron job Example Availability Check (aaaaaaaaaaaa)" in response
+    assert "forever for cron job Example Availability Check (aaaaaaaaaaaa)" in response
     data = json.loads((tmp_path / "rules.json").read_text())
     assert data["sharing"]["rules"][0]["scope"]["cron_job_id"] == "aaaaaaaaaaaa"
     assert data["sharing"]["rules"][0]["scope"]["cron_job_name"] == "Example Availability Check"
@@ -412,8 +425,8 @@ def test_configured_telegram_owner_exception_is_cron_only(monkeypatch):
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} once", user_id="attacker"))
-    response = plugin._handle_guardian_command(f"approve {approval_id} once")
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} 5m", user_id="attacker"))
+    response = plugin._handle_guardian_command(f"approve {approval_id} 5m")
 
     assert "different user/session" in response
     assert approval_id in plugin._PENDING_APPROVALS
@@ -427,6 +440,6 @@ def test_expired_approval_cannot_approve(monkeypatch):
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "hello"}, session_id="s1")
     approval_id = first_pending_id(plugin)
     plugin._PENDING_APPROVALS[approval_id]["expires_at"] = 1
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} once"))
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} 5m"))
 
-    assert "No pending approval" in plugin._handle_guardian_command(f"approve {approval_id} once")
+    assert "No pending approval" in plugin._handle_guardian_command(f"approve {approval_id} 5m")

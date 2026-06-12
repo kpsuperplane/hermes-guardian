@@ -1,4 +1,4 @@
-import { React, useMemo, useState } from "@/sdk";
+import { React, useState } from "@/sdk";
 import { Button } from "@/components/Button";
 import { DecisionStep } from "@/components/DecisionStep";
 import { Mono } from "@/components/Mono";
@@ -6,7 +6,7 @@ import { TrustPill } from "@/components/TrustPill";
 import { HISTORY_PAGE_SIZES } from "@/constants";
 import { classesText, text, timeText } from "@/lib/format";
 import type { TabId } from "@/lib/deepLinks";
-import type { ActivityRow, ActivityTurn, PendingApproval } from "@/types";
+import type { ActivityRow, ActivityTurn, PendingApproval, PermitOption } from "@/types";
 import type { ApprovalAction } from "@/hooks/useGuardianActions";
 
 export interface ActivityTabProps {
@@ -90,6 +90,15 @@ function ApprovalCard(props: {
       (text(approval.covered_rule_id) || "an existing rule") +
       ". The matching allow rule already permits this retry, so approving is not needed."
     : "";
+  const groupOrder = ["Approval options", "Trusted Destination Options", "Ownership options"];
+  const groups = groupOrder
+    .map((group) => ({
+      group,
+      options: (approval.permit_options || []).filter(
+        (option: PermitOption) => text(option.group, "Approval options") === group,
+      ),
+    }))
+    .filter((entry) => entry.options.length);
   return (
     <div className="hermes-guardian-card hermes-guardian-approval-card">
       <div className="hermes-guardian-block-head">
@@ -103,31 +112,38 @@ function ApprovalCard(props: {
             <span className="hermes-guardian-pill">pending approval</span>
           </div>
         </div>
-        <div className="hermes-guardian-actions">
-          {(approval.permit_options || []).map((option) => (
-            <Button
-              key={option.method}
-              variant={option.structural ? "secondary" : undefined}
-              // A rule already covering this retry makes the rule scopes unnecessary, but a
-              // structural "this is mine / trusted" choice is still a meaningful config edit.
-              disabled={!option.structural && covered}
-              title={(!option.structural && coveredTitle) || option.detail || undefined}
-              onClick={() =>
-                onAction(approval, {
-                  kind: "permit",
-                  method: option.method,
-                  structural: option.structural,
-                })
-              }
-            >
-              {option.label}
-              {option.structural && option.value ? (
-                <>
-                  {" "}
-                  <Mono>{option.value}</Mono>
-                </>
-              ) : null}
-            </Button>
+        <div className="hermes-guardian-approval-actions">
+          {groups.map((entry) => (
+            <div key={entry.group} className="hermes-guardian-approval-action-group">
+              <div className="hermes-guardian-rule-subline">{entry.group}</div>
+              <div className="hermes-guardian-actions">
+                {entry.options.map((option) => (
+                  <Button
+                    key={option.method}
+                    variant={option.structural ? "secondary" : undefined}
+                    // A rule already covering this retry makes approval unnecessary, but a
+                    // structural ownership/trust choice is still a meaningful config edit.
+                    disabled={!option.structural && covered}
+                    title={(!option.structural && coveredTitle) || option.detail || undefined}
+                    onClick={() =>
+                      onAction(approval, {
+                        kind: "permit",
+                        method: option.method,
+                        structural: option.structural,
+                      })
+                    }
+                  >
+                    {option.label}
+                    {option.structural && option.value ? (
+                      <>
+                        {" "}
+                        <Mono>{option.value}</Mono>
+                      </>
+                    ) : null}
+                  </Button>
+                ))}
+              </div>
+            </div>
           ))}
           <Button variant="secondary" onClick={() => onAction(approval, { kind: "dismiss" })}>
             Dismiss
@@ -147,217 +163,6 @@ function ApprovalCard(props: {
         ) : null}
         {approval.reason ? <span>{"Reason " + text(approval.reason)}</span> : null}
       </div>
-    </div>
-  );
-}
-
-// --- Decided stream filters (doc 02 §Tab1.3) ---------------------------------
-interface Filters {
-  decision: string;
-  trust: string;
-  classTag: string;
-  tool: string;
-  destination: string;
-  recipient: string;
-  from: string;
-  to: string;
-  search: string;
-}
-
-const EMPTY_FILTERS: Filters = {
-  decision: "",
-  trust: "",
-  classTag: "",
-  tool: "",
-  destination: "",
-  recipient: "",
-  from: "",
-  to: "",
-  search: "",
-};
-
-function rowMatchesFilters(row: ActivityRow, filters: Filters): boolean {
-  const decision = text(row.decision).toLowerCase();
-  if (filters.decision && decision !== filters.decision.toLowerCase()) return false;
-  if (filters.trust && text(row.destination_trust).toLowerCase() !== filters.trust.toLowerCase())
-    return false;
-  if (
-    filters.classTag &&
-    text(row.data_classes).toLowerCase().indexOf(filters.classTag.toLowerCase()) < 0
-  )
-    return false;
-  if (
-    filters.tool &&
-    text(row.tool_name || row.tool).toLowerCase().indexOf(filters.tool.toLowerCase()) < 0
-  )
-    return false;
-  if (
-    filters.destination &&
-    text(row.destination).toLowerCase().indexOf(filters.destination.toLowerCase()) < 0
-  )
-    return false;
-  if (
-    filters.recipient &&
-    text(row.recipient_identity).toLowerCase().indexOf(filters.recipient.toLowerCase()) < 0
-  )
-    return false;
-  const ts = Number(row.ts || 0);
-  if (filters.from) {
-    const fromTs = new Date(filters.from).getTime() / 1000;
-    if (Number.isFinite(fromTs) && ts && ts < fromTs) return false;
-  }
-  if (filters.to) {
-    const toTs = new Date(filters.to).getTime() / 1000 + 86400;
-    if (Number.isFinite(toTs) && ts && ts > toTs) return false;
-  }
-  if (filters.search) {
-    const haystack = [
-      row.tool_name,
-      row.tool,
-      row.action_family,
-      row.destination,
-      row.recipient_identity,
-      row.purpose,
-      row.reason,
-      row.reason_short,
-      row.data_classes,
-    ]
-      .map((value) => text(value))
-      .join(" ")
-      .toLowerCase();
-    if (haystack.indexOf(filters.search.toLowerCase()) < 0) return false;
-  }
-  return true;
-}
-
-const TRUST_LEVELS = [
-  "self",
-  "local_system",
-  "model_provider",
-  "trusted_recipient",
-  "public",
-  "external",
-  "unknown",
-];
-
-// Field-level filters tucked behind the "More filters" disclosure so the
-// default toolbar stays a single compact row.
-const ADVANCED_FILTER_KEYS: (keyof Filters)[] = [
-  "classTag",
-  "tool",
-  "destination",
-  "recipient",
-  "from",
-  "to",
-];
-
-function activeFilterCount(filters: Filters, keys: (keyof Filters)[]): number {
-  return keys.filter((key) => text(filters[key]).length > 0).length;
-}
-
-function FilterBar(props: { filters: Filters; setFilters: (next: Filters) => void }) {
-  const { filters, setFilters } = props;
-  const [expanded, setExpanded] = useState(false);
-  const set = (key: keyof Filters, value: string) =>
-    setFilters(Object.assign({}, filters, { [key]: value }));
-
-  const advancedActive = activeFilterCount(filters, ADVANCED_FILTER_KEYS);
-  const anyActive = activeFilterCount(filters, Object.keys(filters) as (keyof Filters)[]) > 0;
-
-  return (
-    <div className="hermes-guardian-activity-filterbar">
-      <div className="hermes-guardian-activity-filterbar-main">
-        <input
-          className="hermes-guardian-input hermes-guardian-filter-search"
-          type="search"
-          placeholder="Search activity"
-          value={filters.search}
-          onChange={(event) => set("search", event.target.value)}
-        />
-        <select
-          className="hermes-guardian-select hermes-guardian-filter-compact"
-          value={filters.decision}
-          onChange={(event) => set("decision", event.target.value)}
-        >
-          <option value="">All decisions</option>
-          <option value="allowed">allowed</option>
-          <option value="gated">gated</option>
-          <option value="blocked">blocked</option>
-          <option value="denied">denied</option>
-          <option value="read">read</option>
-        </select>
-        <select
-          className="hermes-guardian-select hermes-guardian-filter-compact"
-          value={filters.trust}
-          onChange={(event) => set("trust", event.target.value)}
-        >
-          <option value="">All trust</option>
-          {TRUST_LEVELS.map((level) => (
-            <option key={level} value={level}>
-              {level}
-            </option>
-          ))}
-        </select>
-        <Button
-          variant="secondary"
-          onClick={() => setExpanded(!expanded)}
-          title="Filter by tool, destination, recipient, class, or date"
-        >
-          {(expanded ? "Fewer filters" : "More filters") +
-            (advancedActive ? " (" + advancedActive + ")" : "")}
-        </Button>
-        {anyActive ? (
-          <Button variant="secondary" onClick={() => setFilters(EMPTY_FILTERS)}>
-            Clear
-          </Button>
-        ) : null}
-      </div>
-      {expanded ? (
-        <div className="hermes-guardian-activity-filters-advanced">
-          <input
-            className="hermes-guardian-input"
-            type="text"
-            placeholder="class / tag"
-            value={filters.classTag}
-            onChange={(event) => set("classTag", event.target.value)}
-          />
-          <input
-            className="hermes-guardian-input"
-            type="text"
-            placeholder="tool"
-            value={filters.tool}
-            onChange={(event) => set("tool", event.target.value)}
-          />
-          <input
-            className="hermes-guardian-input"
-            type="text"
-            placeholder="destination"
-            value={filters.destination}
-            onChange={(event) => set("destination", event.target.value)}
-          />
-          <input
-            className="hermes-guardian-input"
-            type="text"
-            placeholder="recipient"
-            value={filters.recipient}
-            onChange={(event) => set("recipient", event.target.value)}
-          />
-          <input
-            className="hermes-guardian-input"
-            type="date"
-            title="From date"
-            value={filters.from}
-            onChange={(event) => set("from", event.target.value)}
-          />
-          <input
-            className="hermes-guardian-input"
-            type="date"
-            title="To date"
-            value={filters.to}
-            onChange={(event) => set("to", event.target.value)}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -473,7 +278,7 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
 }
 
 // A turn card: the prompt (or a "Turn" label) + a meta line, then its checks nested
-// inside. Rows are already filtered by the caller; an empty turn is never rendered.
+// inside.
 function TurnCard(props: { turn: ActivityTurn; onNavigate: (tab: TabId) => void }) {
   const { turn } = props;
   const [open, setOpen] = useState(true); // turns are expanded by default; click to collapse
@@ -525,7 +330,6 @@ export function ActivityTab(props: ActivityTabProps) {
     taint,
     onClearTaint,
     approvals,
-    approvalsLoading,
     onApprovalAction,
     turns,
     loading,
@@ -541,36 +345,20 @@ export function ActivityTab(props: ActivityTabProps) {
     onNavigate,
   } = props;
 
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
-
-  // Filters apply to the checks WITHIN each turn; a turn with no matching checks is
-  // hidden. Pagination is by turn (server-side), so this only narrows the loaded page.
-  const visibleTurns = useMemo(
-    () =>
-      turns
-        .map((turn) => ({
-          ...turn,
-          rows: (turn.rows || []).filter((row) => rowMatchesFilters(row, filters)),
-        }))
-        .filter((turn) => (turn.rows || []).length > 0),
-    [turns, filters],
-  );
-
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const currentPage = Math.min(page, totalPages - 1);
+  const showPagination = totalPages > 1;
 
   return (
     <div className="hermes-guardian-grid">
       <TaintStrip taint={taint} onClear={onClearTaint} />
 
-      <div className="hermes-guardian-card hermes-guardian-approvals-section">
-        <div className="hermes-guardian-card-title">Pending approvals</div>
-        <div className="hermes-guardian-muted">
-          Actions paused until you approve or dismiss them.
-        </div>
-        {approvalsLoading && !approvals.length ? (
-          <div className="hermes-guardian-muted">Loading approvals...</div>
-        ) : approvals.length ? (
+      {approvals.length ? (
+        <div className="hermes-guardian-card hermes-guardian-approvals-section">
+          <div className="hermes-guardian-card-title">Pending approvals</div>
+          <div className="hermes-guardian-muted">
+            Actions paused until you approve or dismiss them.
+          </div>
           <div className="hermes-guardian-grid">
             {approvals.map((approval) => (
               <ApprovalCard
@@ -581,10 +369,8 @@ export function ActivityTab(props: ActivityTabProps) {
               />
             ))}
           </div>
-        ) : (
-          <div className="hermes-guardian-muted">Nothing needs your approval right now.</div>
-        )}
-      </div>
+        </div>
+      ) : null}
 
       <Debugging
         persistPrompts={persistPrompts}
@@ -593,54 +379,60 @@ export function ActivityTab(props: ActivityTabProps) {
       />
 
       <div className="hermes-guardian-card-title">History</div>
-      <FilterBar filters={filters} setFilters={setFilters} />
       <div className="hermes-guardian-history-toolbar">
         <div className="hermes-guardian-muted">
           {loading
             ? "Loading activity..."
             : total
-              ? "Showing " + visibleTurns.length + " of " + total + (total === 1 ? " turn" : " turns") + " (page " + (currentPage + 1) + "/" + totalPages + ")"
+              ? "Showing " +
+                turns.length +
+                " of " +
+                total +
+                (total === 1 ? " turn" : " turns") +
+                (showPagination ? " (page " + (currentPage + 1) + "/" + totalPages + ")" : "")
               : "No activity yet."}
         </div>
-        <div className="hermes-guardian-actions">
-          <select
-            className="hermes-guardian-select"
-            value={pageSize}
-            onChange={(event) => {
-              setPageSize(Number(event.target.value));
-              setPage(0);
-            }}
-          >
-            {HISTORY_PAGE_SIZES.map((size) => (
-              <option key={size} value={size}>
-                {size + " per page"}
-              </option>
-            ))}
-          </select>
-          <Button
-            variant="secondary"
-            disabled={loading || currentPage <= 0}
-            onClick={() => setPage(Math.max(0, currentPage - 1))}
-          >
-            Previous
-          </Button>
-          <Button
-            variant="secondary"
-            disabled={loading || currentPage >= totalPages - 1}
-            onClick={() => setPage(currentPage + 1)}
-          >
-            Next
-          </Button>
-        </div>
+        {showPagination ? (
+          <div className="hermes-guardian-actions">
+            <select
+              className="hermes-guardian-select"
+              value={pageSize}
+              onChange={(event) => {
+                setPageSize(Number(event.target.value));
+                setPage(0);
+              }}
+            >
+              {HISTORY_PAGE_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {size + " per page"}
+                </option>
+              ))}
+            </select>
+            <Button
+              variant="secondary"
+              disabled={loading || currentPage <= 0}
+              onClick={() => setPage(Math.max(0, currentPage - 1))}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={loading || currentPage >= totalPages - 1}
+              onClick={() => setPage(currentPage + 1)}
+            >
+              Next
+            </Button>
+          </div>
+        ) : null}
       </div>
       {error ? <div className="hermes-guardian-banner">{error}</div> : null}
-      {visibleTurns.length ? (
-        visibleTurns.map((turn, index) => (
+      {turns.length ? (
+        turns.map((turn, index) => (
           <TurnCard key={turn.turn_id || "turn-" + index} turn={turn} onNavigate={onNavigate} />
         ))
       ) : (
         <div className="hermes-guardian-card hermes-guardian-muted">
-          {loading ? "Loading activity..." : "No matching activity."}
+          {loading ? "Loading activity..." : "No activity yet."}
         </div>
       )}
     </div>

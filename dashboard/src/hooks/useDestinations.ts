@@ -22,8 +22,8 @@ export interface DestinationsController {
   refetch: () => Promise<void>;
   addSelf: (kind: string, value: string, confirmText?: string) => void;
   removeSelf: (kind: string, value: string) => void;
-  addTrusted: (identity: string, classes?: string, note?: string) => void;
-  addCommand: (value: string, classes?: string, note?: string) => void;
+  addTrusted: (identity: string, classes?: string, note?: string, skipConfirm?: boolean) => void;
+  addCommand: (value: string, classes?: string, note?: string, skipConfirm?: boolean) => void;
   removeTrusted: (kind: string, value: string) => void;
   addSharing: (subtype: string) => void;
   removeSharing: (subtype: string) => void;
@@ -36,8 +36,9 @@ function errText(err: unknown): string {
 }
 
 // Destination-trust edits are security-relevant (they change what counts as "yours"),
-// so every mutation confirms first — mirroring the cron-context toggle's window.confirm
-// gate — and the backend independently requires the confirmation token (defense in depth).
+// so browser-confirmed flows ask first. Trusted destination creation uses its modal
+// warning as the confirmation surface. The backend independently requires the
+// confirmation token for every mutation (defense in depth).
 export function useDestinations(showToast: ShowToast): DestinationsController {
   const [data, setData] = useState<DestinationsSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -64,8 +65,8 @@ export function useDestinations(showToast: ShowToast): DestinationsController {
   }, [refetch]);
 
   const run = useCallback(
-    (confirmMessage: string, action: () => Promise<any>) => {
-      if (!window.confirm(confirmMessage)) return;
+    (confirmMessage: string, action: () => Promise<any>, skipConfirm?: boolean) => {
+      if (!skipConfirm && !window.confirm(confirmMessage)) return;
       setBusy(true);
       action()
         .then((payload: any) => {
@@ -103,22 +104,24 @@ export function useDestinations(showToast: ShowToast): DestinationsController {
   );
 
   const addTrusted = useCallback(
-    (identity: string, classes?: string, note?: string) => {
+    (identity: string, classes?: string, note?: string, skipConfirm?: boolean) => {
       run(
         'Declare "' + identity + '" a trusted destination? Private data may be shared with it.',
         () => addTrustedRecipient(identity, classes, note),
+        skipConfirm,
       );
     },
     [run],
   );
 
   const addCommand = useCallback(
-    (value: string, classes?: string, note?: string) => {
+    (value: string, classes?: string, note?: string, skipConfirm?: boolean) => {
       run(
         'Trust the command "' +
           value +
           '"? It will run with reduced egress checks (scoped to the classes you set).',
         () => addTrustedCommand(value, classes, note),
+        skipConfirm,
       );
     },
     [run],

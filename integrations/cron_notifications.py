@@ -139,7 +139,7 @@ def _cron_notification_message(
     if approval_id:
         lines.extend([
             "",
-            f"/guardian approve {approval_id} always",
+            f"/guardian approve {approval_id} forever",
         ])
     else:
         lines.append("Approval: no approval ID was generated for this block.")
@@ -148,7 +148,7 @@ def _cron_notification_message(
 
 def _cron_notification_approval_command(message: str) -> str:
     match = re.search(
-        r"(?m)^(/guardian\s+approve\s+[0-9]{4}\s+always)\s*$",
+        r"(?m)^(/guardian\s+approve\s+[0-9]{4}\s+forever)\s*$",
         str(message or ""),
     )
     return re.sub(r"\s+", " ", match.group(1).strip()) if match else ""

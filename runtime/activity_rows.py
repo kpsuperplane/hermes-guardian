@@ -135,7 +135,7 @@ def _pending_approval_rule_coverage(approval: dict[str, Any]) -> dict[str, Any]:
         "data_classes": _activity_data_classes_list(approval.get("data_classes")),
         "fingerprint": str(approval.get("fingerprint") or ""),
     }
-    source = rules_mod._approval_source(shape, consume_once=False)
+    source = rules_mod._approval_source(shape)
     if source and source.get("effect") == "allow":
         return {
             "covered_by_rule": True,
@@ -1033,8 +1033,8 @@ def _policy_snapshot() -> dict[str, Any]:
                     )
                     if str(approval.get("cron_job_id") or "")
                     else "",
-                    # The context-filtered ways to permit this block (doc 06): rule scopes
-                    # plus any structural option (this recipient is me, trust this host, …).
+                    # The context-filtered ways to permit this block (doc 06): expiry-based
+                    # approval options plus any structural option (this recipient is me, trust this host, …).
                     "permit_options": approvals._approval_permit_options(approval),
                     **_pending_approval_rule_coverage(approval),
                 }
@@ -1091,9 +1091,8 @@ def _policy_snapshot() -> dict[str, Any]:
                 "tool_name": (rule.get("match") or {}).get("tool_name", ""),
                 "data_classes": sorted((rule.get("match") or {}).get("data_classes") or []),
                 "scope": approvals._rule_scope_label(rule),
-                "remaining_invocations": int(rule.get("remaining_invocations", -1)),
+                "expires_at": int(float(rule.get("expires_at") or 0)),
                 "owner_hash": str((rule.get("scope") or {}).get("owner_hash") or "*"),
-                "session_id": str((rule.get("scope") or {}).get("session_id") or ""),
                 "cron_job_id": str((rule.get("scope") or {}).get("cron_job_id") or ""),
                 "cron_job_name": str((rule.get("scope") or {}).get("cron_job_name") or ""),
             }

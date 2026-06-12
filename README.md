@@ -50,7 +50,7 @@ Use Guardian when you want:
 - Private data available for reasoning, not blindly stripped from context.
 - Strong default egress behavior without needing to write custom rules first.
 - Optional declassification rules by action family, destination, data class,
-  owner, session, and cron scope.
+  owner/cron scope, and expiry.
 - Mobile-friendly approvals for blocked actions.
 - Fail-closed behavior when private data could leak.
 - Sanitized dashboard and history views that do not store raw private content.
@@ -346,20 +346,22 @@ Destination: example.com
 Data classes: communications, contacts
 
 The owner can approve with:
-/guardian approve 4827 once
-/guardian approve 4827 session
-/guardian approve 4827 always
+/guardian approve 4827 5m
+/guardian approve 4827 forever
+/guardian approve 4827 trust
+/guardian approve 4827 mine
 or dismiss with:
 /guardian dismiss 4827
 ```
 
-Approval scopes:
+Approval options:
 
-| Scope | Behavior |
+| Option | Behavior |
 | --- | --- |
-| `once` | Creates a matching allow rule with `remaining_invocations=1`, bound to the exact tool arguments by HMAC. |
-| `session` | Creates a volatile allow rule for the active session/process state. |
-| `always` | Persists a narrow allow rule with `remaining_invocations=-1`. Cron approvals are scoped to the cron job. |
+| `5m` | Creates a matching allow rule that expires after five minutes. |
+| `forever` | Persists a narrow matching allow rule with no expiry. Cron approvals are scoped to the cron job. |
+| `trust` | Adds an available Trusted Destination option, scoped to the data classes in the block. |
+| `mine` | Adds an available Ownership option, such as a self identity, store, or host. |
 
 Blocked tool calls are not paused and resumed. After approval, the agent must
 retry the action.
@@ -402,18 +404,17 @@ Example persistent allow rule:
   },
   "scope": {
     "owner_hash": "*",
-    "session_id": "",
     "cron_job_id": "",
     "cron_job_name": ""
   },
-  "remaining_invocations": -1,
+  "expires_at": 0,
   "created_at": 1780775040
 }
 ```
 
 Keep persistent rules narrow. A good rule should mean:
 
-> This owner/session/cron context may send this class of private data through
+> This owner/cron context may send this class of private data through
 > this action family to this destination.
 
 Deny rules are useful for hard policy choices that should block even when the
@@ -682,7 +683,7 @@ sit on top as the everyday commands.
 /guardian activity [limit]
 /guardian activity failures [limit]
 /guardian approvals
-/guardian approve <id> [once|session|always]
+/guardian approve <id> [5m|forever|mine|trust]
 /guardian deny <id>                      (alias: dismiss)
 /guardian clear-taint
 

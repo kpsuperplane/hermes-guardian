@@ -36,8 +36,7 @@ _GUARDIAN_HELP_LINES = [
     "  activity [limit]        recent decided actions",
     "  approvals               list pending approvals",
     "  approve <id>            show the ways to permit a pending item",
-    "  approve <id> once|session|keep       allow this exact action (1x / session / ongoing, by type)",
-    "  approve <id> keep-exact              allow only this byte-identical action, ongoing",
+    "  approve <id> 5m|forever             allow this action shape briefly / permanently",
     "  approve <id> mine|trust              it's yours / you trust it (admin; if the action supports it)",
     "  deny <id>               deny a pending item (alias: dismiss)",
     "  clear-taint             clear session taint",
@@ -88,14 +87,14 @@ _RULE_ADD_KEYS = {
     "recipient_identity",
     "owner",
     "owner_hash",
-    "session",
-    "session_id",
     "cron",
     "cron_job_id",
     "cron_name",
     "cron_job_name",
-    "remaining",
-    "remaining_invocations",
+    "expires",
+    "expires_at",
+    "duration",
+    "ttl",
 }
 
 _TOOL_SET_KEYS = {
@@ -336,7 +335,7 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
             "tool_name": tool_name,
             "reason": "privacy policy is off",
         }
-    source = rules_mod._approval_source(shape, consume_once=False)
+    source = rules_mod._approval_source(shape)
     if source:
         denied = source.get("effect") == "deny"
         return {
@@ -1103,11 +1102,36 @@ def _guardian_language_packs_command(owner_hash: str, tokens: list[str]) -> str:
 
 
 def _rule_add_usage() -> str:
-    return "Usage: /guardian sharing rule add allow|deny action=<family|*> destination=<dest|*> classes=<class+class|*> [tool=<tool_name|*>] [purpose=<token|*>] [recipient=<id|raw|*>]"
+    return "Usage: /guardian sharing rule add allow|deny action=<family|*> destination=<dest|*> classes=<class+class|*> [tool=<tool_name|*>] [purpose=<token|*>] [recipient=<id|raw|*>] [expires=<5m|1h|unix|forever>]"
 
 
 def _rule_add_error(message: str) -> tuple[dict[str, Any] | None, str]:
     return None, f"Invalid privacy rule. {message}\n{_rule_add_usage()}"
+
+
+def _parse_rule_expiry(params: dict[str, str]) -> tuple[int | None, str]:
+    raw = (
+        params.get("expires_at")
+        or params.get("expires")
+        or params.get("duration")
+        or params.get("ttl")
+        or ""
+    )
+    text = str(raw or "").strip().lower()
+    if not text or text in {"0", "never", "forever", "none"}:
+        return 0, ""
+    if re.fullmatch(r"\d+", text):
+        value = int(text)
+        if value > 10_000_000_000:
+            return value, ""
+        return int(state._now()) + value, ""
+    match = re.fullmatch(r"(\d+)([smhd])", text)
+    if not match:
+        return None, "expires must be a unix timestamp, seconds, or duration like 5m/1h."
+    amount = int(match.group(1))
+    unit = match.group(2)
+    multiplier = {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+    return int(state._now()) + amount * multiplier, ""
 
 
 def _new_privacy_rule_from_params(
@@ -1142,10 +1166,9 @@ def _new_privacy_rule_from_params(
         if not requested_classes:
             return _rule_add_error("Data classes must be a valid class list or explicit *.")
         classes = requested_classes
-    try:
-        remaining = int(params.get("remaining") or params.get("remaining_invocations") or "-1")
-    except ValueError:
-        return _rule_add_error("remaining must be an integer.")
+    expires_at, expiry_error = _parse_rule_expiry(params)
+    if expiry_error:
+        return _rule_add_error(expiry_error)
 
     requested_owner = params.get("owner") or params.get("owner_hash")
     cron_job_id = params.get("cron") or params.get("cron_job_id") or ""
@@ -1174,11 +1197,10 @@ def _new_privacy_rule_from_params(
         },
         "scope": {
             "owner_hash": rule_owner,
-            "session_id": params.get("session") or params.get("session_id") or "",
             "cron_job_id": cron_job_id,
             "cron_job_name": params.get("cron_name") or params.get("cron_job_name") or "",
         },
-        "remaining_invocations": remaining,
+        "expires_at": expires_at or 0,
         "created_at": int(state._now()),
     }
     return rules_mod._normalize_privacy_rule(rule), ""
@@ -1320,9 +1342,9 @@ def _guardian_rules(owner_hash: str) -> str:
         if disabled:
             label = f"{label} (disabled)"
         metadata = f"`{rule.get('id', '')}`"
-        remaining = _rule_remaining_text(rule)
-        if remaining:
-            metadata += f" · {remaining}"
+        expiry = _rule_expiry_text(rule)
+        if expiry:
+            metadata += f" · {expiry}"
         lines.extend([
             "",
             f"{icon} **{label}** `{action} -> {destination}`",
@@ -1353,25 +1375,23 @@ def _rule_scope_text(rule: dict[str, Any]) -> str:
         except Exception:
             pass
         return f"[Cron] {cron_job_name or cron_job_id}"
-    if str(scope.get("session_id") or rule.get("session_id") or "").strip():
-        return "Session scoped"
     owner_hash = str(scope.get("owner_hash") or rule.get("owner_hash") or "*").strip()
     label = approvals._rule_scope_label(rule).lower()
     if owner_hash == "*" or label in {"all owners", "global"}:
         return "Runs everywhere"
-    if label == "session":
-        return "Session scoped"
     return "Owner scoped"
 
 
-def _rule_remaining_text(rule: dict[str, Any]) -> str:
+def _rule_expiry_text(rule: dict[str, Any]) -> str:
     try:
-        remaining = int(rule.get("remaining_invocations", -1))
+        expires_at = int(float(rule.get("expires_at") or 0))
     except (TypeError, ValueError):
         return ""
-    if remaining < 0:
+    if expires_at <= 0:
         return ""
-    return "1 invocation left" if remaining == 1 else f"{remaining} invocations left"
+    if expires_at <= int(state._now()):
+        return "expired"
+    return f"expires {dashboard_mod._friendly_activity_timestamp(expires_at)}"
 
 
 def _rule_classes_line(classes: list[Any]) -> str:
@@ -1391,9 +1411,7 @@ def _guardian_clear_taint(owner_hash: str) -> str:
             if session:
                 session["taint"].clear()
                 session["browser_private_hosts"].clear()
-            state._SESSION_APPROVALS.pop(sid, None)
-            state._ONCE_APPROVALS.pop(sid, None)
-    return "Cleared Guardian taint and session approvals for your active Guardian sessions."
+    return "Cleared Guardian taint for your active Guardian sessions."
 
 
 def _guardian_revoke(owner_hash: str, rule_id: str) -> str:
@@ -1440,16 +1458,12 @@ def _guardian_deny(owner_hash: str, approval_id: str) -> str:
     return _guardian_dismiss(owner_hash, approval_id)
 
 
-# Slash keyword -> permit method (doc 06 §7). The rule scopes map directly; the
+# Slash keyword -> permit method (doc 06 §7). The expiry keywords map directly; the
 # context keywords `mine`/`trust` resolve to the single self_*/trusted_* option the
 # approval offers (each context yields at most one of each, so no qualifier is needed).
-# `always` stays as a hidden back-compat alias for `keep`.
 _SCOPE_KEYWORD_TO_METHOD = {
-    "once": "rule_once",
-    "session": "rule_session",
-    "keep": "rule_keep",
-    "keep-exact": "rule_keep_exact",
-    "always": "rule_keep",
+    "5m": "rule_5m",
+    "forever": "rule_forever",
 }
 
 
@@ -1477,7 +1491,12 @@ def _guardian_permit_menu(owner_hash: str, approval_id: str) -> str:
         f"Ways to permit approval {resolved_id} "
         f"({approval.get('action_family', '')} -> {approval.get('destination', '')}):"
     ]
+    last_group = ""
     for option in approvals._approval_permit_options(approval):
+        group = str(option.get("group") or "Approval options")
+        if group != last_group:
+            lines.append(f"{group}:")
+            last_group = group
         command = approvals._permit_command_line(resolved_id, option["method"])
         admin = " [admin]" if option.get("structural") else ""
         detail = f" — {option['detail']}" if option.get("detail") else ""

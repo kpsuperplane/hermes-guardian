@@ -528,6 +528,19 @@ def _normalize_trusted_recipients(raw: Any) -> dict[str, Any]:
     return {"entries": out}
 
 
+def _normalize_rule_expires_at(value: Any) -> int:
+    try:
+        expires_at = int(float(value or 0))
+    except (TypeError, ValueError):
+        return 0
+    return max(0, expires_at)
+
+
+def _rule_is_expired(rule: dict[str, Any], *, now: int | None = None) -> bool:
+    expires_at = _normalize_rule_expires_at(rule.get("expires_at"))
+    return bool(expires_at and expires_at <= int(state._now() if now is None else now))
+
+
 def _normalize_outward_sharing(raw: Any) -> dict[str, Any]:
     """Normalize the ``outward_sharing`` block (doc 01 §4), fail closed.
 
@@ -628,12 +641,14 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
     rule_id = str(rule.get("id") or rule.get("rule_id") or f"rule_{secrets.token_hex(4)}").strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", rule_id):
         rule_id = f"rule_{secrets.token_hex(4)}"
-    try:
-        remaining = int(rule.get("remaining_invocations", -1))
-    except (TypeError, ValueError):
-        remaining = -1
-    if remaining < -1:
-        remaining = -1
+    if "expires_at" not in rule and "expires" not in rule:
+        try:
+            legacy_remaining = int(rule.get("remaining_invocations", -1))
+        except (TypeError, ValueError):
+            legacy_remaining = -1
+        if legacy_remaining >= 0:
+            return None
+    expires_at = _normalize_rule_expires_at(rule.get("expires_at", rule.get("expires", 0)))
     normalized = {
         "id": rule_id,
         "effect": effect,
@@ -650,12 +665,10 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
         },
         "scope": {
             "owner_hash": str(scope.get("owner_hash") or rule.get("owner_hash") or "*").strip() or "*",
-            "session_id": tool_policy._normalize_session_id(scope.get("session_id") or rule.get("session_id") or "")
-            if (scope.get("session_id") or rule.get("session_id")) else "",
             "cron_job_id": str(scope.get("cron_job_id") or rule.get("cron_job_id") or "").strip(),
             "cron_job_name": str(scope.get("cron_job_name") or rule.get("cron_job_name") or "").strip(),
         },
-        "remaining_invocations": remaining,
+        "expires_at": expires_at,
         "created_at": int(float(rule.get("created_at") or 0)),
     }
     fingerprint = str(rule.get("fingerprint") or "").strip()
@@ -1120,7 +1133,14 @@ def _set_privacy_mode(mode: str) -> tuple[bool, str]:
 
 
 def _persistent_privacy_rules() -> list[dict[str, Any]]:
-    return list(_load_privacy_config().get("privacy", {}).get("rules", []))
+    rules = list(_load_privacy_config().get("privacy", {}).get("rules", []))
+    active = [rule for rule in rules if not _rule_is_expired(rule)]
+    if len(active) != len(rules):
+        try:
+            _save_persistent_privacy_rules(active)
+        except Exception as exc:
+            core.logger.debug("%s: failed to prune expired privacy rules: %s", core._PLUGIN_NAME, exc)
+    return active
 
 
 def _save_persistent_privacy_rules(rules: list[dict[str, Any]]) -> bool:
@@ -1893,11 +1913,9 @@ def _classes_are_covered(current: set[str], approved: list[str] | set[str]) -> b
 
 def _scope_matches(scope: dict[str, Any], shape: dict[str, Any]) -> bool:
     owner_hash = str(scope.get("owner_hash") or "*")
-    session_id = str(scope.get("session_id") or "")
     cron_job_id = str(scope.get("cron_job_id") or "")
     return (
         (owner_hash == "*" or owner_hash == shape.get("owner_hash"))
-        and (not session_id or session_id == shape.get("session_id"))
         and (not cron_job_id or cron_job_id == cron_notifications._cron_job_id_from_session(shape.get("session_id")))
     )
 
@@ -1917,6 +1935,8 @@ def _destination_matches(rule_value: Any, shape: dict[str, Any]) -> bool:
 
 def _rule_matches(rule: dict[str, Any], shape: dict[str, Any]) -> bool:
     if not rule.get("enabled", True):
+        return False
+    if _rule_is_expired(rule):
         return False
     match = rule.get("match") if isinstance(rule.get("match"), dict) else {}
     if not _scope_matches(rule.get("scope") if isinstance(rule.get("scope"), dict) else {}, shape):
@@ -1938,19 +1958,6 @@ def _rule_matches(rule: dict[str, Any], shape: dict[str, Any]) -> bool:
     return _classes_are_covered(current_classes, rule_classes)
 
 
-def _consume_rule_invocation(rule: dict[str, Any], rules: list[dict[str, Any]] | None = None) -> None:
-    try:
-        remaining = int(rule.get("remaining_invocations", -1))
-    except (TypeError, ValueError):
-        remaining = -1
-    if remaining < 0:
-        return
-    remaining -= 1
-    rule["remaining_invocations"] = remaining
-    if rules is not None and remaining <= 0:
-        rules[:] = [candidate for candidate in rules if candidate.get("id") != rule.get("id")]
-
-
 def _rule_source_payload(rule: dict[str, Any], source: str) -> dict[str, str]:
     return {
         "source": source,
@@ -1959,38 +1966,16 @@ def _rule_source_payload(rule: dict[str, Any], source: str) -> dict[str, str]:
     }
 
 
-def _approval_source(shape: dict[str, Any], *, consume_once: bool = True) -> dict[str, str] | None:
+def _approval_source(shape: dict[str, Any]) -> dict[str, str] | None:
     with state._LOCK:
         llm._prune_expired()
-        sid = shape["session_id"]
-        once_rules = state._ONCE_APPROVALS.get(sid, [])
-        for rule in list(once_rules):
-            if rule.get("fingerprint") == shape.get("fingerprint") and _rule_matches(rule, shape):
-                if consume_once:
-                    _consume_rule_invocation(rule, once_rules)
-                return _rule_source_payload(rule, "once")
-
-        session_rules = state._SESSION_APPROVALS.get(sid, [])
-        for rule in list(session_rules):
-            if _rule_matches(rule, shape):
-                if consume_once:
-                    _consume_rule_invocation(rule, session_rules)
-                return _rule_source_payload(rule, "session")
-
         persistent_rules = _persistent_privacy_rules()
-        changed = False
         for rule in list(persistent_rules):
             fingerprint = str(rule.get("fingerprint") or "")
             if fingerprint and fingerprint != str(shape.get("fingerprint") or ""):
                 continue
             if not _rule_matches(rule, shape):
                 continue
-            if consume_once:
-                before = json.dumps(persistent_rules, sort_keys=True)
-                _consume_rule_invocation(rule, persistent_rules)
-                changed = before != json.dumps(persistent_rules, sort_keys=True)
-                if changed:
-                    _save_persistent_privacy_rules(persistent_rules)
             return _rule_source_payload(rule, "persistent")
     return None
 

@@ -332,17 +332,18 @@ def test_browser_result_redirect_updates_host():
     assert plugin._browser_host("s1") == "attacker.example"
 
 
-def test_once_approval_does_not_apply_to_changed_args():
+def test_5m_approval_applies_to_same_shape_but_not_changed_recipient():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
     plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "A"}, session_id="s1")
     approval_id = first_pending_id(plugin)
-    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} once"))
-    assert "Approved" in plugin._handle_guardian_command(f"approve {approval_id} once")
+    plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id} 5m"))
+    assert "Approved" in plugin._handle_guardian_command(f"approve {approval_id} 5m")
 
-    result = plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "B"}, session_id="s1")
+    assert plugin._on_pre_tool_call("send_message", {"to": "friend", "text": "B"}, session_id="s1") is None
+    result = plugin._on_pre_tool_call("send_message", {"to": "other", "text": "B"}, session_id="s1")
 
     assert result is not None
     assert "Hermes Guardian blocked this egress" in result["message"]

@@ -164,7 +164,8 @@ scope.
 A typical decision includes:
 
 - Owner or actor scope.
-- Session or cron scope.
+- Optional cron-job scope.
+- Optional expiry.
 - Action family.
 - Destination.
 - Purpose token.
@@ -423,7 +424,7 @@ Microsoft Copilot Studio documents prompt-injection protections, cross-domain pr
 
 | Dimension | Microsoft enterprise stack | Hermes + Guardian |
 |---|---|---|
-| Identity and governance | Tenant, RBAC, admin policy, enterprise audit | Local owner/session/cron policy |
+| Identity and governance | Tenant, RBAC, admin policy, enterprise audit | Local owner/cron policy |
 | Runtime inspection | External provider and Defender-style action inspection | Guardian hook-based action inspection |
 | Detector input | May include rich execution context, depending on configuration | Designed around local, sanitized metadata |
 | Deployment target | Enterprise managed agents | Personal/local Hermes agents |

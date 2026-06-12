@@ -66,9 +66,8 @@ export interface Rule {
   recipient_identity?: string;
   tool_name?: string;
   data_classes?: string[];
-  remaining_invocations?: number;
+  expires_at?: number;
   owner_hash?: string;
-  session_id?: string;
   cron_job_id?: string;
   cron_job_name?: string;
   scope?: string;
@@ -231,6 +230,7 @@ export interface PermitOption {
   kind?: string;
   structural?: boolean;
   data_classes?: string[];
+  group?: string;
 }
 
 export interface PendingApproval {
@@ -300,10 +300,9 @@ export interface RuleForm {
   recipient_identity: string;
   tool_name: string;
   data_classes: string[];
-  lifetime: "always" | "once" | "custom";
-  remaining_invocations: number | string;
+  expiry: "forever" | "5m" | "1h" | "custom";
+  expires_at: number | string;
   owner_hash: string;
-  session_id: string;
   cron_job_id: string;
   cron_job_name: string;
 }
@@ -319,7 +318,6 @@ export interface RuleMatch {
 
 export interface RuleScope {
   owner_hash: string;
-  session_id: string;
   cron_job_id: string;
   cron_job_name: string;
 }
@@ -328,7 +326,7 @@ export interface RulePayload {
   effect: string;
   match: RuleMatch;
   scope: RuleScope;
-  remaining_invocations: number;
+  expires_at: number;
   confirm?: string;
 }
 

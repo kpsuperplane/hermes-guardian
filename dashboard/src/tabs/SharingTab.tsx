@@ -1,9 +1,10 @@
-import { React, useEffect, useState } from "@/sdk";
+import { React, useState } from "@/sdk";
 import { Button } from "@/components/Button";
 import { Mono } from "@/components/Mono";
 import { ImpactPreview } from "@/components/ImpactPreview";
 import { PreviewSend } from "@/components/PreviewSend";
-import { displayText, remainingPillText, ruleScopeText, text } from "@/lib/format";
+import { TrustedDestinationModal } from "@/components/TrustedDestinationModal";
+import { displayText, expiryPillText, ruleScopeText, text } from "@/lib/format";
 import type { DestinationsController } from "@/hooks/useDestinations";
 import type { Rule } from "@/types";
 
@@ -50,58 +51,10 @@ function AddRow(props: {
   );
 }
 
-// --- Command picker: pick a discovered/recently-gated command to trust --------
-function CommandPicker(props: { controller: DestinationsController }) {
-  const { busy, addCommand, suggestions, loadSuggestions } = props.controller;
-  const [selected, setSelected] = useState("");
-  const [classes, setClasses] = useState("");
-
-  useEffect(() => {
-    loadSuggestions();
-  }, [loadSuggestions]);
-
-  const submit = () => {
-    const value = selected.trim();
-    if (!value) return;
-    addCommand(value, classes.trim() || undefined);
-    setSelected("");
-    setClasses("");
-  };
-
-  return (
-    <div className="hermes-guardian-dest-addrow hermes-guardian-command-picker">
-      <select
-        className="hermes-guardian-input"
-        value={selected}
-        disabled={busy}
-        onChange={(event) => setSelected(event.target.value)}
-      >
-        <option value="">Pick a command to trust…</option>
-        {suggestions.map((item) => (
-          <option key={item.value} value={item.value}>
-            {(item.source === "recent" ? "⏱ " : item.wildcard ? "📁 " : "🖥 ") +
-              (item.label || item.value)}
-          </option>
-        ))}
-      </select>
-      <input
-        className="hermes-guardian-input hermes-guardian-command-classes"
-        type="text"
-        value={classes}
-        placeholder="classes (e.g. local_system) — blank = all"
-        disabled={busy}
-        onChange={(event) => setClasses(event.target.value)}
-      />
-      <Button variant="secondary" disabled={busy || !selected} onClick={submit}>
-        Trust command
-      </Button>
-    </div>
-  );
-}
-
 // --- Trusted destinations: identities + commands you've consented to share with --
 function TrustedDestinations(props: { controller: DestinationsController }) {
-  const { data, busy, addTrusted, removeTrusted } = props.controller;
+  const { data, busy, removeTrusted } = props.controller;
+  const [showModal, setShowModal] = useState(false);
   const trusted = (data && data.trusted_recipients) || [];
   return (
     <div className="hermes-guardian-card">
@@ -150,13 +103,17 @@ function TrustedDestinations(props: { controller: DestinationsController }) {
           one.
         </div>
       )}
-      <AddRow
-        placeholder="teammate@example.com"
-        buttonLabel="Add recipient"
-        disabled={busy}
-        onAdd={(value) => addTrusted(value)}
-      />
-      <CommandPicker controller={props.controller} />
+      <div className="hermes-guardian-tools-override-actions">
+        <Button disabled={busy} onClick={() => setShowModal(true)}>
+          Add trusted destination
+        </Button>
+      </div>
+      {showModal ? (
+        <TrustedDestinationModal
+          controller={props.controller}
+          onCancel={() => setShowModal(false)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -173,7 +130,7 @@ function RuleCard(props: {
 }) {
   const { rule, index, total, onEditRule, onPatchRule, onDeleteRule, onMoveRule } = props;
   const disabled = rule.enabled === false;
-  const remaining = remainingPillText(rule);
+  const expiry = expiryPillText(rule);
   const classes = ["hermes-guardian-card"];
   if (disabled) classes.push("hermes-guardian-rule-disabled");
   return (
@@ -189,7 +146,7 @@ function RuleCard(props: {
           </div>
           <div className="hermes-guardian-rule-subline">
             <span className="hermes-guardian-rule-id">{rule.rule_id}</span>
-            {remaining ? <span className="hermes-guardian-pill">{remaining}</span> : null}
+            {expiry ? <span className="hermes-guardian-pill">{expiry}</span> : null}
           </div>
         </div>
         <div className="hermes-guardian-actions">

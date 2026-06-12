@@ -104,12 +104,7 @@ def _activity_taints_text(row: dict[str, Any], *, code: bool = False, html_code:
 
 
 def _dashboard_permit_method(value: str) -> str | None:
-    """Resolve a dashboard approve payload to a permit method (doc 06 §8).
-
-    Accepts a method id directly (``self_host``, ``trusted_identity``, …) or a legacy
-    scope word (``once``/``session``/``keep``/``always``) for back-compat. Returns ``None``
-    for an unrecognized value so the caller can 400.
-    """
+    """Resolve a dashboard approve payload to a permit method (doc 06 §8)."""
     token = str(value or "").strip().lower()
     if token in approvals._PERMIT_METHODS:
         return token
@@ -552,7 +547,7 @@ def _dashboard_rule_update_action(rule_id: str, payload: dict[str, Any]) -> tupl
         rules.insert(target_index if where == "before" else target_index + 1, moving)
     else:
         merged = dict(rules[index])
-        for key in ("effect", "enabled", "match", "scope", "remaining_invocations"):
+        for key in ("effect", "enabled", "match", "scope", "expires_at"):
             if key in payload:
                 merged[key] = payload[key]
         normalized = rules_mod._normalize_privacy_rule(merged)

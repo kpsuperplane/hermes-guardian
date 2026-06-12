@@ -2,16 +2,8 @@ import { text } from "@/lib/format";
 import type { Rule, RuleForm, RulePayload } from "@/types";
 
 export function ruleToForm(rule: Rule): RuleForm {
-  const remaining = Number(rule.remaining_invocations);
-  let lifetime: RuleForm["lifetime"] = "always";
-  let custom = 5;
-  if (Number.isFinite(remaining) && remaining === 1) {
-    lifetime = "once";
-    custom = 1;
-  } else if (Number.isFinite(remaining) && remaining > 1) {
-    lifetime = "custom";
-    custom = Math.trunc(remaining);
-  }
+  const expires = Number(rule.expires_at || 0);
+  const expiry: RuleForm["expiry"] = Number.isFinite(expires) && expires > 0 ? "custom" : "forever";
   return {
     id: text(rule.rule_id || rule.id),
     enabled: rule.enabled !== false,
@@ -26,20 +18,21 @@ export function ruleToForm(rule: Rule): RuleForm {
       Array.isArray(rule.data_classes) && rule.data_classes.length
         ? rule.data_classes.slice()
         : ["*"],
-    lifetime,
-    remaining_invocations: custom,
+    expiry,
+    expires_at: expiry === "custom" ? Math.trunc(expires) : "",
     owner_hash: text(rule.owner_hash) === "*" ? "" : text(rule.owner_hash),
-    session_id: text(rule.session_id),
     cron_job_id: text(rule.cron_job_id),
     cron_job_name: text(rule.cron_job_name),
   };
 }
 
 export function formToPayload(form: RuleForm): RulePayload {
-  let remaining = -1;
-  if (form.lifetime === "once") remaining = 1;
-  if (form.lifetime === "custom") {
-    remaining = Math.max(1, Math.trunc(Number(form.remaining_invocations) || 1));
+  const now = Math.floor(Date.now() / 1000);
+  let expiresAt = 0;
+  if (form.expiry === "5m") expiresAt = now + 300;
+  if (form.expiry === "1h") expiresAt = now + 3600;
+  if (form.expiry === "custom") {
+    expiresAt = Math.max(1, Math.trunc(Number(form.expires_at) || 0));
   }
   const classes = form.data_classes && form.data_classes.length ? form.data_classes : ["*"];
   return {
@@ -54,11 +47,10 @@ export function formToPayload(form: RuleForm): RulePayload {
     },
     scope: {
       owner_hash: text(form.owner_hash, "*"),
-      session_id: text(form.session_id),
       cron_job_id: text(form.cron_job_id),
       cron_job_name: text(form.cron_job_name),
     },
-    remaining_invocations: remaining,
+    expires_at: expiresAt,
   };
 }
 
