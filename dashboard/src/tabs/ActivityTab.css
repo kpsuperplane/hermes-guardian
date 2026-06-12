@@ -140,14 +140,21 @@
   gap: 0.5rem;
   flex-wrap: wrap;
   justify-content: flex-end;
-  flex: 0 1 28rem;
-  min-width: min(100%, 18rem);
+  flex: 0 1 19rem;
+  min-width: min(100%, 14rem);
 }
 
 .hermes-guardian-approval-actions .hermes-guardian-approval-select {
-  width: min(22rem, 100%);
+  width: min(11.5rem, 100%);
   max-width: 100%;
-  flex: 1 1 16rem;
+  flex: 0 1 11.5rem;
+  min-height: 2rem;
+  border-color: var(--color-border);
+  background: color-mix(in srgb, var(--color-card) 70%, transparent);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.38rem 0.65rem;
+  cursor: pointer;
 }
 
 .hermes-guardian-approval-actions button {
@@ -170,7 +177,7 @@
   }
 
   .hermes-guardian-approval-actions .hermes-guardian-approval-select {
-    flex-basis: 100%;
+    flex-basis: 11.5rem;
   }
 }
 
