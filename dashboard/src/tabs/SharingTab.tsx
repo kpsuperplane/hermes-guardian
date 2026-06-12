@@ -141,7 +141,7 @@ function RuleCard(props: {
             {text(rule.effect, "allow") +
               " " +
               displayText(rule.action_family, "*") +
-              " -> " +
+              " → " +
               displayText(rule.destination, "*")}
           </div>
           <div className="hermes-guardian-rule-subline">

@@ -115,7 +115,7 @@ function ApprovalCard(props: {
       <div className="hermes-guardian-block-head">
         <div>
           <div className="hermes-guardian-block-title">
-            {text(approval.action_family) + " -> " + text(approval.destination)}
+            {text(approval.action_family) + " → " + text(approval.destination)}
             <TrustPill trust={approval.destination_trust} />
           </div>
           <div className="hermes-guardian-rule-subline">
@@ -201,7 +201,7 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
     text(row.direction) ||
     (text(row.decision) === "read" || text(row.decision) === "tainted" ? "read" : "write");
   const action = text(row.action_family, direction === "read" ? "read" : "n/a");
-  const route = direction === "read" && !text(row.destination) ? action : action + " -> " + destination;
+  const route = direction === "read" && !text(row.destination) ? action : action + " → " + destination;
   const latency = latencyText(row.latency_ms);
   const isRead = direction === "read";
   // data_classes can arrive as an array or a delimiter-joined string; one chip per taint.
