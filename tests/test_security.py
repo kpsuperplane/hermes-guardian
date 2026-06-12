@@ -194,6 +194,45 @@ def test_inbound_result_still_suppresses_account_security_content():
         assert parse_json(transformed)["result"] == "[suppressed by hermes-guardian]"
 
 
+def test_web_extract_skips_login_boilerplate_but_keeps_links_and_secrets():
+    plugin = load_plugin()
+
+    # Full-page web reads routinely embed login-form boilerplate ("Forgot your
+    # password?", "Sign in", "Register for an account", ...). Matching the
+    # account-security *phrase* categories on that chrome is a false positive — the
+    # page is a benign news/site read, not credential material. Regression: a morning
+    # news-briefing cron suppressed (and over-tainted) a Good News Network page solely
+    # because its login widget said "Forgot your password?".
+    boilerplate = (
+        "Good News Network\n\nGet Involved\n\nSign in\n\nWelcome!Log into your account\n\n"
+        "your username\n\nyour password\n\nForgot your password?\n\nSign up\n\n"
+        "Register for an account\n\nyour email\n\nA password will be e-mailed to you.\n\nPassword reset"
+    )
+    assert plugin._on_transform_tool_result(tool_name="web_extract", result=boilerplate) is None
+
+    # The skip is web_extract-scoped: the same boilerplate read by any other tool
+    # (e.g. an inbox/MCP read) is still suppressed.
+    other = plugin._on_transform_tool_result(tool_name="mcp_gmail_read", result=boilerplate)
+    assert other is not None
+    assert parse_json(other)["result"] == "[suppressed by hermes-guardian]"
+
+    # "except with the URL": a genuine reset/magic link on the page is still suppressed
+    # via the "sensitive link" reason.
+    link = "Reset here: https://mail.example.com/u/password-reset?token=abc123def456"
+    transformed = plugin._on_transform_tool_result(tool_name="web_extract", result=link)
+    assert transformed is not None
+    assert parse_json(transformed)["hermes_guardian"]["reason"] == "sensitive link"
+
+    # Hard credentials embedded in a page are still suppressed even on web_extract.
+    for secret in (
+        "-----BEGIN RSA PRIVATE KEY-----\nMIIabc...\n",
+        "config:\n  DB_PASSWORD=hunter2hunter2\n",
+    ):
+        out = plugin._on_transform_tool_result(tool_name="web_extract", result=secret)
+        assert out is not None
+        assert parse_json(out)["hermes_guardian"]["suppressed"] is True
+
+
 def test_egress_still_blocks_api_tokens_read_inbound():
     plugin = load_plugin()
     token_line = "SLACK_API_TOKEN=xoxb-9f3a8e2188b-example-token-value"

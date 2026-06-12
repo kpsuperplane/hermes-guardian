@@ -459,6 +459,15 @@ to send it anywhere. Hard secrets (private keys, AWS access keys, and
 `*_PASSWORD=` / `*_PRIVATE_KEY=` assignments) stay suppressed even inbound, as
 does all `account_security_content` (OTPs, reset/recovery, magic links).
 
+One scoped exception applies to `web_extract` results only: full-page web reads
+routinely embed login-form boilerplate ("Forgot your password?", "Sign in",
+"Register for an account") that trips the account-security *phrase* categories as
+false positives, so those phrase matches are not suppressed for `web_extract`. A
+genuine reset/magic link still surfaces via the `sensitive_links` reason, hard
+credentials still surface via `credential_content`, and every egress surface
+still scans at full strictness — this only relaxes read-time phrase matching on
+fetched pages.
+
 Disabling a security rule weakens non-approvable hardening. Privacy checks still
 apply to classified private egress, but the disabled security category no
 longer categorically blocks matching content or action shapes. `/guardian

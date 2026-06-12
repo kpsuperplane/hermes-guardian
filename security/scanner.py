@@ -25,6 +25,14 @@ _MESSAGE_KEYS = {
 _SECURITY_SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = []
 _REDACTION_MARKER_PATTERNS: list[tuple[re.Pattern[str], str]] = []
 
+# The distinct reasons (category names) produced by _SECURITY_SENSITIVE_PATTERNS — the
+# account-security phrase categories (password reset, account recovery, OTP, magic link,
+# MFA, account verification, ...). Recomputed whenever language packs are (re)compiled.
+# Passed as skip_reasons by callers that want to suppress phrase matching while keeping
+# sensitive-link and hard-credential detection (see _security_transform_tool_result's
+# web_extract path).
+_SECURITY_SENSITIVE_REASONS: frozenset[str] = frozenset()
+
 # A variable whose name ends in one of these suffixes denotes a *reference to* a secret
 # — the path/file/dir/URL where it lives, or its name — not the secret value itself. The
 # assigned value is a location, never a credential (e.g.
@@ -118,9 +126,10 @@ def _code_context_pattern() -> re.Pattern[str]:
 
 def _apply_compiled_language_packs(compiled: Any) -> None:
     global _COMPILED_LANGUAGE_PACKS, _SECURITY_SENSITIVE_PATTERNS, _REDACTION_MARKER_PATTERNS
-    global _CODE_CONTEXT_RE, _PRIVATE_FIELD_RE
+    global _CODE_CONTEXT_RE, _PRIVATE_FIELD_RE, _SECURITY_SENSITIVE_REASONS
     _COMPILED_LANGUAGE_PACKS = compiled
     _SECURITY_SENSITIVE_PATTERNS = list(compiled.security_sensitive_patterns)
+    _SECURITY_SENSITIVE_REASONS = frozenset(reason for _, reason in _SECURITY_SENSITIVE_PATTERNS)
     _REDACTION_MARKER_PATTERNS = list(compiled.redaction_marker_patterns)
     _CODE_CONTEXT_RE = _code_context_pattern()
     _PRIVATE_FIELD_RE = compiled.private_field_pattern
@@ -207,6 +216,8 @@ def _sensitive_finding(
         }
     if account_security_enabled:
         for pattern, reason in _SECURITY_SENSITIVE_PATTERNS:
+            if reason in skip_reasons:
+                continue
             match = pattern.search(text)
             if match:
                 return {
