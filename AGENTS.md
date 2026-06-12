@@ -594,6 +594,10 @@ sharing process-global state across tests.
   shape is the only shape that ever existed.
 - Commit directly to `main`. Do not create feature branches or open PRs for
   changes in this repo — commit and push on `main`.
+- Multiple agents may be working on `main` at the same time. Do not be surprised
+  if the worktree changes while you are working, or if you find edits you did not
+  make. Treat them as another agent's/user's work: inspect, preserve, and adapt
+  rather than reverting or overwriting them.
 - Use `rg`/`rg --files` for repository search.
 - Keep edits tightly scoped. This repository relies on security invariants more
   than broad refactors.
