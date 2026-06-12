@@ -183,7 +183,7 @@ def _guardian_history_command(
     title: str = "Guardian history",
     empty_message: str = "No guardian activity history yet.",
 ) -> str:
-    limit = 10
+    limit = 5
     if len(tokens) > 1:
         try:
             limit = int(tokens[1])

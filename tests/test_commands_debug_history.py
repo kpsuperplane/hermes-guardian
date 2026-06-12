@@ -220,6 +220,27 @@ def test_guardian_history_command_empty_and_limit_handling():
     assert response.count("\n   Blocked: test") == 25
 
 
+def test_guardian_activity_default_limit_is_five_turns():
+    plugin = load_plugin()
+
+    for index in range(6):
+        plugin._emit_activity(
+            "blocked",
+            session_id=f"s{index}",
+            action_family="message_send",
+            destination=f"dest-{index}",
+            data_classes={"communications"},
+            reason=f"test-{index}",
+        )
+
+    response = plugin._handle_guardian_command("activity")
+
+    assert "🛡️ **Guardian activity** · newest first · 5 turns" in response
+    assert response.count("↳ ❌ `message_send`") == 5
+    assert "test-5" in response
+    assert "test-0" not in response
+
+
 def test_guardian_dashboard_is_not_a_chat_command():
     plugin = load_plugin()
 
