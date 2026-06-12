@@ -773,14 +773,6 @@ def _runtime_risk_banners() -> list[dict[str, str]]:
                 "message": "Unknown-tools mode is allow; unrecognized tools are not gated under taint (legacy fail-open).",
             }
         )
-    if rules_mod._llm_cron_context_enabled():
-        banners.append(
-            {
-                "id": "llm_cron_context",
-                "severity": "medium",
-                "message": "LLM cron context is on; cron jobs supply their own authorization evidence to the verifier (high-risk cron egress still requires manual approval).",
-            }
-        )
     if rules_mod._self_grants_present():
         # Doc 03 §3.3: a non-empty self.identities / self.hosts is a real send-to-self /
         # own-infra trust grant. Informational, so the grant is never invisible.

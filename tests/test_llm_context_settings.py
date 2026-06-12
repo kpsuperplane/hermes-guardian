@@ -89,7 +89,7 @@ def test_policy_snapshot_exposes_both_flags():
     snap = plugin._policy_snapshot()
     assert snap["llm_user_context"] is True
     assert snap["llm_cron_context"] is True
-    assert any(b["id"] == "llm_cron_context" for b in snap["risk_banners"])
+    assert not any(b["id"] == "llm_cron_context" for b in snap["risk_banners"])
 
 
 # --- slash command --------------------------------------------------------
