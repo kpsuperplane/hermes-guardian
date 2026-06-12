@@ -323,6 +323,22 @@ def test_tainted_final_response_to_cli_destination_is_allowed_without_sender_met
     assert out is None
 
 
+def test_tainted_final_response_to_cron_session_is_allowed():
+    plugin = load_plugin()
+    cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
+    plugin._taint_session(cron_session, {"communications"})
+
+    out = plugin._on_transform_llm_output("private summary", session_id=cron_session, platform="cron")
+
+    assert out is None
+    rows = plugin._activity_rows({"decision": "allowed"}, limit=1)
+    assert rows[0]["tool_name"] == "llm_output"
+    assert rows[0]["action_family"] == "final_response"
+    assert rows[0]["destination"] == "cron"
+    assert rows[0]["destination_trust"] == "self"
+    assert rows[0]["reason"] == "owner-configured cron final response"
+
+
 def test_privacy_off_and_allow_rules_do_not_bypass_security_module():
     plugin = load_plugin()
     save_privacy_config(

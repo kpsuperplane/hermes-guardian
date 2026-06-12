@@ -1037,6 +1037,20 @@ def _privacy_transform_llm_output(response_text: str = "", **kwargs: Any) -> str
             recipient_identity=recipient_identity,
         )
         return None
+    if approvals._is_cron_session_id(session_id):
+        _emit_egress_activity(
+            "allowed",
+            session_id=session_id,
+            tool_name="llm_output",
+            action_family="final_response",
+            destination=destination,
+            data_classes=classes,
+            reason="owner-configured cron final response",
+            purpose="unknown",
+            recipient_identity=recipient_identity,
+            destination_trust="self",
+        )
+        return None
     _emit_egress_activity(
         "blocked",
         session_id=session_id,
