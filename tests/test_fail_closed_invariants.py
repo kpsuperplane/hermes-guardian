@@ -281,6 +281,39 @@ def test_tainted_final_response_to_owner_private_destination_is_allowed():
     assert out is None
 
 
+def test_tainted_final_response_to_group_can_be_allowed_by_rule():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    save_privacy_config(
+        plugin,
+        rules=[
+            privacy_rule(
+                rule_id="allow_group_final",
+                action_family="final_response",
+                destination="discord:group",
+                data_classes=["communications"],
+            )
+        ],
+    )
+    plugin._taint_session("s1", {"communications"})
+
+    out = plugin._on_transform_llm_output(
+        "private summary",
+        session_id="s1",
+        platform="discord",
+        sender_id="owner",
+        chat_type="group",
+    )
+
+    assert out is None
+    rows = plugin._activity_rows({"decision": "allowed"}, limit=1)
+    assert rows[0]["tool_name"] == "llm_output"
+    assert rows[0]["action_family"] == "final_response"
+    assert rows[0]["destination"] == "discord:group"
+    assert rows[0]["reason"] == "matched allow rule"
+    assert rows[0]["rule_id"] == "allow_group_final"
+
+
 def test_tainted_final_response_to_matching_sender_without_private_chat_metadata_is_suppressed():
     plugin = load_plugin()
     bind_owner(plugin)
@@ -337,6 +370,35 @@ def test_tainted_final_response_to_cron_session_is_allowed():
     assert rows[0]["destination"] == "cron"
     assert rows[0]["destination_trust"] == "self"
     assert rows[0]["reason"] == "owner-configured cron final response"
+
+
+def test_tainted_final_response_to_cron_session_can_be_denied_by_rule():
+    plugin = load_plugin()
+    cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
+    save_privacy_config(
+        plugin,
+        rules=[
+            privacy_rule(
+                rule_id="deny_cron_final",
+                effect="deny",
+                action_family="final_response",
+                destination="cron",
+                data_classes=["communications"],
+            )
+        ],
+    )
+    plugin._taint_session(cron_session, {"communications"})
+
+    out = plugin._on_transform_llm_output("private summary", session_id=cron_session, platform="cron")
+
+    assert out is not None
+    assert "suppressed" in out.lower()
+    rows = plugin._activity_rows({"decision": "blocked"}, limit=1)
+    assert rows[0]["tool_name"] == "llm_output"
+    assert rows[0]["action_family"] == "final_response"
+    assert rows[0]["destination"] == "cron"
+    assert rows[0]["reason"] == "matched deny rule"
+    assert rows[0]["rule_id"] == "deny_cron_final"
 
 
 def test_privacy_off_and_allow_rules_do_not_bypass_security_module():

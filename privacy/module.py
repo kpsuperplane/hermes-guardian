@@ -1001,6 +1001,28 @@ def _final_destination_is_owner_private(
     return False
 
 
+def _final_response_shape(
+    *,
+    session_id: str,
+    destination: str,
+    data_classes: set[str],
+    recipient_identity: str,
+) -> dict[str, Any]:
+    return llm._approval_shape(
+        session_id=session_id,
+        tool_name="llm_output",
+        action_family="final_response",
+        destination=destination,
+        purpose="unknown",
+        recipient_identity=recipient_identity,
+        legacy_destination=destination,
+        data_classes=data_classes,
+        args={},
+        destination_trust="unknown",
+        decision_step="",
+    )
+
+
 def _privacy_transform_llm_output(response_text: str = "", **kwargs: Any) -> str | None:
     session_id = str(kwargs.get("session_id") or "")
     if not tool_policy._session_taint(session_id):
@@ -1019,6 +1041,19 @@ def _privacy_transform_llm_output(response_text: str = "", **kwargs: Any) -> str
         recipient=recipient,
         chat_type=chat_type,
     )
+    shape = _final_response_shape(
+        session_id=session_id,
+        destination=destination,
+        data_classes=classes,
+        recipient_identity=recipient_identity,
+    )
+    source = rules._approval_source(shape)
+    if source:
+        if source.get("effect") == "deny":
+            _block_for_privacy_rule(shape, "llm_output", source)
+            return "[hermes-guardian suppressed a tainted final response to this destination.]"
+        _allow_approved_tool_call(shape, source, "llm_output", {})
+        return None
     if _final_destination_is_owner_private(
         session_id=session_id,
         platform=platform,

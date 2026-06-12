@@ -71,9 +71,10 @@ The attacker’s objective is unauthorized disclosure or unauthorized action. Th
 - File uploads.
 - MCP tool calls.
 - Shell or code execution.
-- Final responses delivered through gateways or shared channels. Owner-configured
-  cron final output is treated as owner-authorized; the actions the cron run takes
-  before that output remain ordinary mediated egress.
+- Final responses delivered through gateways or shared channels, unless an explicit
+  `final_response` privacy rule allows the flow. Owner-configured cron final output
+  is treated as owner-authorized; the actions the cron run takes before that output
+  remain ordinary mediated egress.
 
 ### Trusted components
 
