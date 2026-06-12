@@ -126,11 +126,16 @@ def _security_transform_tool_result(
     inbound_allowed = core._security._INBOUND_ALLOWED_CREDENTIAL_REASONS
     if is_reference_read:
         # Provably-reference reads (skill docs, skills-tree files) carry benign URLs whose
-        # paths match security terms; suppressing the whole doc is a false positive. Skip
-        # "sensitive link" here only — egress surfaces still scan it. A generic MCP doc-read of
-        # unknown provenance does NOT get this skip (conservative until declared; see
-        # tool_policy._is_reference_read). See _DOC_READ_INBOUND_ALLOWED_REASONS.
-        inbound_allowed = inbound_allowed | core._security._DOC_READ_INBOUND_ALLOWED_REASONS
+        # paths match security terms and prose that names account-security concepts; suppressing
+        # the whole doc is a false positive. Skip those read-time phrase/link reasons here only
+        # — egress surfaces still scan them. A generic MCP doc-read of unknown provenance does
+        # NOT get this skip (conservative until declared; see tool_policy._is_reference_read).
+        # Hard secrets, redaction markers, and concrete auth-code shapes still suppress.
+        inbound_allowed = (
+            inbound_allowed
+            | core._security._DOC_READ_INBOUND_ALLOWED_REASONS
+            | core._security._SECURITY_SENSITIVE_REASONS
+        )
     if tool_name == "web_extract":
         # Full-page web reads routinely embed login-form boilerplate ("Forgot your
         # password?", "Sign in", "Register for an account", ...) that trips the

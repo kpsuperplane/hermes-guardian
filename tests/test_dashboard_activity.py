@@ -35,7 +35,7 @@ def test_security_suppressed_tool_result_renders_as_read_activity():
 
     suppressed = plugin._on_transform_tool_result(
         tool_name="skill_view",
-        result="Security alert: new sign-in detected",
+        result="Your verification code is 123456",
         session_id="s1",
     )
     assert suppressed is not None

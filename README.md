@@ -496,7 +496,8 @@ surface their own tokens, and stripping them at read-time breaks the integration
 without preventing any leak — the token is still blocked if the agent later tries
 to send it anywhere. Hard secrets (private keys, AWS access keys, and
 `*_PASSWORD=` / `*_PRIVATE_KEY=` assignments) stay suppressed even inbound, as
-does all `account_security_content` (OTPs, reset/recovery, magic links).
+do concrete `account_security_content` shapes such as OTPs and reset/recovery
+links.
 
 Secret-assignment matching targets hardcoded literal values assigned to
 secret-named variables. Variables that merely *reference* a secret (names
@@ -513,6 +514,13 @@ genuine reset/magic link still surfaces via the `sensitive_links` reason, hard
 credentials still surface via `credential_content`, and every egress surface
 still scans at full strictness — this only relaxes read-time phrase matching on
 fetched pages.
+
+The same read-time phrase relaxation applies to provably-reference material
+(`skill_view` and reads under the operator-installed skills tree): skill docs can
+legitimately discuss password resets, magic links, verification, or security
+alerts as concepts. Concrete auth-code shapes, sensitive links, redaction
+markers, and hard credentials still suppress, and undeclared MCP document reads
+do not receive this provenance-based relaxation.
 
 Disabling a security rule weakens non-approvable hardening. Privacy checks still
 apply to classified private egress, but the disabled security category no

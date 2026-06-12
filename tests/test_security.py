@@ -64,6 +64,26 @@ def test_doc_read_tools_do_not_suppress_code_documentation():
     assert notion_result is None
 
 
+def test_reference_reads_do_not_suppress_account_security_reference_prose():
+    plugin = load_plugin()
+
+    skill_doc = (
+        "# Account Protection Skill\n"
+        "Use this skill to summarize password reset, magic link, and security alert "
+        "handling in reference documentation.\n"
+    )
+    assert plugin._on_transform_tool_result(tool_name="skill_view", result=skill_doc) is None
+
+    # The carve-out is provenance-scoped. The same prose from an undeclared MCP read is still
+    # suppressed until the operator declares that source as reference material.
+    suppressed = plugin._on_transform_tool_result(
+        tool_name="mcp_docs_read_resource",
+        result=json.dumps({"content": skill_doc}),
+    )
+    assert suppressed is not None
+    assert parse_json(suppressed)["content"]["security_sensitive_filter"]["reason"] == "password reset"
+
+
 def test_doc_read_tools_do_not_suppress_benign_sensitive_link_urls():
     plugin = load_plugin()
 
@@ -88,7 +108,7 @@ def test_doc_read_tools_do_not_suppress_benign_sensitive_link_urls():
     assert suppressed is not None
     assert parse_json(suppressed)["content"]["security_sensitive_filter"]["reason"] == "sensitive link"
 
-    # The carve-out is narrow: account-security content and hard secrets in a doc are STILL
+    # The carve-out is narrow: concrete auth codes and hard secrets in a doc are STILL
     # suppressed, and a non-doc inbound read (e.g. email) still suppresses sensitive links.
     assert plugin._on_transform_tool_result(
         tool_name="skill_view", result="Your verification code is 123456"

@@ -110,11 +110,12 @@ _INBOUND_ALLOWED_CREDENTIAL_REASONS = frozenset({
 # ``/confirm``, OAuth 2FA settings pages, ...). A URL in such a doc is not a leak — and the
 # ``sensitive_links`` rule suppressing the whole doc breaks the agent's ability to use the
 # skill. So on the inbound read path ONLY, reference reads skip the "sensitive link" reason
-# (see _DOC_READ_INBOUND_ALLOWED_REASONS). The reference verdict is *provenance*-based and is
-# computed by privacy/tool_policy._is_reference_read (the only place with the call's args) and
-# passed into _security_transform_tool_result — a generic MCP doc-read of unknown provenance
-# does NOT qualify. Account-security content and hard secrets are deliberately NOT skipped and
-# stay suppressed even in docs; every egress surface still scans sensitive links at full strictness.
+# (see _DOC_READ_INBOUND_ALLOWED_REASONS) plus account-security phrase categories added by the
+# caller. The reference verdict is *provenance*-based and is computed by
+# privacy/tool_policy._is_reference_read (the only place with the call's args) and passed into
+# _security_transform_tool_result — a generic MCP doc-read of unknown provenance does NOT
+# qualify. Concrete auth-code shapes, redaction markers, and hard secrets stay suppressed even
+# in docs; every egress surface still scans at full strictness.
 _DOC_READ_INBOUND_ALLOWED_REASONS = frozenset({"sensitive link"})
 
 
