@@ -1,5 +1,6 @@
 import { React, useEffect } from "@/sdk";
 import { Button } from "@/components/Button";
+import { IconButton } from "@/components/IconButton";
 import { Mono } from "@/components/Mono";
 import { text } from "@/lib/format";
 import type {
@@ -151,15 +152,20 @@ function ToolClassification(props: {
                     </div>
                   </div>
                   <div className="hermes-guardian-actions">
-                    <Button variant="secondary" onClick={() => props.onEditOverride(override)}>
-                      Edit
-                    </Button>
+                    <IconButton
+                      icon="edit"
+                      label={"Edit tool override " + text(override.match)}
+                      onClick={() => props.onEditOverride(override)}
+                    />
                     <Button variant="secondary" onClick={() => props.onToggleOverride(override)}>
                       {disabled ? "Enable" : "Disable"}
                     </Button>
-                    <Button variant="danger" onClick={() => props.onDeleteOverride(override)}>
-                      Delete
-                    </Button>
+                    <IconButton
+                      icon="trash"
+                      variant="danger"
+                      label={"Delete tool override " + text(override.match)}
+                      onClick={() => props.onDeleteOverride(override)}
+                    />
                   </div>
                 </div>
                 {override.taints && override.taints.length ? (

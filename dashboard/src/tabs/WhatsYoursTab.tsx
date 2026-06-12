@@ -2,6 +2,7 @@ import { React, useState } from "@/sdk";
 import { Button } from "@/components/Button";
 import { CheckDestination } from "@/components/CheckDestination";
 import { Field } from "@/components/Field";
+import { IconButton } from "@/components/IconButton";
 import { Mono } from "@/components/Mono";
 import { TrustPill } from "@/components/TrustPill";
 import { text } from "@/lib/format";
@@ -191,9 +192,7 @@ function AddSelfItemModal(props: {
               Declare a store, identity, or host that should resolve as yours.
             </div>
           </div>
-          <Button variant="secondary" onClick={props.onCancel}>
-            Close
-          </Button>
+          <IconButton icon="x" label="Close add item dialog" onClick={props.onCancel} />
         </div>
         <div className="hermes-guardian-modal-body">
           <div className="hermes-guardian-radio-row">
@@ -282,13 +281,12 @@ function SelfTile(props: {
       <div className="hermes-guardian-seen-tile-dest">
         <Mono>{props.value}</Mono>
       </div>
-      <Button
-        variant="secondary"
+      <IconButton
+        icon="trash"
+        label={"Remove " + props.value}
         disabled={props.disabled}
         onClick={() => props.onRemove(props.kind, props.value)}
-      >
-        Remove
-      </Button>
+      />
     </div>
   );
 }

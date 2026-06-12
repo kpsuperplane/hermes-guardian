@@ -1,6 +1,7 @@
 import { React, useState } from "@/sdk";
 import { sharingImpact } from "@/api/client";
 import { Button } from "@/components/Button";
+import { IconButton } from "@/components/IconButton";
 import { Mono } from "@/components/Mono";
 import { PreviewSend } from "@/components/PreviewSend";
 import { TrustPill } from "@/components/TrustPill";
@@ -90,13 +91,12 @@ function TrustedDestinations(props: { controller: DestinationsController }) {
                 {entry.note ? (
                   <div className="hermes-guardian-sharing-tile-meta">{entry.note}</div>
                 ) : null}
-                <Button
-                  variant="secondary"
+                <IconButton
+                  icon="trash"
+                  label={"Remove trusted destination " + value}
                   disabled={busy}
                   onClick={() => removeTrusted(kind, value)}
-                >
-                  Remove
-                </Button>
+                />
               </div>
             );
           })}
@@ -119,65 +119,6 @@ function TrustedDestinations(props: { controller: DestinationsController }) {
         />
       ) : null}
     </div>
-  );
-}
-
-type RuleIconName = "left" | "right" | "eye" | "edit" | "power" | "trash";
-
-function RuleIcon({ name }: { name: RuleIconName }) {
-  const common = {
-    fill: "none",
-    stroke: "currentColor",
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-    strokeWidth: 2,
-  };
-  if (name === "left") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24" className="hermes-guardian-rule-icon">
-        <path {...common} d="M15 18l-6-6 6-6" />
-      </svg>
-    );
-  }
-  if (name === "right") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24" className="hermes-guardian-rule-icon">
-        <path {...common} d="M9 6l6 6-6 6" />
-      </svg>
-    );
-  }
-  if (name === "eye") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24" className="hermes-guardian-rule-icon">
-        <path {...common} d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
-        <circle {...common} cx="12" cy="12" r="2.5" />
-      </svg>
-    );
-  }
-  if (name === "edit") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24" className="hermes-guardian-rule-icon">
-        <path {...common} d="M4 20h4l11-11-4-4L4 16v4z" />
-        <path {...common} d="M13 7l4 4" />
-      </svg>
-    );
-  }
-  if (name === "power") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24" className="hermes-guardian-rule-icon">
-        <path {...common} d="M12 3v8" />
-        <path {...common} d="M7 6.5a8 8 0 1 0 10 0" />
-      </svg>
-    );
-  }
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className="hermes-guardian-rule-icon">
-      <path {...common} d="M4 7h16" />
-      <path {...common} d="M10 11v6" />
-      <path {...common} d="M14 11v6" />
-      <path {...common} d="M6 7l1 14h10l1-14" />
-      <path {...common} d="M9 7V4h6v3" />
-    </svg>
   );
 }
 
@@ -236,24 +177,18 @@ function RuleCard(props: {
           {expiry ? <span className="hermes-guardian-pill">{expiry}</span> : null}
         </div>
         <div className="hermes-guardian-rule-move-actions">
-          <Button
-            variant="secondary"
+          <IconButton
+            icon="chevron-left"
             disabled={index === 0}
-            title="Move rule left"
-            aria-label={"Move rule " + (index + 1) + " left"}
+            label={"Move rule " + (index + 1) + " left"}
             onClick={() => onMoveRule(rule, "up")}
-          >
-            <RuleIcon name="left" />
-          </Button>
-          <Button
-            variant="secondary"
+          />
+          <IconButton
+            icon="chevron-right"
             disabled={index === total - 1}
-            title="Move rule right"
-            aria-label={"Move rule " + (index + 1) + " right"}
+            label={"Move rule " + (index + 1) + " right"}
             onClick={() => onMoveRule(rule, "down")}
-          >
-            <RuleIcon name="right" />
-          </Button>
+          />
         </div>
       </div>
       <div className="hermes-guardian-rule-head hermes-guardian-rule-tile-head">
@@ -281,39 +216,32 @@ function RuleCard(props: {
         ))}
       </div>
       <div className="hermes-guardian-actions hermes-guardian-rule-tile-actions">
-        <Button
-          variant="secondary"
+        <IconButton
+          icon="eye"
           disabled={impactBusy}
-          title="Preview impact"
-          aria-label={"Preview impact for rule " + (index + 1)}
+          label={"Preview impact for rule " + (index + 1)}
           onClick={previewImpact}
-        >
-          <RuleIcon name="eye" />
-        </Button>
-        <Button
-          variant="secondary"
-          title="Edit rule"
-          aria-label={"Edit rule " + (index + 1)}
+        />
+        <IconButton
+          icon="edit"
+          label={"Edit rule " + (index + 1)}
           onClick={() => onEditRule(rule)}
-        >
-          <RuleIcon name="edit" />
-        </Button>
+        />
         <Button
           variant="secondary"
           title={rule.enabled === false ? "Enable rule" : "Disable rule"}
           aria-label={(rule.enabled === false ? "Enable" : "Disable") + " rule " + (index + 1)}
+          className="hermes-guardian-rule-toggle-button"
           onClick={() => onPatchRule(ruleId, { enabled: !rule.enabled })}
         >
-          <RuleIcon name="power" />
+          {rule.enabled === false ? "Enable" : "Disable"}
         </Button>
-        <Button
+        <IconButton
+          icon="trash"
           variant="danger"
-          title="Delete rule"
-          aria-label={"Delete rule " + (index + 1)}
+          label={"Delete rule " + (index + 1)}
           onClick={() => onDeleteRule(ruleId)}
-        >
-          <RuleIcon name="trash" />
-        </Button>
+        />
       </div>
       {impact ? (
         <div className="hermes-guardian-muted hermes-guardian-rule-impact-summary">
@@ -383,9 +311,12 @@ function OutwardSharing(props: { controller: DestinationsController }) {
             {sharingExtra.map((item) => (
               <li key={item} className="hermes-guardian-dest-item">
                 <Mono>{item}</Mono>
-                <Button variant="secondary" disabled={busy} onClick={() => removeSharing(item)}>
-                  Remove
-                </Button>
+                <IconButton
+                  icon="trash"
+                  label={"Remove sharing action " + item}
+                  disabled={busy}
+                  onClick={() => removeSharing(item)}
+                />
               </li>
             ))}
           </ul>

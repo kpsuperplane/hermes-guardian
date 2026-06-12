@@ -1,6 +1,7 @@
 import { React } from "@/sdk";
 import { Button } from "@/components/Button";
 import { Field } from "@/components/Field";
+import { IconButton } from "@/components/IconButton";
 import { ImpactPreview } from "@/components/ImpactPreview";
 import { ACTIONS } from "@/constants";
 import type { CronJob, Policy, RuleForm } from "@/types";
@@ -83,9 +84,7 @@ export function RuleModal({
               {form.id ? form.id : "Create a privacy allow or deny rule"}
             </div>
           </div>
-          <Button variant="secondary" onClick={onCancel}>
-            Close
-          </Button>
+          <IconButton icon="x" label="Close rule dialog" onClick={onCancel} />
         </div>
         <div className="hermes-guardian-modal-body">
           <datalist id="hermes-guardian-destination-options">

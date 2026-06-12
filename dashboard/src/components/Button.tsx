@@ -6,7 +6,7 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   variant?: ButtonVariant;
 }
 
-export function Button({ variant, type, children, ...rest }: ButtonProps) {
+export function Button({ variant, type, children, className, ...rest }: ButtonProps) {
   const cls =
     variant === "danger"
       ? "hermes-guardian-danger"
@@ -14,7 +14,7 @@ export function Button({ variant, type, children, ...rest }: ButtonProps) {
         ? "hermes-guardian-secondary"
         : "hermes-guardian-button";
   return (
-    <button {...rest} className={cls} type={type || "button"}>
+    <button {...rest} className={className ? cls + " " + className : cls} type={type || "button"}>
       {children}
     </button>
   );

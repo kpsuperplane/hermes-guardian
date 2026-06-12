@@ -63,8 +63,8 @@
   word-break: break-all;
 }
 
-.hermes-guardian-seen-tile .hermes-guardian-secondary,
-.hermes-guardian-seen-tile .hermes-guardian-button {
+.hermes-guardian-seen-tile .hermes-guardian-secondary:not(.hermes-guardian-icon-button),
+.hermes-guardian-seen-tile .hermes-guardian-button:not(.hermes-guardian-icon-button) {
   width: 100%;
 }
 

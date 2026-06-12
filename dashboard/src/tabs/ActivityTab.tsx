@@ -1,6 +1,7 @@
 import { React, useState } from "@/sdk";
 import { Button } from "@/components/Button";
 import { DecisionStep } from "@/components/DecisionStep";
+import { IconButton } from "@/components/IconButton";
 import { TrustPill } from "@/components/TrustPill";
 import { HISTORY_PAGE_SIZES } from "@/constants";
 import { activityTimeNoYearText, classesText, latencyText, text, timeText } from "@/lib/format";
@@ -155,9 +156,11 @@ function ApprovalCard(props: {
               </optgroup>
             ))}
           </select>
-          <Button variant="secondary" onClick={() => onAction(approval, { kind: "dismiss" })}>
-            Dismiss
-          </Button>
+          <IconButton
+            icon="x"
+            label={"Dismiss pending approval " + text(approval.id)}
+            onClick={() => onAction(approval, { kind: "dismiss" })}
+          />
         </div>
       </div>
       <div className="hermes-guardian-block-meta">
@@ -430,20 +433,18 @@ export function ActivityTab(props: ActivityTabProps) {
                 </option>
               ))}
             </select>
-            <Button
-              variant="secondary"
+            <IconButton
+              icon="chevron-left"
+              label="Previous history page"
               disabled={loading || currentPage <= 0}
               onClick={() => setPage(Math.max(0, currentPage - 1))}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="secondary"
+            />
+            <IconButton
+              icon="chevron-right"
+              label="Next history page"
               disabled={loading || currentPage >= totalPages - 1}
               onClick={() => setPage(currentPage + 1)}
-            >
-              Next
-            </Button>
+            />
           </div>
         ) : null}
       </div>

@@ -1,6 +1,7 @@
 import { React, useEffect, useState } from "@/sdk";
 import { Button } from "@/components/Button";
 import { Field } from "@/components/Field";
+import { IconButton } from "@/components/IconButton";
 import type { DestinationsController } from "@/hooks/useDestinations";
 
 type TrustedDestinationKind = "identity" | "command";
@@ -67,9 +68,7 @@ export function TrustedDestinationModal({ controller, onCancel }: TrustedDestina
               Trust either a recipient or a command, scoped to the data classes you set.
             </div>
           </div>
-          <Button variant="secondary" onClick={onCancel}>
-            Close
-          </Button>
+          <IconButton icon="x" label="Close trusted destination dialog" onClick={onCancel} />
         </div>
         <div className="hermes-guardian-modal-body">
           <div className="hermes-guardian-radio-row">

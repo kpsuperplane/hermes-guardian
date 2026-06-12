@@ -1,6 +1,7 @@
 import { React } from "@/sdk";
 import { Button } from "@/components/Button";
 import { Field } from "@/components/Field";
+import { IconButton } from "@/components/IconButton";
 import { DEFAULT_PRIVACY_CLASSES, TOOL_EGRESS_OPTIONS } from "@/constants";
 import { text } from "@/lib/format";
 import type { OverrideForm, Policy } from "@/types";
@@ -60,9 +61,7 @@ export function OverrideModal({
               {form.isEdit ? text(form.match) : "Tell Guardian how to treat a specific tool"}
             </div>
           </div>
-          <Button variant="secondary" onClick={onCancel}>
-            Close
-          </Button>
+          <IconButton icon="x" label="Close tool override dialog" onClick={onCancel} />
         </div>
         <div className="hermes-guardian-modal-body">
           <datalist id="hermes-guardian-override-match-options">

@@ -1,5 +1,5 @@
 import { React, useEffect, useState } from "@/sdk";
-import { Button } from "@/components/Button";
+import { IconButton } from "@/components/IconButton";
 import { OverrideModal } from "@/components/OverrideModal";
 import { RiskBanners } from "@/components/RiskBanners";
 import { RuleModal } from "@/components/RuleModal";
@@ -129,9 +129,7 @@ export function GuardianPage() {
           </div>
         </div>
         <div className="hermes-guardian-actions">
-          <Button variant="secondary" onClick={refreshActive}>
-            Refresh
-          </Button>
+          <IconButton icon="refresh" label="Refresh dashboard" onClick={refreshActive} />
         </div>
       </div>
       {error ? <div className="hermes-guardian-banner">{error}</div> : null}
