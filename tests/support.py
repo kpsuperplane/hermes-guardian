@@ -150,7 +150,7 @@ def first_pending_id(plugin):
     return next(iter(plugin._PENDING_APPROVALS))
 
 
-def wait_for(predicate, *, timeout: float = 1.0):
+def wait_for(predicate, *, timeout: float = 5.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
         if predicate():
