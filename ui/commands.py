@@ -212,8 +212,6 @@ def _guardian_history_command(
     lines = [f"🛡️ **{title}** · newest first · {len(turn_keys)} turn{'s' if len(turn_keys) != 1 else ''}"]
     for key in turn_keys:
         turn_rows = groups[key]
-        first = turn_rows[0]
-        when = dashboard_mod._activity_time_text(first)
         n = len(turn_rows)
         prompt = ""
         for candidate in turn_rows:
@@ -223,13 +221,14 @@ def _guardian_history_command(
                 break
         is_cron = any(str(r.get("session_label") or "").startswith("cron_") for r in turn_rows)
         label = "⏲️" if is_cron else "👤"
-        total_latency = sum(max(0, int(r.get("latency_us") or 0)) for r in turn_rows)
-        total_latency_label = _latency_label(total_latency / 1000.0)
         lines.append("")
-        total_suffix = f" · total {total_latency_label}" if total_latency_label else ""
-        lines.append(f"{label} · {when} · {n} check{'s' if n != 1 else ''}{total_suffix}")
+        header_parts = [label]
         if prompt:
-            lines.append(f"> {dashboard_mod._clip_text(prompt, 200, ellipsis='...', fallback='')}")
+            header_parts.append(dashboard_mod._clip_text(prompt, 120, ellipsis="...", fallback=""))
+        if n > 1:
+            header_parts.append(f"{n} checks")
+        if is_cron or prompt or n > 1:
+            lines.append(" · ".join(part for part in header_parts if part))
         for check in turn_rows[:_MAX_CHECKS_PER_TURN]:
             decision = str(check.get("decision") or "").strip()
             icon = dashboard_mod._activity_status_icon(decision)
@@ -237,15 +236,16 @@ def _guardian_history_command(
             # whose reason names the verifier).
             if decision == "auto_approved" or "llm" in str(check.get("reason") or "").lower():
                 icon = icon + "🤖"
-            tool = dashboard_mod._clip_text(dashboard_mod._activity_display_tool(check), 60, ellipsis="...", fallback="n/a")
-            taints = dashboard_mod._activity_taints_text(check, code=True)
+            tool = dashboard_mod._clip_text(dashboard_mod._activity_display_tool(check), 48, ellipsis="...", fallback="n/a")
+            classes = _compact_activity_classes(check)
             latency_label = _latency_label(check.get("latency_ms"))
-            latency_suffix = f" · latency {latency_label}" if latency_label else ""
-            lines.append(f"↳ {icon} `{tool}` · {taints}{latency_suffix}")
-            action_detail = dashboard_mod._clip_text(check.get("action_detail") or "", 200, ellipsis="...", fallback="")
-            if action_detail:
-                lines.append(f"   Action: `{action_detail}`")
-            reason_text = dashboard_mod._activity_reason_line_text(check)
+            check_parts = [f"↳ {icon} {tool}"]
+            if classes:
+                check_parts.append(classes)
+            if latency_label:
+                check_parts.append(latency_label)
+            lines.append(" · ".join(check_parts))
+            reason_text = _compact_activity_reason_line(check)
             if reason_text:
                 lines.append(f"   {reason_text}")
         if n > _MAX_CHECKS_PER_TURN:
@@ -267,6 +267,43 @@ def _latency_label(milliseconds: Any) -> str:
     if value < 10000:
         return f"{value / 1000:.1f} s"
     return f"{round(value / 1000)} s"
+
+
+def _compact_activity_classes(row: dict[str, Any]) -> str:
+    classes = [
+        cls.strip()
+        for cls in str(row.get("data_classes") or "").split(",")
+        if cls.strip() and cls.strip().lower() not in {"none", "n/a"}
+    ]
+    if not classes:
+        return ""
+    return dashboard_mod._clip_text(", ".join(classes), 80, ellipsis="...", fallback="")
+
+
+def _compact_activity_status(decision: str) -> str:
+    text = str(decision or "").strip().lower().replace("_", " ")
+    if text in {"security blocked", "security suppressed"}:
+        return "security"
+    if text in {"mode off allowed", "privacy off allowed"}:
+        return "allowed"
+    if text in {"auto approved", "manual approved"}:
+        return "approved"
+    if text == "denied":
+        return "dismissed"
+    return text
+
+
+def _compact_activity_reason_line(row: dict[str, Any]) -> str:
+    decision = str(row.get("decision") or "").strip()
+    if decision == "tainted":
+        return ""
+    reason = dashboard_mod._clip_text(dashboard_mod._activity_display_reason(row), 90, ellipsis="...", fallback="")
+    if not reason:
+        return ""
+    marker = dashboard_mod._clip_text(activity_rows._activity_marker(row), 40, ellipsis="...", fallback="")
+    suffix = f" ({marker})" if marker else ""
+    status = _compact_activity_status(decision)
+    return f"{status} · {reason}{suffix}" if status else f"{reason}{suffix}"
 
 
 def _parse_key_value_args(tokens: list[str], *, allowed_keys: set[str] | None = None) -> tuple[dict[str, str], list[str]]:

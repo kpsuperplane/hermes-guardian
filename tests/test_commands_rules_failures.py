@@ -241,12 +241,12 @@ def test_guardian_failures_command_lists_only_failed_command_activity():
     # All on one session -> one turn with the 3 failed checks nested under it.
     assert "🛡️ **Guardian failures** · newest first · 1 turn" in response
     assert "3 checks" in response
-    assert "↳ ❌ `terminal`" in response
-    assert "Blocked: auth code" in response
-    assert "↳ ❌ `browser_type`" in response
-    assert "Dismissed: requires approval" in response
-    assert "↳ ❌ `send_message`" in response
-    assert "Blocked: requires approval (`peg_test`)" in response
+    assert "↳ ❌ terminal" in response
+    assert "security · auth code" in response
+    assert "↳ ❌ browser_type · contacts" in response
+    assert "dismissed · requires approval" in response
+    assert "↳ ❌ send_message · communications" in response
+    assert "blocked · requires approval (peg_test)" in response
     assert "no private data in scope" not in response  # the allowed terminal is filtered out
     assert "gmail" not in response
 
@@ -280,7 +280,7 @@ def test_guardian_failures_command_alias_empty_and_limit_handling():
 
     # Two failed checks on distinct sessions -> two turns; limit clamps to 1 turn.
     assert "🛡️ **Guardian failures** · newest first · 1 turn" in response
-    assert response.count("↳ ❌ `") == 1
+    assert response.count("↳ ❌ ") == 1
 
 
 def test_guardian_history_command_clarifies_legacy_private_source_reason():
@@ -296,9 +296,9 @@ def test_guardian_history_command_clarifies_legacy_private_source_reason():
 
     response = plugin._handle_guardian_command("activity")
 
-    assert "↳ 🏷️ `mcp_gmail_search`" in response
+    assert "↳ 🏷️ mcp_gmail_search · communications" in response
     assert "`mcp_gmail_search` -> `n/a`" not in response
-    assert "🏷️ `communications`" in response
+    assert "communications" in response
     assert "Read/result allowed" not in response
     assert "future outbound approval checks" not in response
     assert "private source result" not in response
@@ -318,11 +318,11 @@ def test_guardian_history_labels_terminal_taint_as_result():
 
     response = plugin._handle_guardian_command("activity")
 
-    assert "↳ 🏷️ `terminal result`" in response
-    assert "↳ 🏷️ `terminal` ·" not in response  # labeled "terminal result", not bare "terminal"
+    assert "↳ 🏷️ terminal result · local_system" in response
+    assert "↳ 🏷️ terminal ·" not in response  # labeled "terminal result", not bare "terminal"
 
 
-def test_guardian_history_command_uses_configured_timezone(monkeypatch):
+def test_guardian_history_compact_output_omits_timestamp_and_empty_taints(monkeypatch):
     plugin = load_plugin()
     monkeypatch.setenv("HERMES_GUARDIAN_HISTORY_TIMEZONE", "America/Los_Angeles")
     monkeypatch.setattr(plugin.state, "_now", lambda: 1780775049)
@@ -337,5 +337,7 @@ def test_guardian_history_command_uses_configured_timezone(monkeypatch):
 
     response = plugin._handle_guardian_command("activity")
 
-    assert "Jun 6, 2026 12:44 PM PDT" in response
-    assert "🏷️ No taints" in response
+    assert "Jun 6, 2026 12:44 PM PDT" not in response
+    assert "No taints" not in response
+    assert "↳ ✅ mcp_notion_update_page" in response
+    assert "allowed · matched allow rule" in response
