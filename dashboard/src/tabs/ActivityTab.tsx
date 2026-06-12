@@ -201,6 +201,7 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
     text(row.direction) ||
     (text(row.decision) === "read" || text(row.decision) === "tainted" ? "read" : "write");
   const action = text(row.action_family, direction === "read" ? "read" : "n/a");
+  const route = direction === "read" && !text(row.destination) ? action : action + " -> " + destination;
   const latency = latencyText(row.latency_ms);
   const isRead = direction === "read";
   // data_classes can arrive as an array or a delimiter-joined string; one chip per taint.
@@ -248,7 +249,7 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
         <span className="hermes-guardian-check-target">
           <span className="hermes-guardian-check-tool">{tool}</span>
           <span className="hermes-guardian-check-route hermes-guardian-muted">
-            {action + " -> " + destination}
+            {route}
           </span>
         </span>
         <span className="hermes-guardian-check-decision" title={text(row.decision)}>
