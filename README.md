@@ -783,12 +783,6 @@ sit on top as the everyday commands.
 alias for `/guardian activity failures`. `/guardian sharing trusted` is an
 alias for `/guardian sharing destination`.
 
-Telegram gateway replies for read-oriented Guardian commands (`status`,
-`approvals`, bare `approve <id>`, `activity`, `why`, and the parent `mine`,
-`sharing`, `review`, and `protection` views) use Telegram rich-message-friendly
-Markdown tables, headings, task lists, and details blocks. Other platforms and
-direct local command calls keep the plain text output.
-
 For compact Guardian messages in Telegram, disable link previews in the Hermes
 Telegram gateway config:
 
@@ -992,13 +986,6 @@ Defaults:
 
 Notifications include safe metadata only: job name/id, action, destination,
 data classes, reason, and an approval command when available.
-
-For Telegram targets, Guardian first attempts a native rich-message notification
-with a metadata table, collapsible review details, and the copy-approval button.
-If the installed Telegram library or server does not support rich messages, or
-the rich parser rejects the message, Guardian falls back to the existing plain
-Telegram message. If a rich send fails in a way that may already have reached
-Telegram, Guardian suppresses the fallback to avoid duplicate cron alerts.
 
 ## Architecture
 
