@@ -675,7 +675,6 @@ _CORE_LOGIC_REQUIRED_SYMBOLS = (
     "_on_transform_llm_output",
     "_on_transform_tool_result",
     "_privacy_pre_tool_call",
-    "_privacy_transform_llm_output",
     "_security_pre_gateway_dispatch",
     "_security_pre_tool_call",
     "_security_transform_llm_output",

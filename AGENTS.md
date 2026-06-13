@@ -37,6 +37,9 @@ CI installs `requirements-dev.txt` and runs:
 python -m pytest -q
 ```
 
+If the local environment only exposes Python as `python3`, use
+`python3 -m pytest -q`.
+
 GitHub Actions runs the test suite on Python 3.11, 3.12, and 3.13. Optional
 runtime integrations may import FastAPI or Telegram libraries, but
 `dashboard/plugin_api.py` includes import-only fallbacks for tests without

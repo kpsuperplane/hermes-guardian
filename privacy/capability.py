@@ -143,7 +143,6 @@ _FAMILY_TO_DEST_KIND = {
     "delegate_task": "subagent",
     "tool_write": "opaque",
     "tool_unknown": "opaque",
-    "final_response": "messaging",
 }
 
 # Normalized action subtype per family (doc 02 §2). Outward-sharing subtypes
@@ -174,12 +173,11 @@ _FAMILY_TO_SUBTYPE = {
     "delegate_task": "delegate",
     "tool_write": "write",
     "tool_unknown": "write",
-    "final_response": "send",
 }
 
 # Families whose destination is a message recipient, not a store/host. For these the
 # resolver judges the recipient identity rather than the connector id (doc 01 §3.2).
-_MESSAGING_FAMILIES = frozenset({"message_send", "message_list", "final_response"})
+_MESSAGING_FAMILIES = frozenset({"message_send", "message_list"})
 
 # A compose-draft writes to the user's own draft store; it reaches no other party until
 # a separate send (doc 02 §7 "drafts/idempotent-self-writes now resolve to self"). The

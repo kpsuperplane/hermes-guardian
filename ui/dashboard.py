@@ -399,7 +399,7 @@ def _build_preview_capability(action_family: str, destination: str, classes: lis
     family = str(action_family or "").strip()
     kind, dest_id = _parse_destination_value(destination)
     # Messaging families resolve the recipient from the destination id.
-    is_messaging = family in {"message_send", "message_list", "final_response"} or kind in {
+    is_messaging = family in {"message_send", "message_list"} or kind in {
         "messaging",
         "message",
         "send",

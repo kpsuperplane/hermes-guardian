@@ -1059,6 +1059,9 @@ Run the full test suite:
 python -m pytest -q
 ```
 
+If your local environment only exposes Python as `python3`, use
+`python3 -m pytest -q`.
+
 Run focused suites while iterating:
 
 ```bash

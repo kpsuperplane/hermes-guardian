@@ -361,7 +361,7 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
     # resolver returns unknown.
     if re.search(r"\{\{.*\}\}|\$\{.*\}|<[^>]+>", raw_recipient):
         raw_recipient = ""
-    is_messaging = action_family in {"message_send", "message_list", "final_response"} or any(
+    is_messaging = action_family in {"message_send", "message_list"} or any(
         verb in action_family for verb in ("message", "send")
     )
     if is_messaging:
