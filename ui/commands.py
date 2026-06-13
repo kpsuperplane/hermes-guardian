@@ -209,7 +209,7 @@ def _guardian_history_command(
     turn_keys = order[:limit]
 
     _MAX_CHECKS_PER_TURN = 20
-    lines = [f"🛡️ **{title}** · newest first · {len(turn_keys)} turn{'s' if len(turn_keys) != 1 else ''}"]
+    lines = [f"🛡️ **{title}** — newest first — {len(turn_keys)} turn{'s' if len(turn_keys) != 1 else ''}"]
     for key in turn_keys:
         turn_rows = groups[key]
         n = len(turn_rows)
@@ -221,14 +221,13 @@ def _guardian_history_command(
                 break
         is_cron = any(str(r.get("session_label") or "").startswith("cron_") for r in turn_rows)
         label = "⏲️" if is_cron else "👤"
-        lines.append("")
         header_parts = [label]
         if prompt:
             header_parts.append(dashboard_mod._clip_text(prompt, 120, ellipsis="...", fallback=""))
         if n > 1:
             header_parts.append(f"{n} checks")
-        if is_cron or prompt or n > 1:
-            lines.append(" · ".join(part for part in header_parts if part))
+        header = " · ".join(part for part in header_parts if part) if (is_cron or prompt or n > 1) else label
+        lines.append(f"- **{header}**")
         for check in turn_rows[:_MAX_CHECKS_PER_TURN]:
             decision = str(check.get("decision") or "").strip()
             icon = dashboard_mod._activity_status_icon(decision)
@@ -239,17 +238,17 @@ def _guardian_history_command(
             tool = dashboard_mod._clip_text(dashboard_mod._activity_display_tool(check), 48, ellipsis="...", fallback="n/a")
             classes = _compact_activity_classes(check)
             latency_label = _latency_label(check.get("latency_ms"))
-            check_parts = [f"↳ {icon} {tool}"]
+            check_parts = [f"  - {icon} {_history_code(tool, fallback='n/a')}"]
             if classes:
-                check_parts.append(classes)
+                check_parts.append(_history_code(classes))
             if latency_label:
                 check_parts.append(latency_label)
             lines.append(" · ".join(check_parts))
             reason_text = _compact_activity_reason_line(check)
             if reason_text:
-                lines.append(f"   {reason_text}")
+                lines.append(f"    - {reason_text}")
         if n > _MAX_CHECKS_PER_TURN:
-            lines.append(f"↳ … +{n - _MAX_CHECKS_PER_TURN} more checks")
+            lines.append(f"  - +{n - _MAX_CHECKS_PER_TURN} more checks")
     return "\n".join(lines)
 
 
@@ -308,6 +307,11 @@ def _compact_activity_reason_line(row: dict[str, Any]) -> str:
     suffix = f" ({marker})" if marker else ""
     status = _compact_activity_status(decision)
     return f"{status} · {reason}{suffix}" if status else f"{reason}{suffix}"
+
+
+def _history_code(value: Any, *, fallback: str = "") -> str:
+    text = str(value or "").strip() or fallback
+    return "`" + text.replace("`", "'") + "`"
 
 
 def _parse_key_value_args(tokens: list[str], *, allowed_keys: set[str] | None = None) -> tuple[dict[str, str], list[str]]:

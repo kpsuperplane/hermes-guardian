@@ -585,7 +585,7 @@ def test_activity_presentation_helpers_keep_datatables_and_history_consistent(mo
     assert datatables_row["data_classes"] == "communications,contacts"
     assert datatables_row["reason_short"] == "Blocked: requires approval"
     assert "Jun 6, 2026 12:44 PM PDT" not in history
-    assert "↳ ❌ browser_type · communications, contacts" in history
+    assert "- ❌ `browser_type` · `communications, contacts`" in history
     assert "blocked · requires approval (amber-bridge-1234)" in history
 
 

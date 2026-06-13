@@ -303,9 +303,9 @@ def test_slash_activity_robot_prefix_marks_llm_involved_checks(monkeypatch):
     out = plugin._handle_guardian_command("activity 3")
     # Decisions render as emojis; the LLM-involved ones carry a 🤖 suffix, the
     # deterministic block does not.
-    assert "✅🤖 browser_type" in out
-    assert "❌🤖 send_message" in out
-    assert "❌ terminal" in out and "❌🤖 terminal" not in out
+    assert "✅🤖 `browser_type`" in out
+    assert "❌🤖 `send_message`" in out
+    assert "❌ `terminal`" in out and "❌🤖 `terminal`" not in out
 
 
 def test_cron_turns_flagged_and_use_clock_label():
@@ -319,7 +319,7 @@ def test_cron_turns_flagged_and_use_clock_label():
     assert turns and turns[0]["is_cron"] is True
     # The slash header uses the ⏲️ clock label for cron turns.
     out = plugin._handle_guardian_command("activity 5")
-    assert "\n⏲️\n" in out and "👤" not in out
+    assert "\n- **⏲️**\n" in out and "👤" not in out
 
 
 def _load_plugin_api():
