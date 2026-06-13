@@ -76,7 +76,6 @@ _SESSIONS: dict[str, dict[str, Any]] = {}
 _OWNER_SESSIONS: dict[str, set[str]] = {}
 _PENDING_APPROVALS: dict[str, dict[str, Any]] = {}
 _RECENT_COMMAND_OWNERS: dict[str, list[tuple[float, str]]] = {}
-_RECENT_COMMAND_CONTEXTS: dict[str, list[dict[str, Any]]] = {}
 # When True, a `/guardian` command that reaches the handler WITHOUT a gateway-recorded
 # owner is treated as the trusted local operator (the CLI owner). Default False: an
 # unrecorded command fails CLOSED (unauthenticated) instead of inheriting CLI-owner admin.

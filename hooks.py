@@ -230,12 +230,7 @@ def _on_pre_gateway_dispatch_impl(event: Any = None, **_: Any) -> dict[str, Any]
     text = getattr(event, "text", "")
     if isinstance(text, str) and text.strip().lower().startswith("/guardian"):
         raw_args = text.strip()[len("/guardian"):].strip()
-        approvals._remember_command_owner(
-            raw_args,
-            tool_policy._owner_hash_from_event(event),
-            platform=tool_policy._platform_from_event(event),
-            chat_type=tool_policy._chat_type_from_event(event),
-        )
+        approvals._remember_command_owner(raw_args, tool_policy._owner_hash_from_event(event))
         return None
     security_result = security_module._security_pre_gateway_dispatch(event)
     if security_result is None:
