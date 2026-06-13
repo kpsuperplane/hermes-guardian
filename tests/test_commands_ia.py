@@ -215,8 +215,9 @@ def test_bare_approve_shows_the_permit_menu_without_granting():  # doc 06 §7.1
 
     plugin._on_pre_gateway_dispatch(gateway_event(f"/guardian approve {approval_id}"))
     out = plugin._handle_guardian_command(f"approve {approval_id}")
-    # Bare `approve <id>` lists the ways to permit.
-    assert "Ways to permit" in out
+    # Bare `approve <id>` lists the ways to permit. Telegram gateway commands use
+    # the rich menu, while direct/local commands keep the plain menu.
+    assert "Permit Approval" in out
     assert f"/guardian approve {approval_id} 5m" in out
     assert f"/guardian approve {approval_id} forever" in out
     assert f"/guardian approve {approval_id} mine" in out  # this recipient is me

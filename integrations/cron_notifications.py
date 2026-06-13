@@ -16,6 +16,11 @@ from ..privacy import tool_policy
 
 
 _CRON_SESSION_RE = re.compile(r"^cron_([0-9a-f]{12})_\d{8}_\d{6}$", re.I)
+_TELEGRAM_RICH_TEXT_LIMIT = 32768
+
+
+class _TelegramRichSendUncertain(Exception):
+    """Raised when a rich Telegram send may have reached Telegram."""
 
 
 def _cron_job_id_from_session(session_id: str | None) -> str:
@@ -146,6 +151,64 @@ def _cron_notification_message(
     return "\n".join(lines)
 
 
+def _cron_md_inline(value: Any, *, fallback: str = "") -> str:
+    text = str(value or "").strip() or fallback
+    return text.replace("\n", " ").replace("|", "\\|").replace("`", "'")
+
+
+def _cron_md_table(headers: list[str], rows: list[list[Any]]) -> str:
+    lines = [
+        "| " + " | ".join(_cron_md_inline(header) for header in headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for row in rows:
+        lines.append("| " + " | ".join(_cron_md_inline(cell, fallback="n/a") for cell in row) + " |")
+    return "\n".join(lines)
+
+
+def _cron_md_details(summary: str, body_lines: list[str]) -> str:
+    body = "\n".join(line for line in body_lines if str(line).strip())
+    if not body:
+        return ""
+    return f"<details>\n<summary>{_cron_md_inline(summary)}</summary>\n\n{body}\n</details>"
+
+
+def _cron_notification_rich_message(message: str) -> str:
+    values: dict[str, str] = {}
+    approval_command = ""
+    for line in str(message or "").splitlines():
+        if line.startswith("/guardian approve "):
+            approval_command = re.sub(r"\s+", " ", line.strip())
+            continue
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        values[key.strip().lower()] = value.strip()
+    rows = [
+        ["Job", values.get("job") or "n/a"],
+        ["Job ID", values.get("job id") or "n/a"],
+        ["Action", values.get("action") or "unknown"],
+        ["Destination", values.get("destination") or "n/a"],
+        ["Destination trust", values.get("destination trust") or "unknown"],
+        ["Data classes", values.get("data classes") or "none"],
+    ]
+    details = []
+    if values.get("decision step"):
+        details.append(f"- Decision step: `{_cron_md_inline(values['decision step'])}`")
+    if values.get("reason"):
+        details.append(f"- Reason: {_cron_md_inline(values['reason'])}")
+    if approval_command:
+        details.append(f"- Approval command: `{_cron_md_inline(approval_command)}`")
+    rich = "\n\n".join([
+        "## Hermes Guardian Cron Block",
+        _cron_md_table(["Field", "Value"], rows),
+        _cron_md_details("Review details", details),
+    ]).strip()
+    if len(rich.encode("utf-8")) > _TELEGRAM_RICH_TEXT_LIMIT:
+        return ""
+    return rich
+
+
 def _cron_notification_approval_command(message: str) -> str:
     match = re.search(
         r"(?m)^(/guardian\s+approve\s+[0-9]{4}\s+forever)\s*$",
@@ -201,6 +264,75 @@ def _telegram_copy_reply_markup(approval_command: str) -> Any:
     ])
 
 
+def _telegram_rich_failure_allows_legacy_fallback(exc: Exception) -> bool:
+    text = f"{exc.__class__.__name__}: {exc}".lower()
+    fallback_markers = (
+        "attributeerror",
+        "typeerror",
+        "not found",
+        "unknown method",
+        "unsupported",
+        "can't parse",
+        "cannot parse",
+        "can't find end",
+        "entity",
+        "rich text",
+        "too many",
+        "too long",
+        "bad request",
+    )
+    uncertain_markers = (
+        "timeout",
+        "timed out",
+        "connection",
+        "network",
+        "server error",
+        "internal server",
+        "bad gateway",
+        "gateway timeout",
+        "temporarily unavailable",
+        "retry after",
+    )
+    if any(marker in text for marker in uncertain_markers):
+        return False
+    return any(marker in text for marker in fallback_markers)
+
+
+async def _try_send_telegram_rich_message(
+    bot: Any,
+    *,
+    chat_id: str,
+    thread_id: str,
+    rich_message: str,
+    approval_command: str,
+) -> bool:
+    if not rich_message:
+        return False
+    method = getattr(bot, "send_rich_message", None)
+    if method is None:
+        return False
+    base_kwargs = {
+        "chat_id": _telegram_chat_id(chat_id),
+        "reply_markup": _telegram_copy_reply_markup(approval_command),
+        **_telegram_thread_kwargs(thread_id),
+    }
+    errors: list[Exception] = []
+    for text_key in ("text", "message"):
+        try:
+            await method(**base_kwargs, **{text_key: rich_message})
+            return True
+        except TypeError as exc:
+            errors.append(exc)
+            continue
+        except Exception as exc:
+            if _telegram_rich_failure_allows_legacy_fallback(exc):
+                return False
+            raise _TelegramRichSendUncertain(str(exc)) from exc
+    if errors:
+        return False
+    return False
+
+
 async def _send_telegram_cron_notification_async(
     *,
     token: str,
@@ -230,6 +362,15 @@ async def _send_telegram_cron_notification_async(
             bot_kwargs = {}
 
     bot = Bot(token=token, **bot_kwargs)
+    rich_message = _cron_notification_rich_message(message)
+    if await _try_send_telegram_rich_message(
+        bot,
+        chat_id=chat_id,
+        thread_id=thread_id,
+        rich_message=rich_message,
+        approval_command=approval_command,
+    ):
+        return
     await bot.send_message(
         chat_id=_telegram_chat_id(chat_id),
         text=message,
@@ -254,6 +395,14 @@ def _send_telegram_cron_notification_message(message: str, target: str, approval
                 message=message,
                 approval_command=approval_command,
             )
+        )
+        return True
+    except _TelegramRichSendUncertain as exc:
+        core.logger.debug(
+            "%s: telegram rich cron notification outcome uncertain for %s; suppressing fallback: %s",
+            core._PLUGIN_NAME,
+            target,
+            exc,
         )
         return True
     except Exception as exc:

@@ -721,12 +721,24 @@ def _delete_persistent_rule(owner_hash: str, rule_id: str) -> tuple[bool, str, d
 _UNAUTHENTICATED_OWNER_HASH = "__unauthenticated__"
 
 
-def _remember_command_owner(raw_args: str, owner_hash: str) -> None:
+def _remember_command_owner(
+    raw_args: str,
+    owner_hash: str,
+    *,
+    platform: str = "",
+    chat_type: str = "",
+) -> None:
     key = raw_args.strip()
     if not key:
         return
     with state._LOCK:
         state._RECENT_COMMAND_OWNERS.setdefault(key, []).append((state._now(), owner_hash))
+        state._RECENT_COMMAND_CONTEXTS.setdefault(key, []).append({
+            "ts": state._now(),
+            "owner_hash": owner_hash,
+            "platform": str(platform or "").strip().lower(),
+            "chat_type": str(chat_type or "").strip().lower(),
+        })
 
 
 def _owner_is_authenticated(owner_hash: str) -> bool:
@@ -797,16 +809,32 @@ def _cron_instruction_for_session(session_id: str | None) -> str:
     return llm._redact_command_for_llm(instruction)
 
 
-def _pop_command_owner(raw_args: str) -> str:
+def _pop_command_context(raw_args: str) -> dict[str, str]:
     key = raw_args.strip()
     with state._LOCK:
         llm._prune_expired()
+        contexts = state._RECENT_COMMAND_CONTEXTS.get(key) or []
+        context = contexts.pop(0) if contexts else None
+        if contexts:
+            state._RECENT_COMMAND_CONTEXTS[key] = contexts
+        else:
+            state._RECENT_COMMAND_CONTEXTS.pop(key, None)
         entries = state._RECENT_COMMAND_OWNERS.get(key) or []
         if entries:
             state._RECENT_COMMAND_OWNERS[key] = entries[1:]
             if not state._RECENT_COMMAND_OWNERS[key]:
                 state._RECENT_COMMAND_OWNERS.pop(key, None)
-            return entries[0][1]
+            owner_hash = entries[0][1]
+        else:
+            owner_hash = ""
+        if context:
+            return {
+                "owner_hash": str(context.get("owner_hash") or owner_hash or _UNAUTHENTICATED_OWNER_HASH),
+                "platform": str(context.get("platform") or "").strip().lower(),
+                "chat_type": str(context.get("chat_type") or "").strip().lower(),
+            }
+        if owner_hash:
+            return {"owner_hash": owner_hash, "platform": "", "chat_type": ""}
     # Cache miss: the gateway never positively recorded an owner for this command.
     # A trusted local-CLI/host context (which drives the handler directly, with no
     # gateway dispatch) opts into the local-operator identity. Otherwise fail CLOSED
@@ -814,8 +842,12 @@ def _pop_command_owner(raw_args: str) -> str:
     # approve that did not transit `pre_gateway_dispatch` (agent-emitted slash text, a
     # lost/stale gateway record) is denied instead of silently self-approving.
     if state._TRUSTED_LOCAL_COMMAND_CONTEXT:
-        return core._CLI_OWNER_HASH
-    return _UNAUTHENTICATED_OWNER_HASH
+        return {"owner_hash": core._CLI_OWNER_HASH, "platform": "cli", "chat_type": ""}
+    return {"owner_hash": _UNAUTHENTICATED_OWNER_HASH, "platform": "", "chat_type": ""}
+
+
+def _pop_command_owner(raw_args: str) -> str:
+    return _pop_command_context(raw_args).get("owner_hash") or _UNAUTHENTICATED_OWNER_HASH
 
 
 def _owner_session_ids(owner_hash: str) -> set[str]:
