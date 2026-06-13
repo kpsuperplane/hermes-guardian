@@ -15,6 +15,18 @@ def test_telegram_slash_command_uses_shared_plain_output():
     assert not output.startswith("##")
 
 
+def test_guardian_help_uses_markdown_safe_command_rows():
+    plugin = load_plugin()
+
+    output = plugin._handle_guardian_command("help")
+
+    assert "- `/guardian why <id>`" in output
+    assert "- `/guardian approve <id> 5m|forever`" in output
+    assert "- `/guardian sharing preview <action> <destination> <class>`" in output
+    assert "- `/guardian protection security enable|disable <rule_id>`" in output
+    assert "  why <id>" not in output
+
+
 def test_telegram_cron_notification_prefers_rich_send(monkeypatch):
     plugin = load_plugin()
     calls = []

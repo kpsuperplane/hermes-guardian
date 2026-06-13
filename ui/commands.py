@@ -29,46 +29,46 @@ _FAILURE_HISTORY_DECISIONS = ("blocked", "denied", "security_blocked")
 _GUARDIAN_HELP_LINES = [
     "/guardian — privacy firewall for your agent",
     "",
-    "  status                  what's happening right now",
-    "  why <id>                explain a specific decision",
+    "- `/guardian status` — what's happening right now",
+    "- `/guardian why <id>` — explain a specific decision",
     "",
     "ACTIVITY — what happened, and what needs you",
-    "  activity [limit]        recent decided actions",
-    "  approvals               list pending approvals",
-    "  approve <id>            show the ways to permit a pending item",
-    "  approve <id> 5m|forever             allow this action shape briefly / permanently",
-    "  approve <id> mine|trust              it's yours / you trust it (admin; if the action supports it)",
-    "  deny <id>               deny a pending item (alias: dismiss)",
-    "  clear-taint             clear session taint",
+    "- `/guardian activity [limit]` — recent decided actions",
+    "- `/guardian approvals` — list pending approvals",
+    "- `/guardian approve <id>` — show the ways to permit a pending item",
+    "- `/guardian approve <id> 5m|forever` — allow this action shape briefly / permanently",
+    "- `/guardian approve <id> mine|trust` — it's yours / you trust it (admin; if the action supports it)",
+    "- `/guardian deny <id>` — deny a pending item (alias: dismiss)",
+    "- `/guardian clear-taint` — clear session taint",
     "",
     "WHAT'S YOURS — where you end and the world begins",
-    "  mine                    show self stores/identities/hosts",
-    "  mine add|remove destination|identity|host <value>",
-    "  check <destination|recipient>        resolve trust preview",
+    "- `/guardian mine` — show self stores/identities/hosts",
+    "- `/guardian mine add|remove destination|identity|host <value>`",
+    "- `/guardian check <destination|recipient>` — resolve trust preview",
     "",
     "SHARING — what you've authorized to leave you",
-    "  sharing                 show trusted destinations + rules + outward-sharing",
-    "  sharing destination add|remove <identity> [classes=<class+class>]",
-    "  sharing destination suggest | trust <n>   pick a trusted command",
-    "  sharing rule add|delete|enable|disable|move ...",
-    "  sharing outward add|remove <subtype>",
-    "  sharing preview <action> <destination> <class>   which step fires",
+    "- `/guardian sharing` — show trusted destinations + rules + outward-sharing",
+    "- `/guardian sharing destination add|remove <identity> [classes=<class+class>]`",
+    "- `/guardian sharing destination suggest | trust <n>` — pick a trusted command",
+    "- `/guardian sharing rule add|delete|enable|disable|move ...`",
+    "- `/guardian sharing outward add|remove <subtype>`",
+    "- `/guardian sharing preview <action> <destination> <class>` — which step fires",
     "",
     "REVIEW — who judges everything else",
-    "  review                  show mode, contexts, verifier model",
-    "  review mode strict|read-only|llm|off",
-    "  review owner-context on|off",
-    "  review cron-context on|off",
-    "  review verifier-model <model_id|default>",
+    "- `/guardian review` — show mode, contexts, verifier model",
+    "- `/guardian review mode strict|read-only|llm|off`",
+    "- `/guardian review owner-context on|off`",
+    "- `/guardian review cron-context on|off`",
+    "- `/guardian review verifier-model <model_id|default>`",
     "",
     "PROTECTION — the floor that always holds",
-    "  protection              show security, tool overrides, language packs",
-    "  protection security enable|disable <rule_id>",
-    "  protection tool set|delete|enable|disable ...",
-    "  protection source suggest|set <server> reference|private",
-    "  protection unknown-tools gate|allow",
-    "  protection persist-prompts on|off",
-    "  protection language-packs enable|disable <pack_id>",
+    "- `/guardian protection` — show security, tool overrides, language packs",
+    "- `/guardian protection security enable|disable <rule_id>`",
+    "- `/guardian protection tool set|delete|enable|disable ...`",
+    "- `/guardian protection source suggest|set <server> reference|private`",
+    "- `/guardian protection unknown-tools gate|allow`",
+    "- `/guardian protection persist-prompts on|off`",
+    "- `/guardian protection language-packs enable|disable <pack_id>`",
 ]
 
 _RULE_ADD_KEYS = {
@@ -439,9 +439,9 @@ def _guardian_debug_command(tokens: list[str]) -> str:
         return "Invalid debug arguments: " + "; ".join(errors)
     if not params:
         return (
-            "Usage: /guardian debug action=<family> destination=<dest> "
-            "classes=<class+class> [tool=<tool_name>] [recipient=<id>]\n"
-            "Example: /guardian debug action=mcp_write destination=mcp:notion classes=communications"
+            "Usage: `/guardian debug action=<family> destination=<dest> "
+            "classes=<class+class> [tool=<tool_name>] [recipient=<id>]`\n"
+            "Example: `/guardian debug action=mcp_write destination=mcp:notion classes=communications`"
         )
     result = _debug_decision(params)
     classes = ",".join(result["data_classes"]) or "none"
@@ -568,11 +568,11 @@ def _guardian_sharing_group_command(owner_hash: str, tokens: list[str]) -> str:
     if not sub:
         return _guardian_sharing_overview(owner_hash)
     return (
-        "Usage: /guardian sharing | "
-        "/guardian sharing trusted add|remove <identity> [classes=<class+class>] | "
-        "/guardian sharing rule add|delete|enable|disable|move ... | "
-        "/guardian sharing outward add|remove <subtype> | "
-        "/guardian sharing preview <action> <destination> <class>"
+        "Usage: `/guardian sharing` | "
+        "`/guardian sharing trusted add|remove <identity> [classes=<class+class>]` | "
+        "`/guardian sharing rule add|delete|enable|disable|move ...` | "
+        "`/guardian sharing outward add|remove <subtype>` | "
+        "`/guardian sharing preview <action> <destination> <class>`"
     )
 
 
@@ -608,11 +608,11 @@ def _guardian_review_command(owner_hash: str, tokens: list[str]) -> str:
     }
     if sub not in rename:
         return (
-            "Usage: /guardian review | "
-            "/guardian review mode strict|read-only|llm|off | "
-            "/guardian review owner-context on|off | "
-            "/guardian review cron-context on|off | "
-            "/guardian review verifier-model <model_id|default>"
+            "Usage: `/guardian review` | "
+            "`/guardian review mode strict|read-only|llm|off` | "
+            "`/guardian review owner-context on|off` | "
+            "`/guardian review cron-context on|off` | "
+            "`/guardian review verifier-model <model_id|default>`"
         )
     return _guardian_privacy_command(owner_hash, ["privacy", rename[sub], *tokens[2:]])
 
@@ -646,13 +646,13 @@ def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
     if not sub:
         return _guardian_protection_overview()
     return (
-        "Usage: /guardian protection | "
-        "/guardian protection security enable|disable <rule_id> | "
-        "/guardian protection tool set|delete|enable|disable ... | "
-        "/guardian protection unknown-tools gate|allow | "
-        "/guardian protection source suggest|set <server> reference|private | "
-        "/guardian protection persist-prompts on|off | "
-        "/guardian protection language-packs enable|disable <pack_id>"
+        "Usage: `/guardian protection` | "
+        "`/guardian protection security enable|disable <rule_id>` | "
+        "`/guardian protection tool set|delete|enable|disable ...` | "
+        "`/guardian protection unknown-tools gate|allow` | "
+        "`/guardian protection source suggest|set <server> reference|private` | "
+        "`/guardian protection persist-prompts on|off` | "
+        "`/guardian protection language-packs enable|disable <pack_id>`"
     )
 
 
@@ -664,8 +664,8 @@ def _guardian_source_command(owner_hash: str, tokens: list[str]) -> str:
     """
     sub = tokens[2].lower() if len(tokens) > 2 else ""
     usage = (
-        "Usage: /guardian protection source suggest | "
-        "/guardian protection source set <server> reference|private"
+        "Usage: `/guardian protection source suggest` | "
+        "`/guardian protection source set <server> reference|private`"
     )
     if sub == "suggest":
         suggestions = rules_mod._source_classification_suggestions()
@@ -711,7 +711,7 @@ def _guardian_check_command(tokens: list[str]) -> str:
     and prints `value -> <trust>` with a one-line reason, mirroring `why`'s style.
     """
     if len(tokens) < 2:
-        return "Usage: /guardian check <destination|recipient>"
+        return "Usage: `/guardian check <destination|recipient>`"
     value = " ".join(tokens[1:]).strip()
     result = dashboard_mod._dashboard_resolve_destination(value)
     trust = result.get("trust") or "unknown"
@@ -733,8 +733,8 @@ def _guardian_sharing_preview_command(args: list[str]) -> str:
     """
     if len(args) < 3:
         return (
-            "Usage: /guardian sharing preview <action> <destination> <class>\n"
-            "Example: /guardian sharing preview message_send telegram:abc communications"
+            "Usage: `/guardian sharing preview <action> <destination> <class>`\n"
+            "Example: `/guardian sharing preview message_send telegram:abc communications`"
         )
     action_family = args[0].strip()
     destination = args[1].strip()
@@ -771,7 +771,7 @@ def _guardian_approvals_command(owner_hash: str) -> str:
             f"- {approval.get('id', '')}: {approval.get('action_family', '')} -> "
             f"{approval.get('destination', '')} ({classes})"
         )
-    lines.append("Run /guardian approve <id> to see the ways to permit it, or /guardian deny <id>.")
+    lines.append("Run `/guardian approve <id>` to see the ways to permit it, or `/guardian deny <id>`.")
     return "\n".join(lines)
 
 
@@ -828,7 +828,7 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
         "Usage: /guardian review mode strict|read-only|llm|off | "
         "/guardian review owner-context on|off | "
         "/guardian review cron-context on|off | "
-        "/guardian review verifier-model <model_id|default> | "
+        "`/guardian review verifier-model <model_id|default>` | "
         "/guardian protection unknown-tools gate|allow"
     )
 
@@ -865,10 +865,10 @@ def _guardian_tools_command() -> str:
 def _guardian_tool_command(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     usage = (
-        "Usage: /guardian protection tool set <match> [taints=a+b] [egress=ignore|gate|<family>] "
-        "[direction=read|write] [source=reference|private] [destination=<dest>] [note=<text>] | "
-        "/guardian protection tool delete <match_or_id> | "
-        "/guardian protection tool enable|disable <id_or_match>"
+        "Usage: `/guardian protection tool set <match> [taints=a+b] [egress=ignore|gate|<family>] "
+        "[direction=read|write] [source=reference|private] [destination=<dest>] [note=<text>]` | "
+        "`/guardian protection tool delete <match_or_id>` | "
+        "`/guardian protection tool enable|disable <id_or_match>`"
     )
     if sub == "set" and len(tokens) >= 3:
         if not _slash_admin_allowed(owner_hash):
@@ -912,9 +912,9 @@ def _guardian_tool_command(owner_hash: str, tokens: list[str]) -> str:
 def _guardian_self_command(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     usage = (
-        "Usage: /guardian mine | "
-        "/guardian mine add destination|identity|host <value> | "
-        "/guardian mine remove destination|identity|host <value>"
+        "Usage: `/guardian mine` | "
+        "`/guardian mine add destination|identity|host <value>` | "
+        "`/guardian mine remove destination|identity|host <value>`"
     )
     if not sub:
         snapshot = rules_mod._self_config_snapshot()
@@ -947,11 +947,11 @@ def _guardian_self_command(owner_hash: str, tokens: list[str]) -> str:
 def _guardian_trusted_command(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     usage = (
-        "Usage: /guardian sharing destination add <identity> [classes=<class+class>] [note=<text>] | "
-        "/guardian sharing destination suggest | "
-        "/guardian sharing destination trust <n> [classes=<class+class>] | "
-        "/guardian sharing destination remove <identity> | "
-        "/guardian sharing destination remove command <n>"
+        "Usage: `/guardian sharing destination add <identity> [classes=<class+class>] [note=<text>]` | "
+        "`/guardian sharing destination suggest` | "
+        "`/guardian sharing destination trust <n> [classes=<class+class>]` | "
+        "`/guardian sharing destination remove <identity>` | "
+        "`/guardian sharing destination remove command <n>`"
     )
     if not sub:
         trusted = rules_mod._trusted_recipients_snapshot()
@@ -984,7 +984,7 @@ def _guardian_trusted_command(owner_hash: str, tokens: list[str]) -> str:
         try:
             index = int(tokens[2])
         except ValueError:
-            return "Usage: /guardian sharing destination trust <n> [classes=<class+class>]"
+            return "Usage: `/guardian sharing destination trust <n> [classes=<class+class>]`"
         suggestions = rules_mod._trusted_destination_suggestions()
         if index < 0 or index >= len(suggestions):
             return f"No suggestion #{index}. Run /guardian sharing destination suggest for the list."
@@ -1014,7 +1014,7 @@ def _guardian_trusted_command(owner_hash: str, tokens: list[str]) -> str:
             try:
                 index = int(tokens[3])
             except ValueError:
-                return "Usage: /guardian sharing destination remove command <n>"
+                return "Usage: `/guardian sharing destination remove command <n>`"
             if index < 0 or index >= len(commands):
                 return f"No trusted command #{index}."
             _ok, message = rules_mod._remove_trusted_command(commands[index]["value"])
@@ -1026,7 +1026,7 @@ def _guardian_trusted_command(owner_hash: str, tokens: list[str]) -> str:
 
 def _guardian_sharing_command(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
-    usage = "Usage: /guardian sharing outward add <subtype> | /guardian sharing outward remove <subtype>"
+    usage = "Usage: `/guardian sharing outward add <subtype>` | `/guardian sharing outward remove <subtype>`"
     if not sub:
         snapshot = rules_mod._outward_sharing_snapshot()
         lines = ["Hermes Guardian outward-sharing subtypes (always external, even on a self store)"]
@@ -1051,7 +1051,7 @@ def _guardian_sharing_command(owner_hash: str, tokens: list[str]) -> str:
 
 def _guardian_why_command(tokens: list[str]) -> str:
     if len(tokens) != 2:
-        return "Usage: /guardian why <activity_id|approval_id>"
+        return "Usage: `/guardian why <activity_id|approval_id>`"
     return _guardian_why(tokens[1])
 
 
@@ -1129,7 +1129,7 @@ def _guardian_security_command(owner_hash: str, tokens: list[str]) -> str:
             lines.append(
                 f"- {rule['id']}: {state} - {rule.get('label', '')}"
             )
-        lines.append("Use /guardian protection security enable|disable <rule_id>.")
+        lines.append("Use `/guardian protection security enable|disable <rule_id>`.")
         return "\n".join(lines)
     if len(tokens) == 3 and tokens[1].lower() in {"enable", "disable"}:
         if not _slash_admin_allowed(owner_hash):
@@ -1137,7 +1137,7 @@ def _guardian_security_command(owner_hash: str, tokens: list[str]) -> str:
         enabled = tokens[1].lower() == "enable"
         ok, message = rules_mod._set_security_rule(tokens[2], enabled)
         return message
-    return "Usage: /guardian protection security | /guardian protection security enable|disable <rule_id>"
+    return "Usage: `/guardian protection security` | `/guardian protection security enable|disable <rule_id>`"
 
 
 def _guardian_language_packs_command(owner_hash: str, tokens: list[str]) -> str:
@@ -1149,7 +1149,7 @@ def _guardian_language_packs_command(owner_hash: str, tokens: list[str]) -> str:
             lines.append(
                 f"- {pack['id']}: {state}{required} - {pack.get('name', '')}"
             )
-        lines.append("Use /guardian protection language-packs enable|disable <pack_id>.")
+        lines.append("Use `/guardian protection language-packs enable|disable <pack_id>`.")
         return "\n".join(lines)
     if len(tokens) == 3 and tokens[1].lower() in {"enable", "disable"}:
         if not _slash_admin_allowed(owner_hash):
@@ -1158,13 +1158,13 @@ def _guardian_language_packs_command(owner_hash: str, tokens: list[str]) -> str:
         ok, message = rules_mod._set_language_pack(tokens[2], enabled)
         return message
     return (
-        "Usage: /guardian protection language-packs | "
-        "/guardian protection language-packs enable|disable <pack_id>"
+        "Usage: `/guardian protection language-packs` | "
+        "`/guardian protection language-packs enable|disable <pack_id>`"
     )
 
 
 def _rule_add_usage() -> str:
-    return "Usage: /guardian sharing rule add allow|deny action=<family|*> destination=<dest|*> classes=<class+class|*> [tool=<tool_name|*>] [purpose=<token|*>] [recipient=<id|raw|*>] [expires=<5m|1h|unix|forever>]"
+    return "Usage: `/guardian sharing rule add allow|deny action=<family|*> destination=<dest|*> classes=<class+class|*> [tool=<tool_name|*>] [purpose=<token|*>] [recipient=<id|raw|*>] [expires=<5m|1h|unix|forever>]`"
 
 
 def _rule_add_error(message: str) -> tuple[dict[str, Any] | None, str]:
@@ -1315,8 +1315,8 @@ def _guardian_rule_command(owner_hash: str, tokens: list[str]) -> str:
         return f"Moved privacy rule {tokens[2]} {tokens[3].lower()} {tokens[4]}."
     return (
         f"{_rule_add_usage()} | "
-        "/guardian sharing rule delete <rule_id> | /guardian sharing rule enable|disable <rule_id> | "
-        "/guardian sharing rule move <rule_id> before|after <other_rule_id>"
+        "`/guardian sharing rule delete <rule_id>` | `/guardian sharing rule enable|disable <rule_id>` | "
+        "`/guardian sharing rule move <rule_id> before|after <other_rule_id>`"
     )
 
 
