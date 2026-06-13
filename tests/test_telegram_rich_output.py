@@ -79,6 +79,12 @@ def test_telegram_cron_notification_prefers_rich_send(monkeypatch):
 def test_telegram_cron_notification_falls_back_on_rich_capability_error(monkeypatch):
     plugin = load_plugin()
     calls = []
+    plain_message = (
+        "Hermes Guardian blocked a cron job action.\n\n"
+        "Job: Example Availability Check\n"
+        "Action: message_send\n\n"
+        "/guardian approve 1234 forever\n"
+    )
 
     class FakeBot:
         def __init__(self, token, **kwargs):
@@ -116,13 +122,16 @@ def test_telegram_cron_notification_falls_back_on_rich_capability_error(monkeypa
     )
 
     ok = plugin._send_telegram_cron_notification_message(
-        "Hermes Guardian blocked a cron job action.\n\n/guardian approve 1234 forever\n",
+        plain_message,
         "telegram:-1000000000000:75",
         "/guardian approve 1234 forever",
     )
 
     assert ok is True
     assert [kind for kind, _ in calls] == ["plain"]
+    assert calls[0][1]["text"] == plain_message
+    assert calls[0][1]["parse_mode"] is None
+    assert "\n\nJob: Example Availability Check\nAction: message_send\n\n" in calls[0][1]["text"]
 
 
 def test_telegram_cron_notification_suppresses_legacy_fallback_on_uncertain_rich_send(monkeypatch):

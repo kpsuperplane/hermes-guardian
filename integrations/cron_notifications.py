@@ -374,6 +374,7 @@ async def _send_telegram_cron_notification_async(
     await bot.send_message(
         chat_id=_telegram_chat_id(chat_id),
         text=message,
+        parse_mode=None,
         reply_markup=_telegram_copy_reply_markup(approval_command),
         disable_web_page_preview=True,
         **_telegram_thread_kwargs(thread_id),
