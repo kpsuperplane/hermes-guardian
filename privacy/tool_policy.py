@@ -43,6 +43,22 @@ def _owner_hash_from_event(event: Any) -> str:
     return _hash_identity(str(platform), str(sender_id))
 
 
+def _platform_from_event(event: Any) -> str:
+    source = getattr(event, "source", None)
+    platform_obj = getattr(source, "platform", None)
+    return str(getattr(platform_obj, "value", platform_obj) or "").strip().lower()
+
+
+def _chat_type_from_event(event: Any) -> str:
+    source = getattr(event, "source", None)
+    for holder in (event, source):
+        for name in ("chat_type", "channel_type", "conversation_type", "type"):
+            value = getattr(holder, name, "")
+            if value:
+                return str(value).strip().lower()
+    return ""
+
+
 def _ensure_session(session_id: str | None, owner_hash: str | None = None) -> dict[str, Any]:
     sid = _normalize_session_id(session_id)
     with state._LOCK:

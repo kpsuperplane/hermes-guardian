@@ -468,8 +468,455 @@ def _guardian_debug_command(tokens: list[str]) -> str:
     )
 
 
+def _telegram_rich_slash_supported() -> bool:
+    try:
+        from gateway.platforms.telegram import TelegramAdapter
+    except Exception:
+        return False
+    required = (
+        "_try_send_rich",
+        "_rich_message_payload",
+        "_should_attempt_rich",
+        "_bot_supports_rich",
+    )
+    return all(callable(getattr(TelegramAdapter, name, None)) for name in required)
+
+
+def _telegram_command_enabled(command_context: dict[str, str]) -> bool:
+    return (
+        str(command_context.get("platform") or "").strip().lower() == "telegram"
+        and _telegram_rich_slash_supported()
+    )
+
+
+def _md_inline(value: Any, *, fallback: str = "") -> str:
+    text = str(value or "").strip() or fallback
+    return text.replace("\n", " ").replace("|", "\\|")
+
+
+def _md_code(value: Any, *, fallback: str = "") -> str:
+    text = _md_inline(value, fallback=fallback).replace("`", "'")
+    return f"`{text}`"
+
+
+def _md_table(headers: list[str], rows: list[list[Any]]) -> str:
+    if not rows:
+        return ""
+    safe_headers = [_md_inline(header) for header in headers]
+    lines = [
+        "| " + " | ".join(safe_headers) + " |",
+        "| " + " | ".join("---" for _ in safe_headers) + " |",
+    ]
+    for row in rows:
+        lines.append("| " + " | ".join(_md_inline(cell, fallback="n/a") for cell in row) + " |")
+    return "\n".join(lines)
+
+
+def _md_details(summary: str, body_lines: list[str]) -> str:
+    body = "\n".join(line for line in body_lines if str(line).strip())
+    if not body:
+        return ""
+    return f"<details>\n<summary>{_md_inline(summary)}</summary>\n\n{body}\n</details>"
+
+
+def _pending_for_owner(owner_hash: str) -> list[dict[str, Any]]:
+    with state._LOCK:
+        approvals._load_pending_approvals_from_store_unlocked()
+        return [
+            dict(approval)
+            for approval in state._PENDING_APPROVALS.values()
+            if approval.get("owner_hash") == owner_hash or owner_hash == core._CLI_OWNER_HASH
+        ]
+
+
+def _status_snapshot(owner_hash: str) -> dict[str, Any]:
+    with state._LOCK:
+        llm._prune_expired()
+        session_ids = approvals._owner_session_ids(owner_hash)
+        taint = sorted({cls for sid in session_ids for cls in state._SESSIONS.get(sid, {}).get("taint", set())})
+        pending = [
+            approval
+            for approval in state._PENDING_APPROVALS.values()
+            if approval.get("owner_hash") == owner_hash or owner_hash == core._CLI_OWNER_HASH
+        ]
+        rules = rules_mod._privacy_rules_for_owner(owner_hash)
+        disabled_security = [
+            rule
+            for rule in rules_mod._security_rules_snapshot()
+            if not bool(rule.get("enabled"))
+        ]
+        enabled_language_packs = [
+            pack
+            for pack in rules_mod._language_packs_snapshot()
+            if bool(pack.get("enabled"))
+        ]
+    return {
+        "taint": taint,
+        "pending": pending,
+        "rules": rules,
+        "disabled_security": disabled_security,
+        "enabled_language_packs": enabled_language_packs,
+        "risk_banners": activity_rows._runtime_risk_banners(),
+        "trust_summary": activity_rows._destination_trust_summary(),
+    }
+
+
+def _guardian_status_telegram(owner_hash: str) -> str:
+    snapshot = _status_snapshot(owner_hash)
+    trust_summary = snapshot["trust_summary"]
+    self_block = trust_summary.get("self") or {}
+    tally = trust_summary.get("tally") or {}
+    tally_text = ", ".join(f"{label}={count}" for label, count in sorted(tally.items())) if tally else "none observed yet"
+    enabled_packs = ", ".join(pack.get("id", "") for pack in snapshot["enabled_language_packs"]) or "none"
+    rows = [
+        ["Privacy mode", core._privacy_policy()],
+        ["Unknown tools", f"{rules_mod._unknown_tools_mode()} ({len(rules_mod._tool_overrides())} override(s))"],
+        ["LLM context", f"user-prompt {'on' if rules_mod._llm_user_context_enabled() else 'off'}, cron {'on' if rules_mod._llm_cron_context_enabled() else 'off'}"],
+        ["Security rules", f"{len(rules_mod._SECURITY_RULE_IDS) - len(snapshot['disabled_security'])} enabled, {len(snapshot['disabled_security'])} disabled"],
+        ["Language packs", enabled_packs],
+        ["Taint classes", ", ".join(snapshot["taint"]) if snapshot["taint"] else "none"],
+        ["Pending approvals", str(len(snapshot["pending"]))],
+        ["Privacy rules", str(len(snapshot["rules"]))],
+    ]
+    lines = [
+        "## Hermes Guardian Status",
+        "",
+        _md_table(["Signal", "Value"], rows),
+        "",
+        "### Destination Trust",
+        _md_table(
+            ["Bucket", "Count"],
+            [
+                ["Self destinations", len(self_block.get("destinations") or [])],
+                ["Self identities", len(self_block.get("identities") or [])],
+                ["Self hosts", len(self_block.get("hosts") or [])],
+                ["Trusted recipients", len(trust_summary.get("trusted_recipients") or [])],
+                ["Outward-sharing", f"{len((trust_summary.get('outward_sharing') or {}).get('builtin') or [])} builtin + {len((trust_summary.get('outward_sharing') or {}).get('extra') or [])} extra"],
+                ["Seen by trust", tally_text],
+            ],
+        ),
+    ]
+    pending = snapshot["pending"][:10]
+    if pending:
+        lines.extend([
+            "",
+            "### Pending Approvals",
+            _md_table(
+                ["ID", "Action", "Destination", "Classes"],
+                [
+                    [
+                        approval.get("id", ""),
+                        approval.get("action_family", ""),
+                        approval.get("destination", ""),
+                        ",".join(approval.get("data_classes") or []) or "none",
+                    ]
+                    for approval in pending
+                ],
+            ),
+        ])
+    risk_lines = [str(banner.get("message", "")).strip() for banner in snapshot["risk_banners"] if banner.get("message")]
+    if risk_lines:
+        lines.extend(["", _md_details("Risk banners", [f"- {line}" for line in risk_lines])])
+    return "\n".join(line for line in lines if line != "")
+
+
+def _guardian_approvals_command_telegram(owner_hash: str) -> str:
+    pending = _pending_for_owner(owner_hash)
+    if not pending:
+        return "No pending Guardian approvals."
+    return "\n\n".join([
+        f"## Pending Guardian Approvals\n{len(pending)} shown",
+        _md_table(
+            ["ID", "Action", "Destination", "Trust", "Classes"],
+            [
+                [
+                    approval.get("id", ""),
+                    approval.get("action_family", ""),
+                    approval.get("destination", ""),
+                    approval.get("destination_trust", "unknown"),
+                    ",".join(approval.get("data_classes") or []) or "none",
+                ]
+                for approval in pending
+            ],
+        ),
+        "Run `/guardian approve <id>` to see permit options, or `/guardian deny <id>`.",
+    ])
+
+
+def _guardian_permit_menu_telegram(owner_hash: str, approval_id: str) -> str:
+    resolved_id, approval, error = _resolve_owned_approval(owner_hash, approval_id)
+    if error:
+        return error
+    sections: list[str] = [
+        f"## Permit Approval {resolved_id}",
+        _md_table(
+            ["Field", "Value"],
+            [
+                ["Action", approval.get("action_family", "")],
+                ["Destination", approval.get("destination", "")],
+                ["Trust", approval.get("destination_trust", "unknown")],
+                ["Classes", ", ".join(approval.get("data_classes") or []) or "none"],
+            ],
+        ),
+    ]
+    groups: dict[str, list[list[str]]] = {}
+    for option in approvals._approval_permit_options(approval):
+        command = approvals._permit_command_line(resolved_id, option["method"])
+        groups.setdefault(str(option.get("group") or "Approval options"), []).append([
+            _md_code(command),
+            option.get("label", ""),
+            "yes" if option.get("structural") else "no",
+        ])
+    for group, rows in groups.items():
+        sections.extend(["", f"### {group}", _md_table(["Command", "Scope", "Admin"], rows)])
+    details = [
+        f"- Dismiss: `/guardian dismiss {resolved_id}`",
+        "- Temporary permits are shape-scoped.",
+        "- Trust-boundary changes are admin-only and update Guardian policy.",
+    ]
+    sections.extend(["", _md_details("What this allows", details)])
+    return "\n".join(section for section in sections if section != "")
+
+
+def _guardian_activity_command_telegram(owner_hash: str, tokens: list[str]) -> str:
+    sub = tokens[1].lower() if len(tokens) > 1 else ""
+    if sub == "approvals":
+        return _guardian_approvals_command_telegram(owner_hash)
+    if sub == "approve" and len(tokens) >= 3 and len(tokens) == 3:
+        return _guardian_permit_menu_telegram(owner_hash, tokens[2])
+    if sub in {"failures", "failed"}:
+        return _guardian_history_command_telegram(
+            ["activity failures", *tokens[2:]],
+            filters={"decisions": ",".join(_FAILURE_HISTORY_DECISIONS)},
+            title="Guardian Failures",
+            empty_message="No guardian failure history yet.",
+        )
+    if sub in {"deny", "dismiss", "clear-taint"} or (sub == "approve" and len(tokens) >= 4):
+        return _guardian_activity_command(owner_hash, tokens)
+    return _guardian_history_command_telegram(
+        ["activity", *tokens[1:]],
+        title="Guardian Activity",
+        empty_message="No guardian activity history yet.",
+    )
+
+
+def _task_marker_for_decision(decision: str) -> str:
+    if decision in {"allowed", "auto_approved", "manual_approved", "mode_off_allowed", "privacy_off_allowed", "read"}:
+        return "[x]"
+    return "[ ]"
+
+
+def _guardian_history_command_telegram(
+    tokens: list[str],
+    *,
+    filters: dict[str, str] | None = None,
+    title: str = "Guardian Activity",
+    empty_message: str = "No guardian activity history yet.",
+) -> str:
+    limit = 5
+    if len(tokens) > 1:
+        try:
+            limit = int(tokens[1])
+        except ValueError:
+            command = tokens[0].lower() if tokens else "history"
+            return f"Usage: /guardian {command} [limit]"
+    limit = max(1, min(limit, 25))
+    rows = activity_rows._activity_rows(filters or {}, limit=1000)
+    if not rows:
+        return empty_message
+
+    order: list[str] = []
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        turn_id = str(row.get("turn_id") or "")
+        key = turn_id if turn_id else f"row_{row.get('id')}"
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(row)
+    turn_keys = order[:limit]
+
+    lines = [f"## {title}", f"Newest first · {len(turn_keys)} turn{'s' if len(turn_keys) != 1 else ''}"]
+    max_checks = 20
+    for key in turn_keys:
+        turn_rows = groups[key]
+        prompt = ""
+        for candidate in turn_rows:
+            text_value = _compact_prompt_text(candidate.get("user_prompt"))
+            if text_value:
+                prompt = dashboard_mod._clip_text(text_value, 120, ellipsis="...", fallback="")
+                break
+        is_cron = any(str(r.get("session_label") or "").startswith("cron_") for r in turn_rows)
+        heading = "Cron turn" if is_cron else "User turn"
+        if prompt:
+            heading += f": {prompt}"
+        if len(turn_rows) > 1:
+            heading += f" · {len(turn_rows)} checks"
+        lines.extend(["", f"### {heading}"])
+        for check in turn_rows[:max_checks]:
+            decision = str(check.get("decision") or "").strip()
+            tool = dashboard_mod._clip_text(dashboard_mod._activity_display_tool(check), 48, ellipsis="...", fallback="n/a")
+            classes = _compact_activity_classes(check) or "none"
+            latency_label = _latency_label(check.get("latency_ms"))
+            reason_text = _compact_activity_reason_line(check)
+            llm_mark = " · llm" if decision == "auto_approved" or "llm" in str(check.get("reason") or "").lower() else ""
+            suffix = f" · {latency_label}" if latency_label else ""
+            lines.append(f"- {_task_marker_for_decision(decision)} **{_md_inline(tool)}** · `{_md_inline(decision or 'unknown')}` · `{_md_inline(classes)}`{llm_mark}{suffix}")
+            if reason_text:
+                lines.append(f"  - {_md_inline(reason_text)}")
+        if len(turn_rows) > max_checks:
+            lines.append(f"- +{len(turn_rows) - max_checks} more checks")
+    return "\n".join(lines)
+
+
+def _guardian_why_command_telegram(tokens: list[str]) -> str:
+    if len(tokens) != 2:
+        return "Usage: /guardian why <activity_id|approval_id>"
+    return _guardian_why_telegram(tokens[1])
+
+
+def _guardian_why_telegram(identifier: str) -> str:
+    row = _activity_row_for_why(identifier)
+    if row is None:
+        return f"No Guardian activity found for {identifier}."
+    decision = str(row.get("decision") or "")
+    direction = "read" if decision in {"read", "tainted"} else "write"
+    classes = activity_rows._activity_data_classes_list(row.get("data_classes"))
+    reason = str(row.get("reason") or "").strip()
+    lines = [
+        f"## Guardian Decision {identifier}",
+        _md_table(
+            ["Field", "Value"],
+            [
+                ["Outcome", decision or "unknown"],
+                ["Direction", direction],
+                ["Destination", f"{row.get('destination') or '(none)'} (trust={row.get('destination_trust') or 'unknown'})"],
+                ["Classes", ", ".join(classes) if classes else "none"],
+                ["Action family", row.get("action_family") or "(none)"],
+                ["Purpose", row.get("purpose") or "unknown"],
+                ["Recipient identity", row.get("recipient_identity") or "none"],
+                ["Decide step", row.get("decision_step") or "(pre-migration row; step not recorded)"],
+            ],
+        ),
+    ]
+    if reason:
+        lines.extend(["", _md_details("Reason", [reason])])
+    return "\n".join(lines)
+
+
+def _guardian_mine_telegram(owner_hash: str) -> str:
+    snapshot = rules_mod._self_config_snapshot()
+    trusted = rules_mod._trusted_recipients_snapshot()
+    lines = [
+        "## What's Yours",
+        _md_table(
+            ["Boundary", "Values"],
+            [
+                ["Destinations", ", ".join(snapshot["destinations"]) or "none"],
+                ["Identities", ", ".join(snapshot["identities"]) or "none"],
+                ["Hosts", ", ".join(snapshot["hosts"]) or "none"],
+                ["Trusted recipients", str(len(trusted))],
+            ],
+        ),
+        "",
+        "`/guardian mine add|remove destination|identity|host <value>`",
+    ]
+    return "\n".join(lines)
+
+
+def _guardian_review_telegram(owner_hash: str) -> str:
+    return "\n\n".join([
+        "## Review",
+        _md_table(
+            ["Setting", "Value"],
+            [
+                ["Privacy mode", core._privacy_policy()],
+                ["Unknown-tools mode", rules_mod._unknown_tools_mode()],
+                ["LLM user-prompt context", "on" if rules_mod._llm_user_context_enabled() else "off"],
+                ["LLM cron context", "on" if rules_mod._llm_cron_context_enabled() else "off"],
+                ["LLM verifier model", rules_mod._llm_verifier_model() or "default"],
+            ],
+        ),
+        "`/guardian review mode strict|read-only|llm|off`\n`/guardian review owner-context on|off`\n`/guardian review cron-context on|off`\n`/guardian review verifier-model <model_id|default>`",
+    ])
+
+
+def _guardian_sharing_group_command_telegram(owner_hash: str, tokens: list[str]) -> str:
+    sub = tokens[1].lower() if len(tokens) > 1 else ""
+    if sub:
+        return ""
+    trusted = rules_mod._trusted_recipients_snapshot()
+    rules = rules_mod._privacy_rules_for_owner(owner_hash)
+    outward = rules_mod._outward_sharing_snapshot()
+    trusted_rows = [
+        [
+            entry.get("kind", "identity"),
+            entry.get("value") or entry.get("identity") or "",
+            ",".join(entry.get("classes") or []) or "none",
+            entry.get("note", ""),
+        ]
+        for entry in trusted
+    ]
+    rule_rows = []
+    for rule in rules[:15]:
+        match = rule.get("match") if isinstance(rule.get("match"), dict) else {}
+        rule_rows.append([
+            rule.get("id", ""),
+            rule.get("effect", "allow"),
+            match.get("action_family", "*"),
+            match.get("destination", "*"),
+            ",".join(match.get("data_classes") or []) or "*",
+        ])
+    lines = ["## Sharing"]
+    lines.extend(["", "### Trusted Destinations", _md_table(["Kind", "Value", "Classes", "Note"], trusted_rows) if trusted_rows else "No trusted destinations configured."])
+    lines.extend(["", "### Privacy Rules", _md_table(["ID", "Effect", "Action", "Destination", "Classes"], rule_rows) if rule_rows else "No persistent Guardian privacy rules."])
+    lines.extend([
+        "",
+        "### Outward Sharing",
+        _md_table(
+            ["Type", "Count"],
+            [["Builtin subtypes", len(outward["builtin"])], ["Extra subtypes", len(outward["extra"])]],
+        ),
+    ])
+    return "\n".join(lines)
+
+
+def _guardian_protection_command_telegram(owner_hash: str, tokens: list[str]) -> str:
+    sub = tokens[1].lower() if len(tokens) > 1 else ""
+    if sub:
+        return ""
+    security_rows = [
+        [rule["id"], "enabled" if rule.get("enabled") else "disabled", rule.get("label", "")]
+        for rule in rules_mod._security_rules_snapshot()
+    ]
+    overrides = rules_mod._tool_overrides_snapshot()
+    override_rows = [
+        [
+            override.get("id", ""),
+            override.get("match", ""),
+            "enabled" if override.get("enabled") else "disabled",
+            override.get("egress") or override.get("direction") or "",
+            ",".join(override.get("taints") or []) or "none",
+        ]
+        for override in overrides
+    ]
+    pack_rows = [
+        [pack["id"], "enabled" if pack.get("enabled") else "disabled", "yes" if pack.get("required") else "no", pack.get("name", "")]
+        for pack in rules_mod._language_packs_snapshot()
+    ]
+    persist = "on" if rules_mod._persist_prompts_enabled() else "off"
+    return "\n\n".join([
+        "## Protection",
+        "### Security Rules\n" + _md_table(["ID", "State", "Label"], security_rows),
+        "### Tool Overrides\n" + (_md_table(["ID", "Match", "State", "Egress/Direction", "Taints"], override_rows) if override_rows else "No tool overrides configured."),
+        f"### Runtime\nPrompt persistence: `{persist}`",
+        "### Language Packs\n" + _md_table(["ID", "State", "Required", "Name"], pack_rows),
+    ])
+
+
 def _handle_guardian_command(raw_args: str = "") -> str:
-    owner_hash = approvals._pop_command_owner(raw_args)
+    command_context = approvals._pop_command_context(raw_args)
+    owner_hash = command_context.get("owner_hash") or approvals._UNAUTHENTICATED_OWNER_HASH
     try:
         tokens = shlex.split(raw_args.strip())
     except ValueError as exc:
@@ -481,31 +928,53 @@ def _handle_guardian_command(raw_args: str = "") -> str:
 
     # --- Everyday commands (always on top of help). -----------------------------
     if command == "status":
+        if _telegram_command_enabled(command_context):
+            return _guardian_status_telegram(owner_hash)
         return _guardian_status(owner_hash)
     if command == "why":
+        if _telegram_command_enabled(command_context):
+            return _guardian_why_command_telegram(tokens)
         return _guardian_why_command(tokens)
 
     # --- The five group verbs (doc 03 §2), in `decide` order. -------------------
     if command == "activity":
+        if _telegram_command_enabled(command_context):
+            return _guardian_activity_command_telegram(owner_hash, tokens)
         return _guardian_activity_command(owner_hash, tokens)
     if command == "mine":
+        if _telegram_command_enabled(command_context) and len(tokens) == 1:
+            return _guardian_mine_telegram(owner_hash)
         return _guardian_mine_command(owner_hash, tokens)
     if command == "sharing":
+        if _telegram_command_enabled(command_context):
+            rich = _guardian_sharing_group_command_telegram(owner_hash, tokens)
+            if rich:
+                return rich
         return _guardian_sharing_group_command(owner_hash, tokens)
     if command == "review":
+        if _telegram_command_enabled(command_context) and len(tokens) == 1:
+            return _guardian_review_telegram(owner_hash)
         return _guardian_review_command(owner_hash, tokens)
     if command == "protection":
+        if _telegram_command_enabled(command_context):
+            rich = _guardian_protection_command_telegram(owner_hash, tokens)
+            if rich:
+                return rich
         return _guardian_protection_command(owner_hash, tokens)
 
     # --- Activity verbs that read best as their own top-level words. ------------
     if command == "check":
         return _guardian_check_command(tokens)
     if command == "approvals":
+        if _telegram_command_enabled(command_context):
+            return _guardian_approvals_command_telegram(owner_hash)
         return _guardian_approvals_command(owner_hash)
     if command == "clear-taint":
         return _guardian_clear_taint(owner_hash)
     if command == "approve" and len(tokens) >= 2:
         keyword = tokens[2].lower() if len(tokens) >= 3 else ""
+        if _telegram_command_enabled(command_context) and not keyword:
+            return _guardian_permit_menu_telegram(owner_hash, tokens[1])
         return _guardian_approve(owner_hash, tokens[1], keyword)
     if command in {"deny", "dismiss"} and len(tokens) == 2:
         return _guardian_dismiss(owner_hash, tokens[1])
