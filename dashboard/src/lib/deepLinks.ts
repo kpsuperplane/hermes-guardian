@@ -6,7 +6,7 @@
 // either plain text or a link carrying a target tab id. Unknown clauses render
 // as plain text (resilient by design — a future step never breaks the row).
 
-export type TabId = "activity" | "whats-yours" | "sharing" | "review" | "protection";
+export type TabId = "activity" | "whats-yours" | "reading" | "sharing" | "review" | "protection";
 
 export interface DeepLinkSegment {
   text: string;
@@ -56,9 +56,9 @@ function segmentsForStep(base: string): DeepLinkSegment[] | null {
     ];
   }
   if (base === "source_default") {
-    // Conservative taint from an undeclared MCP doc-read — classify the server in Protection.
+    // Conservative taint from an undeclared MCP doc-read — classify the server in Reading.
     return [
-      { text: "undeclared source — tainted conservatively", tab: "protection" },
+      { text: "undeclared source — tainted conservatively", tab: "reading" },
       { text: " → classify the server" },
     ];
   }

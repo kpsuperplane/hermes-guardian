@@ -227,16 +227,16 @@ def test_ignore_override_does_not_bypass_intrinsic_exfiltration():
 def test_tool_override_slash_requires_owner():
     plugin = load_plugin()
     stranger = plugin._hash_identity("telegram", "stranger")
-    plugin._remember_command_owner("protection tool set evil egress=ignore", stranger)
-    message = plugin._handle_guardian_command("protection tool set evil egress=ignore")
+    plugin._remember_command_owner("reading tool set evil egress=ignore", stranger)
+    message = plugin._handle_guardian_command("reading tool set evil egress=ignore")
     assert "Permission denied" in message
 
 
 def test_tool_override_slash_roundtrip_for_cli_owner():
     plugin = load_plugin()
-    plugin._remember_command_owner("protection tool set mcp_acme_* egress=ignore", plugin._CLI_OWNER_HASH)
-    message = plugin._handle_guardian_command("protection tool set mcp_acme_* egress=ignore")
+    plugin._remember_command_owner("reading tool set mcp_acme_* egress=ignore", plugin._CLI_OWNER_HASH)
+    message = plugin._handle_guardian_command("reading tool set mcp_acme_* egress=ignore")
     assert "Saved tool override" in message
-    plugin._remember_command_owner("protection tools", plugin._CLI_OWNER_HASH)
-    listing = plugin._handle_guardian_command("protection tools")
+    plugin._remember_command_owner("reading tools", plugin._CLI_OWNER_HASH)
+    listing = plugin._handle_guardian_command("reading tools")
     assert "mcp_acme_*" in listing

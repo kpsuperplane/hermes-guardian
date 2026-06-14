@@ -131,7 +131,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     }
     setTaintClassification(mode);
     setTaintClassificationSaving(true);
-    api("/privacy/taint-classification", { method: "POST", body: JSON.stringify(body) })
+    api("/reading/taint-classification", { method: "POST", body: JSON.stringify(body) })
       .then((payload) => {
         showToast(payload.message || "Saved.");
         return load();
@@ -294,7 +294,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       payload.confirm = "tool-ignore";
     }
     setOverrideFormError("");
-    api("/tools", { method: "POST", body: JSON.stringify(payload) })
+    api("/reading/tools", { method: "POST", body: JSON.stringify(payload) })
       .then((result) => {
         showToast(result.message || "Override saved.");
         setShowOverrideModal(false);
@@ -307,7 +307,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
 
   function toggleOverride(override: ToolOverride) {
     const enabled = override.enabled !== false;
-    api("/tools/" + encodeURIComponent(text(override.id)), {
+    api("/reading/tools/" + encodeURIComponent(text(override.id)), {
       method: "PATCH",
       body: JSON.stringify({ enabled: !enabled }),
     })
@@ -322,7 +322,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
 
   function deleteOverride(override: ToolOverride) {
     if (!window.confirm("Delete the tool override for '" + text(override.match) + "'?")) return;
-    api("/tools/" + encodeURIComponent(text(override.id)), { method: "DELETE" })
+    api("/reading/tools/" + encodeURIComponent(text(override.id)), { method: "DELETE" })
       .then((result) => {
         showToast(result.message || "Deleted.");
         return load();
@@ -333,7 +333,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
   }
 
   function loadSourceSuggestions() {
-    return api("/tools/source-suggestions")
+    return api("/reading/source-suggestions")
       .then((value: { suggestions?: SourceSuggestion[] }) => {
         setSourceSuggestions((value && value.suggestions) || []);
       })
@@ -356,7 +356,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       }
       body.confirm = "source-reference";
     }
-    api("/tools/source", { method: "POST", body: JSON.stringify(body) })
+    api("/reading/source-classification", { method: "POST", body: JSON.stringify(body) })
       .then((result) => {
         showToast(result.message || "Source classified.");
         return Promise.all([loadSourceSuggestions(), load()]);

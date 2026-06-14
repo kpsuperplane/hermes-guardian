@@ -39,9 +39,9 @@ test("read and no-private-taint steps have no links", () => {
   expect(decisionStepSegments("step4_no_private_taint").every((s) => !s.tab)).toBe(true);
 });
 
-test("source_default taint deep-links to Protection (ignores the :reason suffix)", () => {
+test("source_default taint deep-links to Reading (ignores the :reason suffix)", () => {
   const segments = decisionStepSegments("source_default:undeclared_mcp_read");
-  expect(segments.find((s) => s.tab)?.tab).toBe("protection");
+  expect(segments.find((s) => s.tab)?.tab).toBe("reading");
   expect(segments[0].text).toContain("undeclared source");
 });
 

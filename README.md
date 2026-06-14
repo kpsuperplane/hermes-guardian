@@ -196,10 +196,10 @@ Set the mode from a Hermes gateway:
 /guardian review egress-safety llm
 ```
 
-Or edit `guardian-rules.json`. The file is organized into the five IA concepts,
-in `decide` order — `whats_yours` → `sharing` → `review` → `protection` (Activity
-is pure output, so it has no config block) — so reading the file is reading the
-decision:
+Or edit `guardian-rules.json`. The file is organized into the IA concepts,
+in `decide` order — `whats_yours` → `reading` → `sharing` → `review` →
+`protection` (Activity is pure output, so it has no config block) — so reading
+the file is reading the decision:
 
 ```json
 {
@@ -208,6 +208,10 @@ decision:
     "stores": ["store:files", "store:memory", "store:todo", "store:calendar", "store:drive", "draft:*"],
     "identities": [],
     "hosts": []
+  },
+  "reading": {
+    "taint_classification": "balanced",
+    "tools": []
   },
   "sharing": {
     "trusted_recipients": [],
@@ -228,8 +232,6 @@ decision:
       "intrinsic_exfiltration": true,
       "private_network_reads": true
     },
-    "taint_classification": "balanced",
-    "tools": [],
     "language_packs": { "en": true },
     "retention": { "max_rows": 100, "max_age_days": 7 },
     "runtime": { "dashboard_mutations": "auto", "persist_prompts": false }
@@ -241,7 +243,7 @@ This v4 schema is the only shape the loader accepts: there is no version
 detection, and a file that does not match it (including a wholly corrupt one)
 fails closed to `strict` with a clear log line — never to anything permissive.
 Any block may be omitted; missing blocks fill from safe defaults (`review.egress_safety`
-defaults to `llm`, `protection.taint_classification` defaults to `balanced`,
+defaults to `llm`, `reading.taint_classification` defaults to `balanced`,
 `whats_yours.stores` seeds the single-operator stores,
 `sharing` is empty). Outward-sharing builtin subtypes are code-owned and never
 read from config; only `sharing.outward.extra` adds to them. Mutations from the
@@ -591,7 +593,7 @@ declared (`source = reference` or `source = private` on a tool override) follows
 that declaration. An undeclared MCP document read (`…_read_resource`,
 `…_read_document`, `…_get_resource`) of unknown provenance fails closed: it taints
 `documents` conservatively — even with no detectable signal — and Guardian surfaces
-a one-click "Sources seen" classification in Protection so you can declare the
+a one-click "Sources seen" classification in Reading so you can declare the
 server once.
 
 For arbitrary unknown non-MCP reads, **Taint Classification** controls the fallback:
@@ -605,7 +607,7 @@ For arbitrary unknown non-MCP reads, **Taint Classification** controls the fallb
   tools under taint. This surfaces a runtime risk banner.
 
 ```text
-/guardian protection taint-classification balanced|strict|relaxed
+/guardian reading taint-classification balanced|strict|relaxed
 ```
 
 Unknown MCP document source → private until declared; strict extends that
@@ -672,20 +674,20 @@ what a tool actually does, and Guardian trusts your declaration:
 
 ```text
 # An MCP server you trust: its reads carry communications, and it is not a sink.
-/guardian protection tool set mcp_acme_* taints=communications egress=ignore note="trusted acme server"
+/guardian reading tool set mcp_acme_* taints=communications egress=ignore note="trusted acme server"
 
 # A custom tool that really sends messages: classify it so it gates correctly.
-/guardian protection tool set send_widget egress=message_send
+/guardian reading tool set send_widget egress=message_send
 
 # A custom tool that is just a safe read:
-/guardian protection tool set lookup_widget egress=ignore
+/guardian reading tool set lookup_widget egress=ignore
 
 # Force an unrecognized tool to require approval under taint:
-/guardian protection tool set risky_tool egress=gate
+/guardian reading tool set risky_tool egress=gate
 
-/guardian protection tools            # list overrides + current Taint Classification
-/guardian protection tool enable|disable <id>
-/guardian protection tool delete <match_or_id>
+/guardian reading tools            # list overrides + current Taint Classification
+/guardian reading tool enable|disable <id>
+/guardian reading tool delete <match_or_id>
 ```
 
 Override fields:
@@ -738,9 +740,9 @@ substitution, script runtimes, or content-bearing reads such as `cat`, `grep`,
 
 Use these from a Hermes gateway interface:
 
-Commands are grouped into the same five concepts as the dashboard tabs, in
+Commands are grouped into the same concepts as the dashboard tabs, in
 `decide` order, so the help output mirrors the mental model: `activity`,
-`mine` (what's yours), `sharing`, `review`, `protection`. `status` and `why`
+`mine` (what's yours), `reading`, `sharing`, `review`, `protection`. `status` and `why`
 sit on top as the everyday commands.
 
 ```text
@@ -759,6 +761,14 @@ sit on top as the everyday commands.
 /guardian mine
 /guardian mine add|remove destination|identity|host <value>
 /guardian check <destination|recipient>
+
+# READING — what has entered context
+/guardian reading
+/guardian reading taint-classification balanced|strict|relaxed
+/guardian reading tool set <match> [taints=class+class] [egress=ignore|gate|<family>] [direction=read|write] [source=reference|private] [destination=<dest>] [note=<text>]
+/guardian reading tool delete <match_or_id>
+/guardian reading tool enable|disable <id_or_match>
+/guardian reading source suggest|set <server> reference|private
 
 # SHARING — what you've authorized to leave you
 /guardian sharing
@@ -782,11 +792,6 @@ sit on top as the everyday commands.
 # PROTECTION — the floor that always holds
 /guardian protection
 /guardian protection security enable|disable <rule_id>
-/guardian protection tool set <match> [taints=class+class] [egress=ignore|gate|<family>] [direction=read|write] [source=reference|private] [destination=<dest>] [note=<text>]
-/guardian protection tool delete <match_or_id>
-/guardian protection tool enable|disable <id_or_match>
-/guardian protection source suggest|set <server> reference|private
-/guardian protection taint-classification balanced|strict|relaxed
 /guardian protection persist-prompts on|off
 /guardian protection language-packs enable|disable <pack_id>
 ```
@@ -811,9 +816,9 @@ gateway:
 Guardian appears in the main Hermes dashboard at `/guardian` via
 `dashboard/manifest.json`.
 
-Dashboard tabs follow the five-concept IA, in `decide` order — reading the nav
+Dashboard tabs follow the IA, in `decide` order — reading the nav
 left-to-right is reading the decision pipeline top-to-bottom (what happened → is it
-mine → is it covered by a grant → who judges the rest → the floor):
+mine → what was read → is it covered by a grant → who judges the rest → the floor):
 
 - **Activity**: the decided stream as **turn cards** — each card is one turn (one user
   prompt and the checks it drove), paginated by turn, with its checks nested inside and
@@ -830,6 +835,9 @@ mine → is it covered by a grant → who judges the rest → the floor):
   identities / hosts), a grant banner when identities/hosts are set, and a *Check a
   destination* widget (resolves a hypothetical destination/recipient to its trust,
   read-only).
+- **Reading**: source provenance and read-taint classification — Taint
+  Classification, tool classification overrides, and *Sources seen* for undeclared
+  MCP document-read servers.
 - **Sharing**: the standing authorization you've granted — trusted recipients, the
   ordered allow/deny rules (add/edit/delete/enable/disable/**reorder**), the
   outward-sharing action names (verbs such as share/invite/publish that are always
@@ -841,8 +849,7 @@ mine → is it covered by a grant → who judges the rest → the floor):
   who-reviews sentence), the owner/cron authorization context toggles, the verifier
   model, and a verifier **scoreboard** (consulted checks + median latency).
 - **Protection**: the floor + machinery + diagnostics — Security Module hard-block
-  rules, tool classification overrides, Taint Classification, language packs,
-  retention, a **Debugging** card with the
+  rules, language packs, retention, a **Debugging** card with the
   opt-in *Persist prompts* toggle (default off, confirmation-gated — writes the
   sanitized user/cron prompt onto activity rows so turn headers show what was asked),
   and the per-check timing / diagnostics table.
@@ -859,12 +866,12 @@ GET /api/plugins/hermes-guardian/approvals
 GET /api/plugins/hermes-guardian/destinations
 GET /api/plugins/hermes-guardian/destinations/resolve
 GET /api/plugins/hermes-guardian/destinations/suggestions
-GET /api/plugins/hermes-guardian/tools/source-suggestions
+GET /api/plugins/hermes-guardian/reading/source-suggestions
 GET /api/plugins/hermes-guardian/sharing/preview
 POST /api/plugins/hermes-guardian/sharing/impact
 POST /api/plugins/hermes-guardian/privacy/egress-safety
 POST /api/plugins/hermes-guardian/privacy/clear-taint
-POST /api/plugins/hermes-guardian/privacy/taint-classification
+POST /api/plugins/hermes-guardian/reading/taint-classification
 POST /api/plugins/hermes-guardian/privacy/user-context
 POST /api/plugins/hermes-guardian/privacy/cron-context
 POST /api/plugins/hermes-guardian/privacy/verifier-model
@@ -873,10 +880,10 @@ PATCH /api/plugins/hermes-guardian/language-packs/{pack_id}
 POST /api/plugins/hermes-guardian/rules
 PATCH /api/plugins/hermes-guardian/rules/{rule_id}
 DELETE /api/plugins/hermes-guardian/rules/{rule_id}
-POST /api/plugins/hermes-guardian/tools
-PATCH /api/plugins/hermes-guardian/tools/{override_id}
-DELETE /api/plugins/hermes-guardian/tools/{override_id}
-POST /api/plugins/hermes-guardian/tools/source
+POST /api/plugins/hermes-guardian/reading/tools
+PATCH /api/plugins/hermes-guardian/reading/tools/{override_id}
+DELETE /api/plugins/hermes-guardian/reading/tools/{override_id}
+POST /api/plugins/hermes-guardian/reading/source-classification
 POST /api/plugins/hermes-guardian/protection/persist-prompts
 POST /api/plugins/hermes-guardian/approvals/{approval_id}/approve
 POST /api/plugins/hermes-guardian/approvals/{approval_id}/dismiss

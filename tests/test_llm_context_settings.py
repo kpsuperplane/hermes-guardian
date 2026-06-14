@@ -39,11 +39,11 @@ def test_settings_persist_and_preserve_other_privacy_config(tmp_path):
 
     data = json.loads((tmp_path / "rules.json").read_text())
     # v4 on-disk: the review block carries Egress Safety + context flags; source/sink
-    # fallback lives in the protection block.
+    # fallback lives in the reading block.
     review = data["review"]
     assert review["owner_context"] is False
     assert review["cron_context"] is True
-    assert data["protection"]["taint_classification"] == "relaxed"
+    assert data["reading"]["taint_classification"] == "relaxed"
     assert review["egress_safety"] == "strict"
     assert plugin._llm_user_context_enabled() is False
     assert plugin._llm_cron_context_enabled() is True

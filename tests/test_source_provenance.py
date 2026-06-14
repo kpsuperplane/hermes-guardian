@@ -278,7 +278,7 @@ def _tainted_rows(plugin):
 def test_undeclared_mcp_read_of_signalless_prose_taints_the_fn_closes():
     # THE headline: signal-less personal prose from an undeclared MCP doc-read used to read
     # untainted (the false negative). It now taints `documents` conservatively, with the
-    # source_default reason carried into the activity row and a Protection deep-link.
+    # source_default reason carried into the activity row and a Reading deep-link.
     plugin = load_plugin()
     bind_owner(plugin)
 
@@ -289,7 +289,7 @@ def test_undeclared_mcp_read_of_signalless_prose_taints_the_fn_closes():
 
     rows = _tainted_rows(plugin)
     assert rows and rows[0]["reason"] == "source_default:undeclared_mcp_read"
-    # The row deep-links to the Protection picker (decision_step base maps there).
+    # The row deep-links to the Reading picker (decision_step base maps there).
     assert rows[0]["decision_step"].split(":")[0] == "source_default"
 
 

@@ -913,7 +913,7 @@ def _privacy_observe_tool_result(
         # Provenance retired (doc 02 §4): the read taints the session ambiently; there is
         # no read-time fingerprint index. ``decide`` reasons over this ambient taint. An
         # undeclared MCP doc-read carries the source_default reason so the operator can see
-        # *why* it was tainted (and the activity row deep-links to the Protection picker).
+        # *why* it was tainted (and the activity row deep-links to the Reading picker).
         reason = (
             tool_policy._SOURCE_DEFAULT_REASON
             if source_default
@@ -927,7 +927,7 @@ def _privacy_observe_tool_result(
             tool_name=tool_name,
             data_classes=taint_classes,
             reason=reason,
-            # The conservative-default taint row deep-links to the Protection picker so the
+            # The conservative-default taint row deep-links to the Reading picker so the
             # operator can classify the server one click away (see deepLinks.ts).
             decision_step=(
                 tool_policy._SOURCE_DEFAULT_REASON
@@ -948,7 +948,7 @@ def _privacy_observe_tool_result(
 
     # First time this session sees an undeclared MCP doc-read from a server, surface a
     # one-click classification suggestion (server prefix only, never content). Declaring the
-    # server (reference|private) via the Protection picker silences it and sets the behavior.
+    # server (reference|private) via the Reading picker silences it and sets the behavior.
     if tool_policy._is_mcp_doc_read(tool_name) and not is_reference_read and not tool_policy._tool_override_source(tool_name):
         server = tool_policy._mcp_server_prefix(tool_name)
         if server and tool_policy._mark_source_suggested(session_id, server):

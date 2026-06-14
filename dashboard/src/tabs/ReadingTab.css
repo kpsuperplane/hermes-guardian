@@ -1,0 +1,26 @@
+/* Reading tab: source/tool classification and read-taint controls. */
+.hermes-guardian-tools-override-actions {
+  display: flex;
+  margin-top: 1rem;
+}
+
+.hermes-guardian-taint-classification-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.hermes-guardian-taint-classification-label {
+  display: grid;
+  gap: 0.15rem;
+  font-weight: 650;
+  min-width: 0;
+}
+
+.hermes-guardian-taint-classification-row .hermes-guardian-select {
+  width: auto;
+}

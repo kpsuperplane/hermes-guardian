@@ -375,7 +375,7 @@ async def clear_taint(request: Request) -> JSONResponse:
     return _json_mutation_result(_guardian()._dashboard_clear_taint_action())
 
 
-@router.post("/privacy/taint-classification")
+@router.post("/reading/taint-classification")
 async def set_taint_classification(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("taint_classification", body)
@@ -418,7 +418,7 @@ async def set_persist_prompts(request: Request, body: dict[str, Any]) -> JSONRes
     )
 
 
-@router.post("/tools")
+@router.post("/reading/tools")
 async def create_tool_override(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("tool_override", body)
@@ -427,7 +427,7 @@ async def create_tool_override(request: Request, body: dict[str, Any]) -> JSONRe
     )
 
 
-@router.patch("/tools/{override_id}")
+@router.patch("/reading/tools/{override_id}")
 async def update_tool_override(request: Request, override_id: str, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("tool_override", body)
@@ -436,7 +436,7 @@ async def update_tool_override(request: Request, override_id: str, body: dict[st
     )
 
 
-@router.delete("/tools/{override_id}")
+@router.delete("/reading/tools/{override_id}")
 async def delete_tool_override(request: Request, override_id: str) -> JSONResponse:
     _require_dashboard_admin(request)
     return _json_mutation_result(
@@ -444,12 +444,12 @@ async def delete_tool_override(request: Request, override_id: str) -> JSONRespon
     )
 
 
-@router.get("/tools/source-suggestions")
+@router.get("/reading/source-suggestions")
 async def source_classification_suggestions() -> dict[str, Any]:
     return _guardian()._dashboard_source_suggestions()
 
 
-@router.post("/tools/source")
+@router.post("/reading/source-classification")
 async def classify_source(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("source_classify", body)

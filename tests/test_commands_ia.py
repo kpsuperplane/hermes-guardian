@@ -1,7 +1,7 @@
 """Slash-command IA regroup (doc 03 §6): rename map, grouped help, new commands.
 
 Step 2 of the IA refactor regroups `/guardian` subcommands into the five group
-verbs (`activity`, `mine`, `sharing`, `review`, `protection`) plus top-level
+verbs (`activity`, `mine`, `reading`, `sharing`, `review`, `protection`) plus top-level
 `status`/`why`. The old top-level names (`self`, `rules`, the bare outward
 `sharing`, `security`, `tools`, `language-packs`, `privacy`) are removed, not
 aliased; each capability survives via the SAME underlying handler function.
@@ -77,16 +77,27 @@ def test_protection_security_replaces_security_and_reuses_handler():
     assert "Disabled security rule sensitive_links" in disabled
 
 
-def test_protection_tool_replaces_tools_and_reuses_handler():
+def test_reading_tool_replaces_tools_and_old_protection_location_is_gone():
     plugin = load_plugin()
     assert plugin._handle_guardian_command("tools") == "Invalid /guardian command. Try /guardian help."
+    assert "Usage" in plugin._handle_guardian_command("protection tool set mcp_acme_* egress=ignore")
     plugin._remember_command_owner(
-        "protection tool set mcp_acme_* egress=ignore", plugin._CLI_OWNER_HASH
+        "reading tool set mcp_acme_* egress=ignore", plugin._CLI_OWNER_HASH
     )
-    out = plugin._handle_guardian_command("protection tool set mcp_acme_* egress=ignore")
+    out = plugin._handle_guardian_command("reading tool set mcp_acme_* egress=ignore")
     assert "Saved tool override" in out
-    listing = plugin._handle_guardian_command("protection tools")
+    listing = plugin._handle_guardian_command("reading tools")
     assert "mcp_acme_*" in listing
+    assert "Usage" in plugin._handle_guardian_command("protection source suggest")
+
+
+def test_reading_source_command_replaces_protection_source():
+    plugin = load_plugin()
+    assert "No undeclared MCP doc-read sources" in plugin._handle_guardian_command("reading source suggest")
+    plugin._remember_command_owner("reading source set crm reference", plugin._CLI_OWNER_HASH)
+    out = plugin._handle_guardian_command("reading source set crm reference")
+    assert "crm" in out
+    assert plugin._tool_override_for("crm_read_resource").get("source") == "reference"
 
 
 def test_protection_language_packs_replaces_language_packs_and_reuses_handler():
@@ -118,8 +129,9 @@ def test_review_maps_privacy_setters_and_old_privacy_name_is_gone():
     plugin._remember_command_owner("review cron-context on", plugin._CLI_OWNER_HASH)
     plugin._handle_guardian_command("review cron-context on")
     assert plugin._llm_cron_context_enabled() is True
-    plugin._remember_command_owner("protection taint-classification relaxed", plugin._CLI_OWNER_HASH)
-    plugin._handle_guardian_command("protection taint-classification relaxed")
+    assert "Usage" in plugin._handle_guardian_command("protection taint-classification relaxed")
+    plugin._remember_command_owner("reading taint-classification relaxed", plugin._CLI_OWNER_HASH)
+    plugin._handle_guardian_command("reading taint-classification relaxed")
     assert plugin._taint_classification_mode() == "relaxed"
     review_out = plugin._handle_guardian_command("review unknown-tools gate")
     assert plugin._taint_classification_mode() == "relaxed"

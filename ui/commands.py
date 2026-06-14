@@ -46,6 +46,13 @@ _GUARDIAN_HELP_LINES = [
     "- `/guardian mine add|remove destination|identity|host <value>`",
     "- `/guardian check <destination|recipient>` — resolve trust preview",
     "",
+    "READING — what has entered context",
+    "- `/guardian reading` — show source/tool classification",
+    "- `/guardian reading taint-classification balanced|strict|relaxed`",
+    "- `/guardian reading tool set|delete|enable|disable ...`",
+    "- `/guardian reading tools`",
+    "- `/guardian reading source suggest|set <server> reference|private`",
+    "",
     "SHARING — what you've authorized to leave you",
     "- `/guardian sharing` — show trusted destinations + rules + outward-sharing",
     "- `/guardian sharing destination add|remove <identity> [classes=<class+class>]`",
@@ -62,11 +69,8 @@ _GUARDIAN_HELP_LINES = [
     "- `/guardian review verifier-model <model_id|default>`",
     "",
     "PROTECTION — the floor that always holds",
-    "- `/guardian protection` — show security, tool overrides, language packs",
+    "- `/guardian protection` — show security, language packs, runtime diagnostics",
     "- `/guardian protection security enable|disable <rule_id>`",
-    "- `/guardian protection tool set|delete|enable|disable ...`",
-    "- `/guardian protection source suggest|set <server> reference|private`",
-    "- `/guardian protection taint-classification balanced|strict|relaxed`",
     "- `/guardian protection persist-prompts on|off`",
     "- `/guardian protection language-packs enable|disable <pack_id>`",
 ]
@@ -894,14 +898,10 @@ def _guardian_sharing_group_command_telegram(owner_hash: str, tokens: list[str])
     return "\n".join(lines)
 
 
-def _guardian_protection_command_telegram(owner_hash: str, tokens: list[str]) -> str:
+def _guardian_reading_command_telegram(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     if sub:
         return ""
-    security_rows = [
-        [rule["id"], "enabled" if rule.get("enabled") else "disabled", rule.get("label", "")]
-        for rule in rules_mod._security_rules_snapshot()
-    ]
     overrides = rules_mod._tool_overrides_snapshot()
     override_rows = [
         [
@@ -913,6 +913,21 @@ def _guardian_protection_command_telegram(owner_hash: str, tokens: list[str]) ->
         ]
         for override in overrides
     ]
+    return "\n\n".join([
+        "## Reading",
+        f"Taint Classification: `{rules_mod._taint_classification_mode()}`",
+        "### Tool Overrides\n" + (_md_table(["ID", "Match", "State", "Egress/Direction", "Taints"], override_rows) if override_rows else "No tool overrides configured."),
+    ])
+
+
+def _guardian_protection_command_telegram(owner_hash: str, tokens: list[str]) -> str:
+    sub = tokens[1].lower() if len(tokens) > 1 else ""
+    if sub:
+        return ""
+    security_rows = [
+        [rule["id"], "enabled" if rule.get("enabled") else "disabled", rule.get("label", "")]
+        for rule in rules_mod._security_rules_snapshot()
+    ]
     pack_rows = [
         [pack["id"], "enabled" if pack.get("enabled") else "disabled", "yes" if pack.get("required") else "no", pack.get("name", "")]
         for pack in rules_mod._language_packs_snapshot()
@@ -921,7 +936,6 @@ def _guardian_protection_command_telegram(owner_hash: str, tokens: list[str]) ->
     return "\n\n".join([
         "## Protection",
         "### Security Rules\n" + _md_table(["ID", "State", "Label"], security_rows),
-        "### Tool Overrides\n" + (_md_table(["ID", "Match", "State", "Egress/Direction", "Taints"], override_rows) if override_rows else "No tool overrides configured."),
         f"### Runtime\nPrompt persistence: `{persist}`",
         "### Language Packs\n" + _md_table(["ID", "State", "Required", "Name"], pack_rows),
     ])
@@ -949,7 +963,7 @@ def _handle_guardian_command(raw_args: str = "") -> str:
             return _guardian_why_command_telegram(tokens)
         return _guardian_why_command(tokens)
 
-    # --- The five group verbs (doc 03 §2), in `decide` order. -------------------
+    # --- Group verbs (doc 03 §2), in `decide` order. ----------------------------
     if command == "activity":
         if _telegram_command_enabled(command_context):
             return _guardian_activity_command_telegram(owner_hash, tokens)
@@ -958,6 +972,12 @@ def _handle_guardian_command(raw_args: str = "") -> str:
         if _telegram_command_enabled(command_context) and len(tokens) == 1:
             return _guardian_mine_telegram(owner_hash)
         return _guardian_mine_command(owner_hash, tokens)
+    if command == "reading":
+        if _telegram_command_enabled(command_context):
+            rich = _guardian_reading_command_telegram(owner_hash, tokens)
+            if rich:
+                return rich
+        return _guardian_reading_command(owner_hash, tokens)
     if command == "sharing":
         if _telegram_command_enabled(command_context):
             rich = _guardian_sharing_group_command_telegram(owner_hash, tokens)
@@ -1104,14 +1124,9 @@ def _guardian_review_command(owner_hash: str, tokens: list[str]) -> str:
     return _guardian_privacy_command(owner_hash, ["privacy", rename[sub], *tokens[2:]])
 
 
-def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
-    """PROTECTION group: security rules, tool overrides, language packs.
-
-    Delegates to the existing security/tools/language-packs handlers.
-    """
+def _guardian_reading_command(owner_hash: str, tokens: list[str]) -> str:
+    """READING group: source provenance, Taint Classification, tool overrides."""
     sub = tokens[1].lower() if len(tokens) > 1 else ""
-    if sub == "security":
-        return _guardian_security_command(owner_hash, ["security", *tokens[2:]])
     if sub == "tool":
         return _guardian_tool_command(owner_hash, ["tool", *tokens[2:]])
     if sub == "tools":
@@ -1119,7 +1134,31 @@ def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
     if sub == "source":
         return _guardian_source_command(owner_hash, tokens)
     if sub in {"taint-classification", "taint_classification"}:
-        return _guardian_privacy_command(owner_hash, ["privacy", "taint-classification", *tokens[2:]])
+        if len(tokens) != 3:
+            return "Usage: `/guardian reading taint-classification balanced|strict|relaxed`"
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        ok, message = rules_mod._set_taint_classification_mode(tokens[2])
+        return message
+    if not sub:
+        return _guardian_reading_overview()
+    return (
+        "Usage: `/guardian reading` | "
+        "`/guardian reading taint-classification balanced|strict|relaxed` | "
+        "`/guardian reading tool set|delete|enable|disable ...` | "
+        "`/guardian reading tools` | "
+        "`/guardian reading source suggest|set <server> reference|private`"
+    )
+
+
+def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
+    """PROTECTION group: security rules, language packs, runtime diagnostics.
+
+    Delegates to the existing security/language-packs handlers.
+    """
+    sub = tokens[1].lower() if len(tokens) > 1 else ""
+    if sub == "security":
+        return _guardian_security_command(owner_hash, ["security", *tokens[2:]])
     if sub in {"persist-prompts", "persist_prompts"}:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
@@ -1135,9 +1174,6 @@ def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
     return (
         "Usage: `/guardian protection` | "
         "`/guardian protection security enable|disable <rule_id>` | "
-        "`/guardian protection tool set|delete|enable|disable ...` | "
-        "`/guardian protection taint-classification balanced|strict|relaxed` | "
-        "`/guardian protection source suggest|set <server> reference|private` | "
         "`/guardian protection persist-prompts on|off` | "
         "`/guardian protection language-packs enable|disable <pack_id>`"
     )
@@ -1151,14 +1187,14 @@ def _guardian_source_command(owner_hash: str, tokens: list[str]) -> str:
     """
     sub = tokens[2].lower() if len(tokens) > 2 else ""
     usage = (
-        "Usage: `/guardian protection source suggest` | "
-        "`/guardian protection source set <server> reference|private`"
+        "Usage: `/guardian reading source suggest` | "
+        "`/guardian reading source set <server> reference|private`"
     )
     if sub == "suggest":
         suggestions = rules_mod._source_classification_suggestions()
         if not suggestions:
             return "No undeclared MCP doc-read sources seen yet."
-        lines = ["🛡️ **Sources seen** · `/guardian protection source set <server> reference|private`"]
+        lines = ["🛡️ **Sources seen** · `/guardian reading source set <server> reference|private`"]
         for item in suggestions:
             lines.append(f"- `{item['server']}` ({item['hits']}×)")
         return "\n".join(lines)
@@ -1173,16 +1209,30 @@ def _guardian_source_command(owner_hash: str, tokens: list[str]) -> str:
 
 
 def _guardian_protection_overview() -> str:
-    """The PROTECTION parent screen: security rules + tool overrides + packs."""
+    """The PROTECTION parent screen: security rules + runtime + packs."""
     persist = "on" if rules_mod._persist_prompts_enabled() else "off"
     return "\n\n".join(
         [
             _guardian_security_command("", ["security"]),
-            _guardian_tools_command(),
             f"Prompt persistence: {persist} (sanitized user/cron prompt stored on activity rows for debugging)",
             _guardian_language_packs_command("", ["language-packs"]),
         ]
     )
+
+
+def _guardian_reading_overview() -> str:
+    """The READING parent screen: Taint Classification + tool/source classification."""
+    suggestions = rules_mod._source_classification_suggestions()
+    lines = [_guardian_tools_command()]
+    if suggestions:
+        lines.append(
+            "Sources seen:\n"
+            + "\n".join(f"- {item['server']} ({item['hits']} read(s) seen)" for item in suggestions)
+            + "\nUse /guardian reading source set <server> reference|private."
+        )
+    else:
+        lines.append("Sources seen: none awaiting classification.")
+    return "\n\n".join(lines)
 
 
 # --- New read commands (doc 03 §5): non-mutating, no confirmation. -------------
@@ -1315,8 +1365,7 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
         "Usage: /guardian review egress-safety strict|read-only|llm|off | "
         "/guardian review owner-context on|off | "
         "/guardian review cron-context on|off | "
-        "`/guardian review verifier-model <model_id|default>` | "
-        "/guardian protection taint-classification balanced|strict|relaxed"
+        "`/guardian review verifier-model <model_id|default>`"
     )
 
 
@@ -1343,8 +1392,8 @@ def _guardian_tools_command() -> str:
         suffix = f" - {note}" if note else ""
         lines.append(f"- {override.get('id', '')}: " + " ".join(bits) + suffix)
     lines.append(
-        "Use /guardian protection tool set|delete|enable|disable and "
-        "/guardian protection taint-classification balanced|strict|relaxed."
+        "Use /guardian reading tool set|delete|enable|disable and "
+        "/guardian reading taint-classification balanced|strict|relaxed."
     )
     return "\n".join(lines)
 
@@ -1352,10 +1401,10 @@ def _guardian_tools_command() -> str:
 def _guardian_tool_command(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     usage = (
-        "Usage: `/guardian protection tool set <match> [taints=a+b] [egress=ignore|gate|<family>] "
+        "Usage: `/guardian reading tool set <match> [taints=a+b] [egress=ignore|gate|<family>] "
         "[direction=read|write] [source=reference|private] [destination=<dest>] [note=<text>]` | "
-        "`/guardian protection tool delete <match_or_id>` | "
-        "`/guardian protection tool enable|disable <id_or_match>`"
+        "`/guardian reading tool delete <match_or_id>` | "
+        "`/guardian reading tool enable|disable <id_or_match>`"
     )
     if sub == "set" and len(tokens) >= 3:
         if not _slash_admin_allowed(owner_hash):

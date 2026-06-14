@@ -1111,7 +1111,7 @@ def _taint_classes_for_tool_result(
             return _source_private_taint_classes(tool_name) | override_taints
         # Undeclared, unknown provenance → conservative: always taint as personal documents,
         # even when the content trips no signal (closes the 0818f09 FN). _is_source_default_read
-        # flags these rows (source_default reason → Protection picker / deep-link); the operator
+        # flags these rows (source_default reason → Reading picker / deep-link); the operator
         # declares the server (source=reference|private) to change the classification.
         return {"documents"} | override_taints
     classes = _classes_from_tool_name(tool_name)
@@ -1520,7 +1520,7 @@ def _is_source_default_read(tool_name: str, tool_args: Any = None) -> bool:
     """True iff a read hits the conservative source-provenance default: an MCP doc-read (by
     name shape) that is neither provably-reference nor declared. These are the undeclared,
     unknown-provenance reads tainted as `documents` with the _SOURCE_DEFAULT_REASON — the
-    rows the Protection picker and the activity deep-link key off."""
+    rows the Reading picker and the activity deep-link key off."""
     if not _is_mcp_doc_read(tool_name):
         return False
     if _is_reference_read(tool_name, tool_args):

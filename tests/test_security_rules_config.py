@@ -40,7 +40,7 @@ def test_security_rule_can_be_disabled_by_direct_json_edit(tmp_path):
     plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin.state._PERSISTENT_RULES_CACHE = None
     plugin.state._PERSISTENT_RULES_MTIME = None
-    # v4 five-block schema: review.egress_safety + protection.security toggle map.
+    # v4 IA schema: review.egress_safety + protection.security toggle map.
     (tmp_path / "rules.json").write_text(json.dumps({
         "version": 4,
         "review": {"egress_safety": "strict"},

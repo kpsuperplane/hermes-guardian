@@ -232,9 +232,10 @@ the tests/docs are updated accordingly:
 
 ## Policy And State Files
 
-`guardian-rules.json` is organized into the five IA concepts, in `decide` order —
-`whats_yours` → `sharing` → `review` → `protection`, plus `version`/meta (Activity
-is pure output, so it has no config block). The on-disk **v4 schema** is the only
+`guardian-rules.json` is organized into the IA concepts, in `decide` order —
+`whats_yours` → `reading` → `sharing` → `review` → `protection`, plus
+`version`/meta (Activity is pure output, so it has no config block). The on-disk
+**v4 schema** is the only
 shape the loader accepts: there is no version detection and the loader does NOT
 branch on `version`. A file that does not match it fails closed to strict with a
 clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
@@ -246,6 +247,20 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
     "stores": ["store:files", "store:memory", "store:todo", "store:calendar", "store:drive", "draft:*"],
     "identities": [],
     "hosts": []
+  },
+  "reading": {
+    "taint_classification": "balanced",
+    "tools": [
+      {
+        "id": "tool_ab12cd34",
+        "match": "mcp_acme_*",
+        "taints": ["email"],
+        "egress": "ignore",
+        "destination": "",
+        "enabled": true,
+        "note": "acme MCP server is a trusted read"
+      }
+    ]
   },
   "sharing": {
     "trusted_recipients": [
@@ -268,18 +283,6 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
       "intrinsic_exfiltration": true,
       "private_network_reads": true
     },
-    "taint_classification": "balanced",
-    "tools": [
-      {
-        "id": "tool_ab12cd34",
-        "match": "mcp_acme_*",
-        "taints": ["email"],
-        "egress": "ignore",
-        "destination": "",
-        "enabled": true,
-        "note": "acme MCP server is a trusted read"
-      }
-    ],
     "language_packs": {"en": true},
     "retention": {"max_rows": 100, "max_age_days": 7},
     "runtime": {"dashboard_mutations": "auto", "persist_prompts": false}
@@ -297,19 +300,19 @@ llm_cron_context,llm_verifier_model,rules,tools}`, `self`, `trusted_recipients`,
 re-normalizes it on save; `decide`, `classify`, and `resolve_destination_trust`
 only ever see the internal structure.
 The file→internal map (doc 04 §3): `whats_yours.stores/.identities/.hosts`
-→ `self.destinations/.identities/.hosts`; `sharing.trusted_recipients` →
+→ `self.destinations/.identities/.hosts`; `reading.taint_classification` →
+`privacy.taint_classification`; `reading.tools` → `privacy.tools`;
+`sharing.trusted_recipients` →
 `trusted_recipients.entries`; `sharing.rules` → `privacy.rules`;
 `sharing.outward.extra` → `outward_sharing.extra` (builtin subtypes are code-owned and
 never read from / written to config); `review.egress_safety/.owner_context/.cron_context/
 .verifier_model` → `privacy.egress_safety/.llm_user_context/.llm_cron_context/
 .llm_verifier_model`; `protection.security` (a `{id: bool}` toggle map)
-→ `security.rules`; `protection.taint_classification` →
-`privacy.taint_classification`;
-`protection.tools` → `privacy.tools`; `protection.language_packs`
+→ `security.rules`; `protection.language_packs`
 (a `{id: bool}` toggle map) → `language_packs.enabled`; `protection.retention` →
 `retention`; `protection.runtime` → `dashboard`.
 
-`protection.taint_classification` is `balanced` (default), `strict`, or `relaxed`.
+`reading.taint_classification` is `balanced` (default), `strict`, or `relaxed`.
 In `balanced`, arbitrary unknown non-MCP read results use recognized source names,
 tool overrides, and content signals; unrecognized non-MCP tools are gated under
 taint. In `strict`, an otherwise-unknown non-MCP read result that carries no
@@ -420,8 +423,9 @@ Keep `dashboard/plugin_api.py` as a thin adapter:
   Taint Classification `relaxed` (`taint-classification-relaxed`),
   `egress:ignore` tool overrides (`tool-ignore`), and enabling cron context
   (`cron-context-on`).
-- Tool override, Taint Classification, and LLM-context routes (`POST /tools`,
-  `PATCH /tools/{id}`, `DELETE /tools/{id}`, `POST /privacy/taint-classification`,
+- Tool override, Taint Classification, and LLM-context routes (`POST /reading/tools`,
+  `PATCH /reading/tools/{id}`, `DELETE /reading/tools/{id}`, `POST /reading/taint-classification`,
+  `GET /reading/source-suggestions`, `POST /reading/source-classification`,
   `POST /privacy/user-context`, `POST /privacy/cron-context`,
   `POST /privacy/verifier-model`) are thin adapters over the `privacy/rules.py`
   mutators, like the other `_dashboard_*` actions.
@@ -452,8 +456,8 @@ When adding or changing a pack:
 ## Slash And CLI Commands
 
 Slash command behavior lives in `ui/commands.py`. Commands are grouped into the
-five IA concepts in `decide` order
-(`activity`/`mine`/`sharing`/`review`/`protection`), with `status`/`why` on top.
+IA concepts in `decide` order
+(`activity`/`mine`/`reading`/`sharing`/`review`/`protection`), with `status`/`why` on top.
 The full command reference lives in `README.md` (Slash Commands) — keep it in
 sync with `ui/commands.py` when commands change; do not duplicate the list here.
 `hermes guardian dashboard status|url|prune` is the CLI surface.

@@ -31,6 +31,27 @@ def _request(headers: dict | None = None):
     return SimpleNamespace(headers=headers or {})
 
 
+def test_reading_routes_replace_old_tool_and_taint_routes():
+    source = (Path(__file__).resolve().parents[1] / "dashboard" / "plugin_api.py").read_text()
+
+    for path in {
+        "/reading/taint-classification",
+        "/reading/tools",
+        "/reading/tools/{override_id}",
+        "/reading/source-suggestions",
+        "/reading/source-classification",
+    }:
+        assert path in source
+    for path in {
+        "/privacy/taint-classification",
+        "/tools",
+        "/tools/{override_id}",
+        "/tools/source-suggestions",
+        "/tools/source",
+    }:
+        assert f'"{path}"' not in source
+
+
 def test_policy_snapshot_compacts_all_class_privacy_rule(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, rules=[privacy_rule(rule_id="rule_all", data_classes=["*"])])

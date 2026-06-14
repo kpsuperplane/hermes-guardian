@@ -14,17 +14,19 @@ import { useToasts } from "@/hooks/useToasts";
 import type { TabId } from "@/lib/deepLinks";
 import { ActivityTab } from "@/tabs/ActivityTab";
 import { ProtectionTab } from "@/tabs/ProtectionTab";
+import { ReadingTab } from "@/tabs/ReadingTab";
 import { ReviewTab } from "@/tabs/ReviewTab";
 import { SharingTab } from "@/tabs/SharingTab";
 import { WhatsYoursTab } from "@/tabs/WhatsYoursTab";
 import type { PendingApproval } from "@/types";
 
-// The five-tab IA (charter §1, doc 02). Order is fixed: it mirrors decide().
+// The six-tab IA (charter §1, doc 02). Order is fixed: it mirrors decide().
 // Reading left-to-right is reading decide() top-to-bottom: what happened ->
 // is it mine -> is it covered by a grant -> who judges the rest -> the floor.
 const TABS: Array<[TabId, string]> = [
   ["activity", "Activity"],
   ["whats-yours", "What's Yours"],
+  ["reading", "Reading"],
   ["sharing", "Sharing"],
   ["review", "Review"],
   ["protection", "Protection"],
@@ -176,6 +178,22 @@ export function GuardianPage() {
 
       {tab === "whats-yours" ? <WhatsYoursTab controller={destinations} /> : null}
 
+      {tab === "reading" ? (
+        <ReadingTab
+          policy={policy}
+          onNewOverride={actions.openCreateOverride}
+          onEditOverride={actions.openEditOverride}
+          onToggleOverride={actions.toggleOverride}
+          onDeleteOverride={actions.deleteOverride}
+          taintClassification={taintClassification}
+          taintClassificationSaving={actions.taintClassificationSaving}
+          onChangeTaintClassification={actions.saveTaintClassification}
+          sourceSuggestions={actions.sourceSuggestions}
+          onLoadSourceSuggestions={actions.loadSourceSuggestions}
+          onClassifySource={actions.classifySource}
+        />
+      ) : null}
+
       {tab === "sharing" ? (
         <SharingTab
           controller={destinations}
@@ -211,16 +229,6 @@ export function GuardianPage() {
         <ProtectionTab
           policy={policy}
           onPatchSecurityRule={actions.patchSecurityRule}
-          onNewOverride={actions.openCreateOverride}
-          onEditOverride={actions.openEditOverride}
-          onToggleOverride={actions.toggleOverride}
-          onDeleteOverride={actions.deleteOverride}
-          taintClassification={taintClassification}
-          taintClassificationSaving={actions.taintClassificationSaving}
-          onChangeTaintClassification={actions.saveTaintClassification}
-          sourceSuggestions={actions.sourceSuggestions}
-          onLoadSourceSuggestions={actions.loadSourceSuggestions}
-          onClassifySource={actions.classifySource}
           languagePacksSaving={actions.languagePacksSaving}
           onPatchLanguagePack={actions.patchLanguagePack}
           onSetAllLanguagePacks={actions.setAllLanguagePacks}

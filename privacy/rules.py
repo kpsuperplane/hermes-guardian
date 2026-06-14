@@ -677,9 +677,9 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
     return normalized
 
 
-# --- v4 five-block schema (refactor doc 04) ----------------------------------
-# The ON-DISK policy file is organized into the five IA concepts, in `decide`
-# order: `whats_yours`, `sharing`, `review`, `protection`, plus `version`/meta.
+# --- v4 IA schema (refactor doc 04) ------------------------------------------
+# The ON-DISK policy file is organized into the IA concepts, in `decide` order:
+# `whats_yours`, `reading`, `sharing`, `review`, `protection`, plus `version`/meta.
 # (Activity has no configuration.) The loader parses these blocks DIRECTLY into
 # the unchanged internal in-memory structure the engine already consumes — only
 # this parsing front-end is aware of the file shape. There is no back-compat:
@@ -687,14 +687,14 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
 #
 # The conceptual correspondence (doc 04 §3), file block -> internal key:
 #   whats_yours.stores/.identities/.hosts -> self.destinations/.identities/.hosts
+#   reading.taint_classification          -> privacy.taint_classification
+#   reading.tools                         -> privacy.tools
 #   sharing.trusted_recipients            -> trusted_recipients.entries
 #   sharing.rules                         -> privacy.rules
 #   sharing.outward.extra                 -> outward_sharing.extra (builtin code-owned)
 #   review.egress_safety/.owner_context/.cron_context/.verifier_model
 #                                         -> privacy.egress_safety/.llm_user_context/...
 #   protection.security                   -> security.rules
-#   protection.taint_classification      -> privacy.taint_classification
-#   protection.tools                      -> privacy.tools
 #   protection.language_packs             -> language_packs.enabled
 #   protection.retention                  -> retention
 #   protection.runtime                    -> dashboard
@@ -702,11 +702,11 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
 # `review.allow_model_override` is accepted (and ignored) for forward-compat: the
 # model-override grant lives host-side in config.yaml, not in this document, so it
 # has no internal consumer. The loader never branches on `version`.
-_V4_TOP_LEVEL_BLOCKS = ("whats_yours", "sharing", "review", "protection")
+_V4_TOP_LEVEL_BLOCKS = ("whats_yours", "reading", "sharing", "review", "protection")
 
 
 def _looks_like_v4_config(parsed: Any) -> bool:
-    """True iff ``parsed`` is recognizably a v4 five-block document.
+    """True iff ``parsed`` is recognizably a v4 IA document.
 
     A wholly empty object is treated as v4 (every block fills from safe defaults).
     A document carrying ONLY old-shape top-level keys (``privacy`` / ``self`` /
@@ -812,7 +812,7 @@ def _v4_protection_language_packs(raw: Any) -> dict[str, Any]:
 
 
 def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
-    """Parse the on-disk v4 five-block schema into the internal engine structure.
+    """Parse the on-disk v4 IA schema into the internal engine structure.
 
     The internal structure is byte-for-byte the same one the engine consumed before
     the reshape — only the parsing of the file changed. An object that is not a
@@ -822,9 +822,10 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
     if not _looks_like_v4_config(parsed):
         raise ValueError(
             "unrecognized config shape — re-author per the v4 schema "
-            "(whats_yours / sharing / review / protection)"
+            "(whats_yours / reading / sharing / review / protection)"
         )
     whats_yours = parsed.get("whats_yours")
+    reading = parsed.get("reading") if isinstance(parsed.get("reading"), dict) else {}
     sharing = parsed.get("sharing") if isinstance(parsed.get("sharing"), dict) else {}
     review = parsed.get("review") if isinstance(parsed.get("review"), dict) else {}
     protection = parsed.get("protection") if isinstance(parsed.get("protection"), dict) else {}
@@ -833,9 +834,9 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
         # 4 — REVIEW: case-by-case judgment (decide step 6).
         "privacy": {
             "egress_safety": _normalize_egress_safety(review.get("egress_safety")),
-            # 5 — PROTECTION: source/sink fallback classification.
+            # 2.5 — READING: source/sink fallback classification.
             "taint_classification": _normalize_taint_classification(
-                protection.get("taint_classification")
+                reading.get("taint_classification")
             ),
             "llm_user_context": _config_bool(
                 review.get("owner_context"), default=_DEFAULT_LLM_USER_CONTEXT
@@ -846,8 +847,8 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
             "llm_verifier_model": _normalize_verifier_model(review.get("verifier_model")),
             # 3 — SHARING: standing authorization (decide step 5).
             "rules": _v4_sharing_rules(sharing.get("rules")),
-            # 5 — PROTECTION: tool classification overrides.
-            "tools": _normalize_tool_overrides(protection.get("tools")),
+            # 2.5 — READING: tool/source classification overrides.
+            "tools": _normalize_tool_overrides(reading.get("tools")),
         },
         # 2 — WHAT'S YOURS: destination trust (decide steps 2–3).
         "self": _v4_whats_yours_to_self(whats_yours),
@@ -880,7 +881,7 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
     if not _looks_like_v4_config(parsed):
         raise ValueError(
             "unrecognized config shape — re-author per the v4 schema "
-            "(whats_yours / sharing / review / protection)"
+            "(whats_yours / reading / sharing / review / protection)"
         )
     review = parsed.get("review")
     if review is not None and not isinstance(review, dict):
@@ -897,13 +898,15 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
                 raise ValueError(f"privacy rule file has invalid review.{context_key}")
         if "verifier_model" in review and not isinstance(review.get("verifier_model"), str):
             raise ValueError("privacy rule file has invalid review.verifier_model")
-    for block_name in ("sharing", "protection"):
+    for block_name in ("reading", "sharing", "protection"):
         block = parsed.get(block_name)
         if block is not None and not isinstance(block, dict):
             raise ValueError(f"privacy rule file {block_name} must be an object")
     protection = parsed.get("protection")
-    if isinstance(protection, dict) and "unknown_tools" in protection:
-        raise ValueError("privacy rule file has obsolete protection.unknown_tools")
+    if isinstance(protection, dict):
+        for obsolete_key in ("unknown_tools", "taint_classification", "tools"):
+            if obsolete_key in protection:
+                raise ValueError(f"privacy rule file has obsolete protection.{obsolete_key}")
 
 
 def _load_privacy_config() -> dict[str, Any]:
@@ -987,9 +990,9 @@ def _normalize_internal_config(data: Any) -> dict[str, Any]:
 
 
 def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
-    """Encode the internal engine structure to the on-disk v4 five-block schema.
+    """Encode the internal engine structure to the on-disk v4 IA schema.
 
-    The inverse of `_normalize_privacy_config`'s parse: the five IA blocks in `decide`
+    The inverse of `_normalize_privacy_config`'s parse: the IA blocks in `decide`
     order. Security/language-pack toggles are written as the v4 ``{id: bool}`` maps;
     outward-sharing writes only the operator ``extra`` additions (builtin is code-owned
     and never serialized). Round-tripping load->serialize->load is the internal-identity
@@ -1016,6 +1019,12 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
             "stores": list(self_block.get("destinations") or []),
             "identities": list(self_block.get("identities") or []),
             "hosts": list(self_block.get("hosts") or []),
+        },
+        "reading": {
+            "taint_classification": _normalize_taint_classification(
+                privacy.get("taint_classification")
+            ),
+            "tools": list(privacy.get("tools") or []),
         },
         "sharing": {
             "trusted_recipients": [
@@ -1047,10 +1056,6 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
                 for rule in security_rules
                 if isinstance(rule, dict) and rule.get("id")
             },
-            "taint_classification": _normalize_taint_classification(
-                privacy.get("taint_classification")
-            ),
-            "tools": list(privacy.get("tools") or []),
             "language_packs": {pack_id: (pack_id in enabled_packs) for pack_id in ordered_pack_ids},
             "retention": {
                 "max_rows": int(retention.get("max_rows", _DEFAULT_RETENTION_MAX_ROWS)),

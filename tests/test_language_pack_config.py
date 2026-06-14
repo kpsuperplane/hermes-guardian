@@ -39,7 +39,7 @@ def test_language_pack_can_be_disabled_by_direct_json_edit(tmp_path):
     plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin.state._PERSISTENT_RULES_CACHE = None
     plugin.state._PERSISTENT_RULES_MTIME = None
-    # v4 five-block schema: only English enabled in protection.language_packs.
+    # v4 IA schema: only English enabled in protection.language_packs.
     (tmp_path / "rules.json").write_text(json.dumps({
         "version": 4,
         "review": {"egress_safety": "strict"},

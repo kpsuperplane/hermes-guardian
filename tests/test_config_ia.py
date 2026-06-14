@@ -1,7 +1,8 @@
 """Config IA v4 loader tests (refactor doc 04 §5).
 
-The policy file is reshaped into the five IA concepts, in `decide` order
-(`whats_yours` / `sharing` / `review` / `protection`, plus `version`/meta). This
+The policy file is reshaped into the IA concepts, in `decide` order
+(`whats_yours` / `reading` / `sharing` / `review` / `protection`, plus
+`version`/meta). This
 file proves the loader front-end parses that v4 schema directly into the SAME
 internal structure the engine already consumes — `decide` never notices the
 reshape — and that all the fail-closed / round-trip guarantees hold.
@@ -18,6 +19,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
+import pytest
 
 from support import *  # noqa: F403
 
@@ -44,6 +47,13 @@ def _full_v4_document() -> dict:
             "identities": ["me@example.com"],
             "hosts": ["box.example.internal"],
         },
+        "reading": {
+            "taint_classification": "strict",
+            "tools": [
+                {"match": "crm_*", "direction": "read", "taints": ["contacts"],
+                 "destination": "store:crm", "egress": "ignore"},
+            ],
+        },
         "sharing": {
             "trusted_recipients": [
                 {"identity": "ally@example.com", "classes": ["communications"], "note": "team"},
@@ -67,11 +77,6 @@ def _full_v4_document() -> dict:
         },
         "protection": {
             "security": {"sensitive_links": False},
-            "taint_classification": "strict",
-            "tools": [
-                {"match": "crm_*", "direction": "read", "taints": ["contacts"],
-                 "destination": "store:crm", "egress": "ignore"},
-            ],
             "language_packs": {"en": True, "es": False},
             "retention": {"max_rows": 42, "max_age_days": 3},
             "runtime": {"dashboard_mutations": "off"},
@@ -102,18 +107,20 @@ def test_full_v4_file_parses_to_internal_structure():
     assert "crosspost" in config["outward_sharing"]["extra"]
     assert set(config["outward_sharing"]["builtin"]) == set(plugin._OUTWARD_SHARING_BUILTIN_SUBTYPES)
 
-    # review.* -> internal privacy.{egress_safety,llm_*}; protection classification -> privacy.*.
+    # reading.* -> internal privacy.{taint_classification,tools}.
+    assert config["privacy"]["taint_classification"] == "strict"
+    assert [t["match"] for t in config["privacy"]["tools"]] == ["crm_*"]
+
+    # review.* -> internal privacy.{egress_safety,llm_*}.
     assert config["privacy"]["egress_safety"] == "llm"
     assert config["privacy"]["llm_user_context"] is True
     assert config["privacy"]["llm_cron_context"] is True
     assert config["privacy"]["llm_verifier_model"] == "gpt-5.4-mini"
-    assert config["privacy"]["taint_classification"] == "strict"
 
-    # protection.* -> internal security/tools/language_packs/retention/dashboard.
+    # protection.* -> internal security/language_packs/retention/dashboard.
     sec = {r["id"]: r["enabled"] for r in config["security"]["rules"]}
     assert sec["sensitive_links"] is False
     assert sec["credential_content"] is True  # unspecified -> safe default-enabled
-    assert [t["match"] for t in config["privacy"]["tools"]] == ["crm_*"]
     assert config["language_packs"]["enabled"] == ["en"]
     assert config["retention"]["max_rows"] == 42
     assert config["retention"]["max_age_days"] == 3
@@ -214,6 +221,7 @@ def test_partial_file_only_whats_yours_fills_defaults():
     assert config["privacy"]["llm_user_context"] is True
     assert config["privacy"]["llm_cron_context"] is False
     assert config["privacy"]["taint_classification"] == "balanced"
+    assert config["privacy"]["tools"] == []
     # sharing empty; outward builtin code-owned.
     assert config["privacy"]["rules"] == []
     assert config["trusted_recipients"]["entries"] == []
@@ -227,7 +235,7 @@ def test_partial_file_only_whats_yours_fills_defaults():
 
 def test_invalid_taint_classification_normalizes_to_balanced():
     plugin = load_plugin()
-    _write_file(plugin, {"version": 4, "protection": {"taint_classification": "banana"}})
+    _write_file(plugin, {"version": 4, "reading": {"taint_classification": "banana"}})
 
     config = plugin._load_privacy_config()
 
@@ -249,6 +257,20 @@ def test_obsolete_review_mode_fails_closed_to_strict():
 def test_obsolete_unknown_tools_fails_closed_to_strict():
     plugin = load_plugin()
     _write_file(plugin, {"version": 4, "protection": {"unknown_tools": "allow"}})
+
+    config = plugin._load_privacy_config()
+
+    assert config["privacy"]["egress_safety"] == "strict"
+    assert plugin.state._PERSISTENT_RULES_ERROR is True
+
+
+@pytest.mark.parametrize("key,value", [
+    ("taint_classification", "strict"),
+    ("tools", [{"match": "crm_*", "taints": ["contacts"]}]),
+])
+def test_obsolete_reading_keys_under_protection_fail_closed_to_strict(key, value):
+    plugin = load_plugin()
+    _write_file(plugin, {"version": 4, "protection": {key: value}})
 
     config = plugin._load_privacy_config()
 
@@ -323,14 +345,16 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     assert plugin._set_taint_classification_mode("relaxed")[0]
     assert plugin._add_outward_sharing_subtype("crosspost")[0]
 
-    # The on-disk file is the v4 five-block schema, not the old keys.
+    # The on-disk file is the v4 IA schema, not the old keys.
     on_disk = json.loads((tmp_path / "rules.json").read_text())
-    assert set(on_disk) == {"version", "whats_yours", "sharing", "review", "protection"}
+    assert set(on_disk) == {"version", "whats_yours", "reading", "sharing", "review", "protection"}
     assert on_disk["review"]["egress_safety"] == "read-only"
     assert "store:crm" in on_disk["whats_yours"]["stores"]
     assert on_disk["protection"]["security"]["sensitive_links"] is False
     assert "unknown_tools" not in on_disk["protection"]
-    assert on_disk["protection"]["taint_classification"] == "relaxed"
+    assert "taint_classification" not in on_disk["protection"]
+    assert "tools" not in on_disk["protection"]
+    assert on_disk["reading"]["taint_classification"] == "relaxed"
     assert "crosspost" in on_disk["sharing"]["outward"]["extra"]
     # builtin subtypes are NOT serialized (code-owned, never written to config).
     assert "builtin" not in on_disk["sharing"]["outward"]

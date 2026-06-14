@@ -3,7 +3,7 @@
 Covers: a partial v4 file filling the rest from safe defaults, fail-closed parse of
 malformed v4 blocks, the non-narrowable outward-sharing builtin, the env-override
 surfacing, and the carryover bug fix (an operator-customized self block must survive
-an unrelated mode/rule save). All config is authored in the v4 five-block schema —
+an unrelated mode/rule save). All config is authored in the v4 IA schema —
 there is no back-compat with the old key paths.
 
 Per project memory, NO real agent/cron/Telegram identifiers appear here — only

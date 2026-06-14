@@ -104,7 +104,7 @@ def privacy_rule(
 
 def save_privacy_config(plugin, *, mode: str = "strict", rules: list[dict] | None = None):
     # The mutators operate on the INTERNAL config structure (doc 04 §4); the loader
-    # serializes it to the v4 five-block file. This helper authors that internal shape
+    # serializes it to the v4 IA file. This helper authors that internal shape
     # directly (Egress Safety + rules), exactly as the engine consumes it. `_save_privacy_config`
     # normalizes it and writes the v4 file to disk.
     assert plugin._save_privacy_config({
