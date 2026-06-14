@@ -39,7 +39,9 @@ Prompt injection is dangerous in personal agents because the agent often combine
 
 This combination is sometimes called the “lethal trifecta.” A malicious email, web page, calendar event, or document does not need to break the model in a dramatic way. It only has to influence the agent to encode private information into a URL, search query, browser action, message, API call, file upload, or final response.
 
-Guardian treats prompt injection as an expected failure mode and enforces at egress instead of trying to recognize malicious instructions (see the Abstract):
+Guardian treats prompt injection as an expected failure mode and enforces at egress instead of trying to recognize malicious instructions (see the Abstract). This is a forced move, not a stylistic preference: there are independent arguments that injection cannot be solved at the model layer, attacking three different defense families. Conceptually, data/instruction separation is incoherent for an agent — an agent's context is instructional everywhere by design (memory, skills, tool results, third-party content are all read as guidance), so a defense cannot separate "data" from "instructions" without breaking the workflows it protects. Formally, an LLM-based detector is as injectable as the model it guards: known-answer detection has been shown to be structurally unsound, with an adaptive attack driving detection to 0% while keeping a 91% attack success rate, because the detector executes the injected task as its own signal. Empirically, a systematization across dozens of studies finds adaptive attacks exceed 85% success against deployed defenses, with the root cause named as the architectural conflation of code and data — the same property that made SQL injection solvable by *separation* makes LLM injection unsolvable, because the model has no separate channel to separate into.
+
+None of these results says the *damage* cannot be contained — only that the model cannot be kept from being fooled. The constructive response shared by the design-pattern literature, by control-flow systems like CaMeL, and by Guardian is the same: concede the model will be fooled, and move the security boundary outside it, onto deterministic constraints on what a fooled agent is permitted to *do*. Guardian's choice of boundary is egress:
 
 ```text
 Private source observed -> session becomes tainted -> outbound action requires policy
@@ -354,7 +356,7 @@ data class, and scope. Human privacy norms often depend on richer context:
 - Time and freshness.
 - Trusted user intent.
 
-This is the central lesson of contextual-integrity approaches to privacy: information flow cannot be judged by data type and destination alone.
+Contextual-integrity (CI) work makes a sharper version of this point: privacy is the *appropriate flow* of information, and appropriateness is fixed by the norms of the receiving context — not by the data's type and not by the sender's wishes alone. Guardian deliberately does **not** adopt that anchor. It enforces *owner authorization*: did the data's owner authorize this flow, or is something moving it out against the owner's interest? The two criteria usually agree, but they come apart on the case CI is built around — an owner who directs a flow that the receiving context's norm would forbid (the textbook example: a clinician sending a record to a recipient the medical-context norm excludes). CI calls that a violation; Guardian, anchored on owner authorization, allows it, because the owner initiated it. That is the correct anchor for a *personal* confidentiality tool — the asset is the owner's own data and the adversary is a third party laundering it out, not the owner over-sharing someone else's data — but it is a different criterion from contextual integrity, and Guardian names it as such rather than claiming to implement CI. What Guardian borrows from CI is the descriptive vocabulary for *describing* a flow (sender, recipient, subject, information type, transmission principle); what it does not borrow is CI's normative claim that the receiver's context decides appropriateness.
 
 In `llm` mode, Guardian partially recovers the "trusted user intent" dimension without widening the verifier surface to the full transcript. The verifier receives one additional field, `user_request_context`: a sanitized excerpt of the most recent inbound message from an authenticated session owner, captured at gateway dispatch before the model or any tool runs, and only after the Security Module clears that message. It is scoped to the CLI owner or a configured gateway owner, so group non-owners, cron, and unauthenticated senders never populate it; it carries the user turn only, not the system prompt, prior tool results, or model output; and it is sanitized, held in volatile owner-keyed state with a short TTL, and never persisted. Consistent with the egress-first thesis, the verifier treats this as authorization evidence rather than instruction: it can raise the assessed authorization level for actions the owner actually requested, but cannot override risk level or absolute deny rules, and a malicious party who is not an authenticated owner cannot inject it. This narrows the gap where an owner-requested declassification (for example, submitting a form the owner explicitly asked Guardian to submit) would otherwise be indistinguishable from attacker-driven exfiltration under metadata alone.
 
@@ -387,194 +389,62 @@ Private information can leave through channels that do not look like ordinary �
 
 OpenAI’s link-safety work highlights URL-based exfiltration as a distinct risk class for agentic browsing.
 
-## Comparison with industry systems
+## The research field and where Guardian fits
 
-Two axes organize the comparisons that follow: detection versus flow enforcement, and managed/enterprise versus local-first.
+The literature on protecting private data in LLM agents organizes around one question: when an agent is about to move information, what determines whether that is appropriate, and what component enforces the answer? Different lines of work answer at different layers, and Guardian's position is clearest when seen against that structure rather than against individual products.
 
-### OpenAI / ChatGPT agent defenses
+### Three families
 
-OpenAI’s public agent-security framing emphasizes constraining risky actions, protecting sensitive data, and using source/sink-style analysis rather than relying exclusively on model obedience. OpenAI has also described URL-based data exfiltration as a concrete agent risk: a link path or query string can carry private information even when the chat transcript does not visibly display the data.
+Almost every system is an instance of one of three approaches.
 
-OpenAI’s Lockdown Mode further reduces exfiltration risk by limiting or disabling certain capabilities that connect to external services or the web.
+| Family | Where appropriateness lives | What enforces it | Examples |
+|---|---|---|---|
+| In-the-model | In the model's judgment | The model itself, prompted or trained | PrivacyChecker (prompt-time CI reasoning); CI-RL, CPPLM, GoldCoin (training-time) |
+| Deterministic enforcement | In a policy outside the model | Deterministic code the model cannot influence | Conseca, CaMeL, RTBAS, GAAP, the information-flow-control lineage — **and Guardian** |
+| Measurement-only | N/A (does not enforce) | Benchmarks that score whether appropriateness was achieved | ConfAIde → PrivacyLens → CI-Bench → PrivaCI-Bench → CIMemories |
 
-| Dimension | OpenAI managed stack | Hermes + Guardian |
-|---|---|---|
-| Stack control | Product, model, connectors, browser, policy, and telemetry controlled by OpenAI | Strength depends on Hermes configuration and local operator choices |
-| Transparency | Lower external visibility into implementation | Higher inspectability of plugin and policy |
-| Containment | Product-level controls and managed execution environments | Hermes sandboxing, backend choice, and OS/container policy |
-| Egress theory | Source/sink controls, link safety, lockdown-style capability reduction | Source taint, sink classification, approval/declassification |
-| Operational model | Managed consumer/enterprise product | Local or self-managed personal agent |
+The first family makes the model better at judging appropriateness — either by prompting it to reason flow-by-flow (PrivacyChecker enumerates information flows in CI terms and asks the model to rule on each) or by training the judgment in (reinforcement learning from CI-aligned rewards, instruction tuning on positive/negative disclosure examples, grounding in legal statute). The second concedes the model's judgment is corruptible and moves the decision to a deterministic layer outside it. The third does not enforce at all; it builds the instruments that measure how badly models violate appropriateness, and is where most of the field's volume sits.
 
-Hermes + Guardian is conceptually similar to OpenAI’s source/sink direction, with less platform integration and more local transparency.
+Guardian is squarely in the second family. The reason is not a stylistic preference for determinism but the argument set out under *Background*: if injection cannot be solved at the model layer, then a defense whose decision routes through model judgment inherits the same foolability it is trying to defend against. The known-answer-detection result makes this concrete — a detector built from the same kind of model it guards is provably unsound. So the first family, whatever its utility for a cooperative agent, cannot be the security boundary for an adversarial one; that boundary has to live in family two.
 
-### Anthropic / Claude Code and Claude containment
+### The shared vocabulary, and the seam in it
 
-Anthropic’s public security work emphasizes filesystem and network isolation for agentic coding environments. The core idea is that a compromised or manipulated agent cannot steal secrets it cannot read and cannot exfiltrate to destinations it cannot reach.
+Every family describes flows in Nissenbaum's five parameters — sender, receiver, subject, information type, transmission principle. That shared vocabulary is why these systems can be compared at all. But the formal CI model (Barth et al.) has nine parameters, adding *roles*, *contexts*, *traces*, *policies*, *policy combination*, and *compliance* to the descriptive core; and surveys of CI-in-LLM work find a sharp asymmetry: the field has operationalized the first five (the descriptive parameters — who, what, which context) and left the governance parameters — traces, policies, policy combination, compliance — largely unaddressed.
 
-| Dimension | Anthropic containment | Hermes + Guardian |
-|---|---|---|
-| Hard boundary | Filesystem, network, and process sandboxing | Hermes sandboxing and OS/container configuration provide the hard boundary |
-| Semantic data-flow policy | Less visible publicly | Guardian’s main contribution |
-| Private connector egress | Product dependent | Explicit approval/rule model for mediated flows |
-| Primary risk boundary | Sandbox correctness and configuration | Complete mediation, classifier accuracy, and runtime containment |
+That asymmetry is the most useful single fact about the field, because it locates Guardian precisely. Guardian works the governance side that most CI-LLM work leaves empty:
 
-Anthropic-style containment and Guardian address different layers: sandboxing limits reachability, Guardian governs outbound flows after legitimate data access.
+- **Traces** — session taint is a trace: prior disclosures accumulate and constrain the appropriateness of later flows. This is Guardian's strongest under-recognized asset; almost no surveyed system implements it.
+- **Policies** — destination trust and the allow/deny rules are an enforced policy layer, not a model that is merely prompted to behave.
+- **Compliance** — the deterministic `decide` over the accumulated trace is a compliance check in the formal sense: does this flow, given everything the session has seen, satisfy the standing policy?
 
-### Microsoft Copilot Studio / enterprise runtime protection
+Two governance parameters Guardian does not implement, by design rather than as gaps to close:
 
-Microsoft Copilot Studio documents prompt-injection protections, cross-domain prompt-injection mitigations, and external security-provider mechanisms that inspect proposed tool execution and return allow/block decisions. Microsoft’s broader agent-security material also describes runtime scanning, goal-deviation detection, governance, and Defender-style integrations.
+- **Policy combination** — reconciling conflicting norms when a flow bridges two contexts (the patient who consents to share with a doctor but not an insurer present in the same exchange). This is unaddressed across the entire field; it is a hard, open research problem. In Guardian's single-owner setting it is also largely out of scope, because there is usually no second party whose context-norms Guardian is obligated to reconcile — the protected asset is one owner's data.
+- **Receiver-context norms** — the heart of CI's normative claim. Guardian substitutes *owner authorization* for this (see *Coarse declassification context*): it asks whether the data's owner authorized the flow, not whether the receiving context's norm would permit it. The two usually agree but come apart on the case CI is built around — an owner directing a flow the receiving context would forbid — and Guardian, anchored on owner authorization, allows it. That is the correct anchor for a personal confidentiality tool, where the adversary is a third party laundering the owner's data out, not the owner over-sharing someone else's; but it is a different criterion from contextual integrity, and Guardian names it as such rather than presenting itself as an incomplete CI system. What Guardian borrows from CI is the descriptive vocabulary for a flow; what it does not borrow is CI's claim that the receiver's context decides appropriateness.
 
-| Dimension | Microsoft enterprise stack | Hermes + Guardian |
-|---|---|---|
-| Identity and governance | Tenant, RBAC, admin policy, enterprise audit | Local owner/cron policy |
-| Runtime inspection | External provider and Defender-style action inspection | Guardian hook-based action inspection |
-| Detector input | May include rich execution context, depending on configuration | Designed around local, sanitized metadata |
-| Deployment target | Enterprise managed agents | Personal/local Hermes agents |
+### The foundational disagreement Guardian takes a side in
 
-Guardian sits in the same general family as enterprise runtime action inspection, but it is lighter-weight, local, and personal-agent oriented.
+The field is not a settled consensus; it has a live disagreement about whether the model layer can be made safe at all, and two independent critiques converge on "no." The injection-pessimists argue, conceptually and formally and empirically, that prompt injection cannot be solved at the model layer (see *Background* and the *Foundations* references). The CI-skeptics — most pointedly the position paper arguing CI is inadequately applied to LLMs — argue that the field borrows CI's name while doing data-minimization, sensitive-data protection, and the public/private dichotomy, the very framings CI was defined against, so that much "CI for LLMs" work is invoking the theory rather than applying it. The two critiques come from different directions but point the same way: away from trusting the model to judge appropriateness, and toward enforcing a boundary that does not depend on that judgment.
 
-## Comparison with open-source agent guards
+Guardian sits with both. Its egress-first thesis is the injection-pessimist conclusion made operational, and its owner-authorization anchor is the honest response to the CI-skeptic critique — rather than claim a normative apparatus it does not have, it names the narrower criterion it actually enforces. This is a coherent and currently under-populated position, not a hedge.
 
-The industry comparisons above are mostly managed or enterprise products. Guardian also shares a quadrant with several open-source tools aimed at the same personal/self-hosted agent operator — the most directly comparable systems, which the two axes above separate cleanly.
+### Guardian's closest neighbor
 
-### Invariant Guardrails / Gateway
+Within the deterministic-enforcement family, Conseca (Contextual Agent Security) is the closest architectural relative. It generates a just-in-time security policy for each task from *trusted context only*, then enforces it deterministically — explicitly so that the untrusted content the agent later reads cannot alter an already-generated policy. The shared spine is exactly Guardian's: the model is assumed foolable, the decision is deterministic, and the policy reasoner is kept away from attacker-controlled input.
 
-Invariant Labs' Guardrails (with its companion Gateway proxy) is the closest policy-model analog to Guardian. It is a contextual guardrail layer that sits as a proxy between an agent and its MCP servers or LLM provider, evaluating rules before and after each LLM and MCP request. Its defining feature is a Python-inspired DSL that expresses data-flow rules over the agent trace, including ordered tool-to-tool flow constraints. A canonical example raises a violation when a `send_email` call follows a `get_inbox` call, i.e. the `(ToolOutput) -> (ToolCall)` shape that Guardian approximates with coarse session taint. Invariant also ships `mcp-scan` (a scanner for prompt injection in tool descriptions, tool poisoning, and cross-origin escalation) and Explorer (a trace storage and visualization surface). Invariant Labs, an ETH Zurich spin-off, was acquired by Snyk in 2025; it coined widely used terminology such as "tool poisoning" and "MCP rug pulls."
+The instructive difference is which point each takes on the same tradeoff curve. Conseca isolates its policy generator to trusted context, and its stated limitation follows directly: it cannot easily reason about data-dependent flows ("act on the request in my manager's email"), because the data the flow depends on is the untrusted content it walled off. Guardian takes the other point — its `llm`-mode verifier reads the real payload precisely to handle the data-dependent case — and pays for it with a model-judgment surface, which it then disciplines with a deterministic corroboration gate so the payload cannot move the boundary on its own. Neither is strictly better; Guardian's choice favors confidentiality decisions that depend on content, at the cost of a larger judgment surface to constrain. CaMeL, RTBAS, and GAAP are the more formal members of the same family, stronger in their stated models and less directly deployable for a general-purpose local agent; GAAP in particular is more ambitious in placing the model provider outside the trust boundary, where Guardian keeps the provider inside it and governs egress after private context is in session.
 
-| Dimension | Invariant Guardrails / Gateway | Hermes + Guardian |
-|---|---|---|
-| Policy expression | Explicit DSL with ordered tool-flow rules over the trace | Fixed taint/sink/declassification model; no user-authored flow DSL |
-| Flow granularity | Rule can name specific source and sink tools in sequence | Coarse session taint at the source end; destination-trust resolution and the `llm`-mode verifier at the sink/content end |
-| Deployment shape | Proxy in front of MCP servers and the LLM provider | In-process Hermes hooks; no separate proxy |
-| Observability | Explorer trace viewer and incident data | Metadata-only activity trail; no trace visualization |
-| Locality and telemetry | Self-hostable, but `mcp-scan`'s remote scanning shares tool names and descriptions with the vendor's servers (invariantlabs.ai historically, Snyk after the acquisition) | Local-first; classification and policy evaluation do not call out to a vendor service |
-| Track record | Published vulnerability research and named attack classes | No comparable public CVE or attack-discovery record |
+### The live frontiers, and which Guardian touches
 
-Invariant is the more mature and expressive system on the policy axis; Guardian's narrower edge is being fully local-first with no vendor-telemetry path and integrated into Hermes hooks rather than a separate proxy.
+Three problems are where the field's energy is, and naming them shows what Guardian does and does not attempt:
 
-### Pipelock
+- **Evaluation realism.** Every benchmark line confesses that synthetic, single-turn, single-context scenarios overstate how well anything works; live multi-agent evaluation reveals substantially higher leakage. Guardian shares this gap — it has a decision corpus and unit tests but no live adversarial benchmark — and the PrivacyLens-Live methodology is the obvious thing to borrow, extended with the laundered- and injected-exfil cases that are Guardian's differentiator.
+- **Policy combination / cross-context conflict.** The hardest open problem, unsolved field-wide, and out of scope for a single-owner tool as discussed above.
+- **Theory of mind.** Tracking who knows what across parties over time. Underexplored, genuinely difficult, and largely orthogonal to an egress monitor's job.
 
-Pipelock (by PipeLab) is an Apache-2.0 agent firewall distributed as a single Go binary. Its design is structural rather than detection-led: it separates capabilities so that the agent process holds secrets but has no direct network access, while a proxy holds network connectivity but stores no secrets, with a scanning boundary (including a DLP layer covering credential patterns) between the two. Isolation is enforced with network namespaces, iptables, Docker internal networks, or Kubernetes NetworkPolicy. Because the agent cannot reach the network directly, a compromised tool call cannot exfiltrate a secret without crossing the proxy's inspection.
+### Where this leaves Guardian
 
-| Dimension | Pipelock | Hermes + Guardian |
-|---|---|---|
-| Primary mechanism | Capability separation: secrets and network split across processes | Semantic taint and egress policy over mediated actions |
-| Same-call source/sink | Structurally defended: the secret-holding process has no network path | Deferred to the Hermes/OS layer; Guardian does not itself break this case |
-| Enforcement point | Network boundary between agent and proxy | Hermes hook layer above tool dispatch |
-| Layer | Lower-layer containment | Upper-layer information-flow policy |
-
-Pipelock is best read as a complementary lower layer — a concrete implementation of the network-isolation assumption Guardian depends on (see "Same-call source and sink") — not a substitute for Guardian's semantic declassification, which it does not attempt. Its DLP boundary, moreover, keys on credential signatures and is structurally blind to provenance-private content such as an email body or contact list (see the asset distinction in the Abstract).
-
-### LLM Guard
-
-Protect AI's LLM Guard is an MIT-licensed, self-hosted toolkit of roughly 35 input and output scanners (15 input, 20 output) covering prompt injection, PII, secrets, toxicity, malicious URLs, and data-leakage detection. It runs locally, like Guardian, but operates by a different mechanism: it scans and sanitizes individual prompts and responses rather than tracking information flow across a session or enforcing source-to-sink policy.
-
-| Dimension | LLM Guard | Hermes + Guardian |
-|---|---|---|
-| Mechanism | Per-message input/output scanning and sanitization | Session taint, sink classification, and declassification policy |
-| State | Largely stateless per request | Session-scoped taint and policy state |
-| Flow enforcement | None; detection and sanitization only | Blocks or approval-gates classified egress under taint |
-| Locality | Local, self-hosted, offline-capable | Local-first, in-process |
-
-LLM Guard and Guardian share the local-first axis but sit on opposite ends of detection versus enforcement, and the two are composable: scanners as pre-ingestion hygiene, Guardian as post-ingestion flow control. LLM Guard's signature-based scanners are likewise blind to provenance-private content such as an email body or a calendar's contents (see the asset distinction in the Abstract).
-
-### OpenClaw PRISM
-
-OpenClaw PRISM is the closest research analog to Guardian for a personal-agent gateway. It is described as a zero-fork runtime security layer for tool-augmented agents that operates as an in-process plugin with optional accompanying services, distributing security checks across roughly ten decision points across the agent lifecycle. It combines hybrid heuristic-and-LLM scanning, risk accumulation with time-based decay, and policy-enforced restrictions on tools, file paths, network access, and secret patterns, and it explicitly targets real-world deployment with an evaluation framework over security effectiveness, false positives, and overhead.
-
-| Dimension | OpenClaw PRISM | Hermes + Guardian |
-|---|---|---|
-| Position | Research system with deployment focus | Deployed Hermes plugin |
-| Risk model | Accumulated risk score with time decay across lifecycle points | Per-action taint-and-policy decision at the hook |
-| Scope of checks | Injection, unsafe tool execution, credential leakage, control-file tampering | Confidentiality egress and declassification over mediated sinks |
-| Integration | In-process, zero-fork plugin | In-process Hermes hooks |
-
-PRISM and Guardian occupy nearly the same niche; PRISM's risk-accumulation model and broader lifecycle coverage are more ambitious, while Guardian's contribution is the specific taint-and-declassification treatment of confidentiality flows rather than a general risk score.
-
-## Comparison with theoretical systems
-
-### CaMeL
-
-CaMeL, “Defeating Prompt Injections by Design,” creates a protective layer around the LLM and extracts control/data flows from the trusted user query. In its model, untrusted data retrieved later cannot steer privileged program flow, and capabilities constrain unauthorized private-data flows.
-
-| Dimension | CaMeL | Hermes + Guardian |
-|---|---|---|
-| Control-flow security | Trusted query determines control/data flow before untrusted data can steer it | Mixed trusted/untrusted/private context can influence the model; Guardian mediates later actions |
-| Formal strength | Stronger in its stated model | Runtime-mediated guarantee over classified sinks |
-| Deployability | Research/prototype constraints | Deployable as a Hermes plugin |
-| Flexibility | More constrained | Better suited to general-purpose personal-agent workflows |
-
-CaMeL is closer to secure-by-construction. Guardian is a runtime declassification layer over an existing general-purpose agent.
-
-### RTBAS
-
-RTBAS adapts information-flow control to tool-based LLM agents. It allows tool calls that preserve confidentiality and integrity and routes uncertain cases to user confirmation. Its dependency screeners attempt to determine whether a proposed action depends on private or untrusted inputs.
-
-| Dimension | RTBAS | Hermes + Guardian |
-|---|---|---|
-| IFC granularity | Dependency screening over tool calls | Session taint plus action/destination/data-class policy |
-| User involvement | Confirmation when safety cannot be established | Approval when tainted egress lacks policy |
-| Attack model | Prompt injection and privacy leakage | Prompt injection leading to private egress |
-| Implementation status | Research architecture | Local plugin implementation |
-
-Guardian shares RTBAS’s information-flow intuition while using a simpler and more operational approximation.
-
-### GAAP
-
-GAAP proposes an execution environment for personal agents with an IFC core, private data database, permission database, disclosure log, and annotation framework. It treats disclosure to the model/provider as part of the privacy problem.
-
-| Dimension | GAAP | Hermes + Guardian |
-|---|---|---|
-| Model/provider trust | Can place the model/provider outside the trust boundary | Usually places the model inside the practical trust boundary |
-| Data storage | Private data database and permission database | Hermes tools plus Guardian taint, rules, and activity storage |
-| Confidentiality claim | More ambitious deterministic confidentiality | Mediated egress control |
-| Deployment model | Research architecture | Existing Hermes plugin |
-
-GAAP is a broader confidentiality architecture. Guardian is focused on egress and declassification for an existing agent runtime.
-
-### Contextual integrity approaches
-
-Contextual-integrity analyses argue that instruction/data separation alone is insufficient because the legitimacy of an information flow depends on context: who sends what, to whom, for what purpose, under what norm.
-
-Guardian’s policy tuple captures some of this context through actor, session,
-action family, destination, purpose, pseudonymous recipient identity, data
-class, and scope. It does not encode the full richness of contextual privacy
-norms. This makes it practical but less expressive than a full
-contextual-integrity policy system.
-
-### Design-pattern approaches
-
-Design-pattern research for secure LLM agents emphasizes constrained architectures such as action selectors, plan-then-execute flows, dual-LLM designs, map-reduce isolation, and context minimization. The common principle is that untrusted input is separated from consequential action selection.
-
-Guardian provides a compensating runtime layer for a general-purpose agent. It does not impose a fixed application-specific workflow, but it can constrain outbound consequences of a workflow after private context has entered the session.
-
-### Sandlock and low-level sandboxing
-
-Sandboxing systems such as Sandlock focus on kernel-enforced filesystem, network, IPC, and syscall policy for AI-agent code execution.
-
-Sandboxing and Guardian answer different questions:
-
-- Sandboxing: “Can this process read this file, connect to this host, or perform this syscall?”
-- Guardian: “Is this private-information flow authorized for this destination and action?”
-
-The two layers are complementary: low-level confinement controls capabilities; Guardian controls semantic declassification.
-
-## Positioning table
-
-| Approach | Main defense | Formal strength | Practicality today | Primary gap |
-|---|---|---:|---:|---|
-| Prompt-only rules | Instructions telling the model not to leak | Very low | High | Model can be manipulated |
-| Regex/scanner-only | Detection of malicious text or sensitive literals | Low | High | Paraphrase, encoding, and context manipulation |
-| Hermes built-ins only | Containment, env filtering, SSRF, command approval, gateway auth | Medium for host/runtime containment | High | Semantic flows of legitimately observed private data |
-| Guardian only | Taint and egress approval for mediated tools | Low-medium | Medium-high | Hard containment, complete mediation, same-call source/sink |
-| Hermes + Guardian | Containment below, semantic policy above | Medium to medium-high for mediated flows | Medium-high | Configuration dependence and lack of formal noninterference |
-| OpenAI / Anthropic / Microsoft managed stacks | Product-level sandboxing, runtime inspection, source/sink controls, governance | Medium | High | Lower transparency; platform-dependent details |
-| Invariant Guardrails / Gateway | DSL flow rules over a proxy trace, plus MCP scanning and trace viz | Medium for stated flows | High | Not local-only; remote-scan telemetry path |
-| Pipelock | Capability separation: secrets and network split across processes | Medium-high for the same-call case | Medium-high | No semantic declassification; DLP keys on credential signatures, not provenance |
-| LLM Guard | ~35 local input/output scanners | Low | High | Detection/sanitization only, signature-based; blind to provenance-private content |
-| OpenClaw PRISM | In-process risk accumulation plus policy-enforced restrictions | Medium for stated model | Medium | Research maturity; broad scope over deep confidentiality proof |
-| CaMeL / RTBAS / GAAP | Formal or semi-formal control/data-flow or IFC architecture | High in stated model | Lower today | General-purpose product deployability |
-| OS sandbox + formal IFC + contextual policy | Hard boundary plus precise flow control | Highest | Low today | Complexity and usability |
+Stated in the field's own coordinates: Guardian is in the deterministic-enforcement family; it implements the governance parameters (traces, policies, compliance) that the descriptive-and-measurement majority leaves empty; it has taken the side of the injection-pessimists and the CI-skeptics in the field's central disagreement; and it anchors on owner authorization rather than receiver-context norms, which is correct for a personal confidentiality tool. The parameters it does not implement — policy combination, receiver-context norms, the full normative heuristic — are not places it lags the field; they are the parts that are hard for everyone or out of scope by the nature of an enforcement mechanism for a single owner. The contribution, if it has one, is less "a better CI system" than a worked example of what remains buildable and sound when you stop relying on model judgment entirely: owner-authorized, trace-aware boundary enforcement, scoped honestly to what it actually guarantees.
 
 ## Boundary statement
 
@@ -604,9 +474,41 @@ Guardian is not accurately described as a complete prompt-injection solution or 
 - Pipelock (PipeLab), open-source AI agent firewall: <https://www.helpnetsecurity.com/2026/05/04/pipelock-open-source-ai-agent-firewall/>
 - LLM Guard (Protect AI): <https://github.com/protectai/llm-guard>
 - OpenClaw PRISM, “zero-fork runtime security for tool-augmented agents”: <https://arxiv.org/abs/2603.11853>
+
+### Foundations: injection (in)solvability
+
+- “AI Agents May Always Fall for Prompt Injections” (data/instruction separation is incoherent for agents; recasts injection via contextual integrity): <https://arxiv.org/abs/2605.17634>
+- “How Not to Detect Prompt Injections with an LLM” (formal unsoundness of known-answer detection; the DataFlip attack): <https://arxiv.org/abs/2507.05630>
+- “Prompt Injection Attacks on Agentic Coding Assistants” (SoK; >85% adaptive attack success across 78 studies; code/data conflation): <https://arxiv.org/abs/2601.17548>
+- “Design Patterns for Securing LLM Agents against Prompt Injections” (dual-LLM / quarantined-LLM containment): <https://arxiv.org/abs/2506.08837>
+
+### Foundations: deterministic enforcement (Guardian's family)
+
 - CaMeL, “Defeating Prompt Injections by Design”: <https://arxiv.org/abs/2503.18813>
 - RTBAS, “Defending LLM Agents Against Prompt Injection and Privacy Leakage”: <https://arxiv.org/abs/2502.08966>
 - GAAP, “An AI Agent Execution Environment to Safeguard User Data”: <https://arxiv.org/abs/2604.19657>
-- “AI Agents May Always Fall for Prompt Injections”: <https://arxiv.org/abs/2605.17634>
-- “Design Patterns for Securing LLM Agents against Prompt Injections”: <https://arxiv.org/abs/2506.08837>
+- Conseca, “Contextual Agent Security: A Policy for Every Purpose” (just-in-time policies; deterministic enforcement; policy model isolated to trusted context): <https://arxiv.org/abs/2501.17070>
 - Sandlock, “Confining AI Agent Code with Unprivileged Linux Primitives”: <https://arxiv.org/abs/2605.26298>
+
+### Foundations: contextual integrity and its application to LLMs
+
+- Nissenbaum, “Privacy as Contextual Integrity” (the source theory): Washington Law Review 79(1), 2004.
+- Barth, Datta, Mitchell, Nissenbaum, “Privacy and Contextual Integrity: Framework and Applications” (the formal model; the nine parameters): IEEE S&P, 2006.
+- Shvartzshnaider & Duddu, “Position: Contextual Integrity is Inadequately Applied to Language Models” (the CI-washing critique; why borrowing the term loosely is unsound): <https://arxiv.org/abs/2501.19173>
+- Hassanpour & Yang, “Contextual Integrity in Large Language Models: A Review” (parameter-coverage gap map; governance parameters underaddressed): J. Cybersecurity and Privacy 6(2):74, 2026.
+- “Privacy in Action / PrivacyChecker” (CI reasoning as in-model mitigation; the model-judgment family Guardian is a foil to): <https://aclanthology.org/2025.findings-emnlp.925/>
+
+### Foundations: in-model mitigation (the family Guardian contrasts with)
+
+- CI-RL, “Contextual Integrity in LLMs via Reasoning and Reinforcement Learning” (training-time CI alignment): <https://arxiv.org/abs/2506.04245>
+- GoldCoin, “Grounding Large Language Models in Privacy Laws via Contextual Integrity Theory” (statute-grounded fine-tuning): <https://arxiv.org/abs/2406.11149>
+- CPPLM, “Large Language Models Can Be Contextual Privacy Protection Learners” (instruction tuning with penalty-based loss): EMNLP 2024.
+- AirGapAgent, “Protecting Privacy-Conscious Conversational Agents” (context-minimization / data minimizer): ACM CCS 2024.
+
+### Foundations: evaluation lineage
+
+- ConfAIde, “Can LLMs Keep a Secret? Testing Privacy Implications via Contextual Integrity Theory”: ICLR 2024.
+- PrivacyLens, “Evaluating Privacy Norm Awareness of Language Models in Action”: <https://arxiv.org/abs/2409.00138>
+- CI-Bench, “Benchmarking Contextual Integrity of AI Assistants on Synthetic Data”: <https://arxiv.org/abs/2409.13903>
+- PrivaCI-Bench, “Evaluating Privacy with Contextual Integrity and Legal Compliance”: <https://arxiv.org/abs/2502.17041>
+- CIMemories, “A Compositional Benchmark for Contextual Integrity of Persistent Memory in LLMs”: <https://arxiv.org/abs/2511.14937>
