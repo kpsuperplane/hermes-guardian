@@ -747,20 +747,28 @@ def _guardian_history_command_telegram(
         if len(turn_rows) > 1:
             heading += f" · {len(turn_rows)} checks"
         lines.extend(["", f"### {heading}"])
+        check_rows: list[list[str]] = []
+        reason_lines: list[str] = []
         for check in turn_rows[:max_checks]:
             decision = str(check.get("decision") or "").strip()
             tool = dashboard_mod._clip_text(dashboard_mod._activity_display_tool(check), 48, ellipsis="...", fallback="n/a")
             classes = _compact_activity_classes(check) or "none"
             latency_label = _latency_label(check.get("latency_ms"))
             reason_text = _compact_activity_reason_line(check)
-            llm_mark = " · llm" if decision == "auto_approved" or "llm" in str(check.get("reason") or "").lower() else ""
-            suffix = f" · {latency_label}" if latency_label else ""
-            lines.append(
-                f"- **{_md_inline(tool)}** · Decision: `{_md_inline(decision or 'unknown')}` "
-                f"· Classes: `{_md_inline(classes)}`{llm_mark}{suffix}"
-            )
+            llm_mark = "yes" if decision == "auto_approved" or "llm" in str(check.get("reason") or "").lower() else "no"
+            check_rows.append([
+                tool,
+                decision or "unknown",
+                classes,
+                llm_mark,
+                latency_label or "n/a",
+            ])
             if reason_text:
-                lines.append(f"  - {_md_inline(reason_text)}")
+                reason_lines.append(f"- **{_md_inline(tool)}**: {_md_inline(reason_text)}")
+        lines.append(_md_table(["Tool", "Decision", "Classes", "LLM", "Time"], check_rows))
+        if reason_lines:
+            lines.append("")
+            lines.append(_md_details("Decision reasons", reason_lines))
         if len(turn_rows) > max_checks:
             lines.append(f"- +{len(turn_rows) - max_checks} more checks")
     return "\n".join(lines)
