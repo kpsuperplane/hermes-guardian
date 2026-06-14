@@ -513,7 +513,7 @@ def _md_table(headers: list[str], rows: list[list[Any]]) -> str:
 
 
 def _md_details(summary: str, body_lines: list[str]) -> str:
-    body = "\n".join(line for line in body_lines if str(line).strip())
+    body = "\n".join(str(line) for line in body_lines).strip()
     if not body:
         return ""
     return f"<details>\n<summary>{_md_inline(summary)}</summary>\n\n{body}\n</details>"
@@ -746,7 +746,7 @@ def _guardian_history_command_telegram(
             heading += f": {prompt}"
         if len(turn_rows) > 1:
             heading += f" · {len(turn_rows)} checks"
-        lines.extend(["", f"### {heading}"])
+        turn_lines: list[str] = []
         for index, check in enumerate(turn_rows[:max_checks]):
             decision = str(check.get("decision") or "").strip()
             icon = dashboard_mod._activity_status_icon(decision)
@@ -757,17 +757,18 @@ def _guardian_history_command_telegram(
             llm_mark = " · LLM" if decision == "auto_approved" or "llm" in str(check.get("reason") or "").lower() else ""
             timing = f" · {latency_label}" if latency_label else ""
             if index:
-                lines.append("")
-            lines.append(f"**{icon} {_md_inline(tool)}**")
-            lines.append(
+                turn_lines.append("")
+            turn_lines.append(f"**{icon} {_md_inline(tool)}**")
+            turn_lines.append(
                 f"Decision: `{_md_inline(decision or 'unknown')}` "
                 f"· Classes: `{_md_inline(classes)}`{llm_mark}{timing}"
             )
             if reason_text:
-                lines.append(_md_details("Reason", [_md_inline(reason_text)]))
+                turn_lines.append(f"Reason: {_md_inline(reason_text)}")
         if len(turn_rows) > max_checks:
-            lines.append("")
-            lines.append(f"+{len(turn_rows) - max_checks} more checks")
+            turn_lines.append("")
+            turn_lines.append(f"+{len(turn_rows) - max_checks} more checks")
+        lines.extend(["", _md_details(heading, turn_lines)])
     return "\n".join(lines)
 
 
