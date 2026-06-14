@@ -90,41 +90,41 @@ def test_read_only_privacy_does_not_auto_approve_messages(monkeypatch):
     assert "Action: message_send" in result["message"]
 
 
-def test_privacy_policy_defaults_to_llm_and_ignores_old_env_values(monkeypatch):
+def test_egress_safety_defaults_to_llm_and_ignores_old_env_values(monkeypatch):
     plugin = load_plugin()
 
-    assert plugin._privacy_policy() == "llm"
+    assert plugin._egress_safety_policy() == "llm"
 
     monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "manual")
-    assert plugin._privacy_policy() == "llm"
+    assert plugin._egress_safety_policy() == "llm"
 
     save_privacy_config(plugin, mode="llm")
     monkeypatch.setenv("HERMES_GUARDIAN_PRIVACY", "auto-approve")
-    assert plugin._privacy_policy() == "llm"
+    assert plugin._egress_safety_policy() == "llm"
 
 
-def test_privacy_mode_can_be_saved_in_json(monkeypatch):
+def test_egress_safety_can_be_saved_in_json(monkeypatch):
     plugin = load_plugin()
 
-    ok, message = plugin._set_privacy_mode("read-only")
+    ok, message = plugin._set_egress_safety_mode("read-only")
 
     assert ok is True
     assert "read-only" in message
-    assert plugin._privacy_policy() == "read-only"
+    assert plugin._egress_safety_policy() == "read-only"
 
-    ok, message = plugin._set_privacy_mode("auto-approve")
+    ok, message = plugin._set_egress_safety_mode("auto-approve")
     assert ok is False
-    assert "strict" in message or "read-only" in message or "mode" in message
-    assert plugin._privacy_policy() == "read-only"
+    assert "Egress Safety" in message
+    assert plugin._egress_safety_policy() == "read-only"
 
 
-def test_privacy_policy_ignores_old_security_env_names(monkeypatch):
+def test_egress_safety_ignores_old_security_env_names(monkeypatch):
     plugin = load_plugin()
 
     monkeypatch.setenv("HERMES_GUARDIAN_SECURITY", "llm")
     monkeypatch.setenv("PRIVACY_EGRESS_GUARD_SECURITY", "off")
 
-    assert plugin._privacy_policy() == "llm"
+    assert plugin._egress_safety_policy() == "llm"
 
 
 @pytest.mark.parametrize(

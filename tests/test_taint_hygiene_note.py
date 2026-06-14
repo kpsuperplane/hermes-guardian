@@ -3,7 +3,7 @@
 While a session is untainted (and privacy checks are on), the pre_llm_call hook
 returns a static guidance note that Hermes injects into the current turn's user
 message at API-call time. The note must be static text (no session data), stop
-once the session is tainted, and stay silent in privacy mode off.
+once the session is tainted, and stay silent with Egress Safety off.
 """
 
 from __future__ import annotations
@@ -33,11 +33,11 @@ def test_tainted_session_gets_no_note():
     assert plugin._on_pre_llm_call(session_id="s1", platform="telegram", sender_id="owner") is None
 
 
-def test_privacy_mode_off_gets_no_note():
+def test_egress_safety_off_gets_no_note():
     plugin = load_plugin()
     bind_owner(plugin)
 
-    ok, _ = plugin._set_privacy_mode("off")
+    ok, _ = plugin._set_egress_safety_mode("off")
     assert ok
 
     assert plugin._on_pre_llm_call(session_id="s1", platform="telegram", sender_id="owner") is None

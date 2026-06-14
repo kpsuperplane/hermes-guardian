@@ -194,9 +194,9 @@ export interface Policy {
   purpose_suggestions?: string[];
   recipient_identity_suggestions?: string[];
   tool_override_egress_options?: string[];
-  privacy_mode?: string;
-  privacy_policy?: string;
+  egress_safety?: string;
   unknown_tools?: string;
+  taint_classification?: string;
   llm_user_context?: boolean;
   llm_cron_context?: boolean;
   persist_prompts?: boolean;

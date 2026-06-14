@@ -596,6 +596,7 @@ def _is_mcp_doc_read(tool_name: str) -> bool:
 # Taint reason carried on the activity row for the conservative source-provenance default.
 # The ``source_default:`` prefix is what the activity deep-link maps to the Protection tab.
 _SOURCE_DEFAULT_REASON = "source_default:undeclared_mcp_read"
+_STRICT_UNKNOWN_READ_REASON = "source_default:unknown_read"
 
 
 def _mcp_server_prefix(tool_name: str) -> str:
@@ -1118,7 +1119,17 @@ def _taint_classes_for_tool_result(
         return classes | override_taints
     if _is_web_sourced_tool(tool_name):
         return _web_content_taint_classes(result_value, session_id) | override_taints
-    return _classes_from_content(result_value) | override_taints
+    source = _tool_override_source(tool_name)
+    if source == "private":
+        return _source_private_taint_classes(tool_name) | override_taints
+    if source == "reference":
+        return _doc_content_taint_classes(result_value) | override_taints
+    classes = _classes_from_content(result_value)
+    if classes:
+        return classes | override_taints
+    if rules_mod._taint_classification_mode() == "strict":
+        return {"documents"} | override_taints
+    return override_taints
 
 
 def _taint_reason_for_tool_result(tool_name: str, classes: set[str]) -> str:
@@ -1515,6 +1526,26 @@ def _is_source_default_read(tool_name: str, tool_args: Any = None) -> bool:
     if _is_reference_read(tool_name, tool_args):
         return False
     return _tool_override_source(tool_name) not in ("reference", "private")
+
+
+def _is_strict_unknown_read(tool_name: str, result_value: Any, status: str = "", tool_args: Any = None) -> bool:
+    """True iff strict taint classification supplies the private-source fallback for an
+    otherwise unknown non-MCP read. Used only for sanitized activity reason labeling."""
+    if rules_mod._taint_classification_mode() != "strict":
+        return False
+    if str(status or "").lower() == "error":
+        return False
+    if _is_local_system_tool(tool_name):
+        return False
+    if _is_reference_read(tool_name, tool_args) or _is_mcp_doc_read(tool_name):
+        return False
+    if _classes_from_tool_name(tool_name) or _is_web_sourced_tool(tool_name):
+        return False
+    if _tool_override_source(tool_name) in ("reference", "private"):
+        return False
+    if _tool_override_taint_classes(tool_name):
+        return False
+    return not _classes_from_content(result_value)
 
 
 def _mark_source_suggested(session_id: str | None, server: str) -> bool:

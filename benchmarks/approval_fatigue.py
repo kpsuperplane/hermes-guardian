@@ -1,4 +1,4 @@
-"""Approval-fatigue benchmark for Hermes Guardian privacy modes.
+"""Approval-fatigue benchmark for Hermes Guardian Egress Safety modes.
 
 The benchmark drives the real plugin hooks against synthetic workflows while
 redirecting all Guardian state into a temporary directory. It is intentionally
@@ -136,12 +136,12 @@ def _save_privacy_config(plugin: Any, mode: str) -> None:
     ok = plugin._save_privacy_config({
         "version": 1,
         "privacy": {
-            "mode": mode,
+            "egress_safety": mode,
             "rules": [],
         },
     })
     if not ok:
-        raise RuntimeError(f"failed to save benchmark privacy mode {mode}")
+        raise RuntimeError(f"failed to save benchmark Egress Safety {mode}")
 
 
 def _json_result(value: Any) -> str:
@@ -495,7 +495,7 @@ def main(argv: list[str] | None = None) -> int:
         "--mode",
         action="append",
         choices=MODES,
-        help="Privacy mode to benchmark. Repeat to select multiple modes.",
+        help="Egress Safety mode to benchmark. Repeat to select multiple modes.",
     )
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output.")
     args = parser.parse_args(argv)

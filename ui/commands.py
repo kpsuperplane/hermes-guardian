@@ -55,8 +55,8 @@ _GUARDIAN_HELP_LINES = [
     "- `/guardian sharing preview <action> <destination> <class>` — which step fires",
     "",
     "REVIEW — who judges everything else",
-    "- `/guardian review` — show mode, contexts, verifier model",
-    "- `/guardian review mode strict|read-only|llm|off`",
+    "- `/guardian review` — show Egress Safety, contexts, verifier model",
+    "- `/guardian review egress-safety strict|read-only|llm|off`",
     "- `/guardian review owner-context on|off`",
     "- `/guardian review cron-context on|off`",
     "- `/guardian review verifier-model <model_id|default>`",
@@ -67,6 +67,7 @@ _GUARDIAN_HELP_LINES = [
     "- `/guardian protection tool set|delete|enable|disable ...`",
     "- `/guardian protection source suggest|set <server> reference|private`",
     "- `/guardian protection unknown-tools gate|allow`",
+    "- `/guardian protection taint-classification balanced|strict`",
     "- `/guardian protection persist-prompts on|off`",
     "- `/guardian protection language-packs enable|disable <pack_id>`",
 ]
@@ -386,11 +387,11 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
         "data_classes": classes,
         "fingerprint": "debug",
     }
-    privacy_policy = core._privacy_policy()
-    if privacy_policy == "off":
+    egress_safety = core._egress_safety_policy()
+    if egress_safety == "off":
         return {
             "decision": "allowed",
-            "privacy_policy": privacy_policy,
+            "egress_safety": egress_safety,
             "source": {"source": "privacy_off", "rule_id": ""},
             "action_family": action_family,
             "destination": destination,
@@ -399,14 +400,14 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
             "recipient_identity": recipient_identity,
             "data_classes": classes,
             "tool_name": tool_name,
-            "reason": "privacy policy is off",
+            "reason": "Egress Safety is off",
         }
     source = rules_mod._approval_source(shape)
     if source:
         denied = source.get("effect") == "deny"
         return {
             "decision": "blocked" if denied else "allowed",
-            "privacy_policy": privacy_policy,
+            "egress_safety": egress_safety,
             "source": source,
             "action_family": action_family,
             "destination": destination,
@@ -419,7 +420,7 @@ def _debug_decision(params: dict[str, str]) -> dict[str, Any]:
         }
     return {
         "decision": "blocked",
-        "privacy_policy": privacy_policy,
+        "egress_safety": egress_safety,
         "source": None,
         "action_family": action_family,
         "destination": destination,
@@ -456,7 +457,7 @@ def _guardian_debug_command(tokens: list[str]) -> str:
     return (
         "Guardian debug decision\n"
         f"Decision: {result['decision']}\n"
-        f"Privacy policy: {result['privacy_policy']}\n"
+        f"Egress Safety: {result['egress_safety']}\n"
         f"Action: {result['action_family'] or '(missing)'}\n"
         f"Destination: {result['destination'] or '(missing)'}\n"
         f"Destination trust: {result.get('destination_trust') or 'unknown'}\n"
@@ -569,8 +570,9 @@ def _guardian_status_telegram(owner_hash: str) -> str:
     tally_text = ", ".join(f"{label}={count}" for label, count in sorted(tally.items())) if tally else "none observed yet"
     enabled_packs = ", ".join(pack.get("id", "") for pack in snapshot["enabled_language_packs"]) or "none"
     rows = [
-        ["Privacy mode", core._privacy_policy()],
+        ["Egress Safety", core._egress_safety_policy()],
         ["Unknown tools", f"{rules_mod._unknown_tools_mode()} ({len(rules_mod._tool_overrides())} override(s))"],
+        ["Taint Classification", rules_mod._taint_classification_mode()],
         ["LLM context", f"user-prompt {'on' if rules_mod._llm_user_context_enabled() else 'off'}, cron {'on' if rules_mod._llm_cron_context_enabled() else 'off'}"],
         ["Security rules", f"{len(rules_mod._SECURITY_RULE_IDS) - len(snapshot['disabled_security'])} enabled, {len(snapshot['disabled_security'])} disabled"],
         ["Language packs", enabled_packs],
@@ -844,14 +846,13 @@ def _guardian_review_telegram(owner_hash: str) -> str:
         _md_table(
             ["Setting", "Value"],
             [
-                ["Privacy mode", core._privacy_policy()],
-                ["Unknown-tools mode", rules_mod._unknown_tools_mode()],
+                ["Egress Safety", core._egress_safety_policy()],
                 ["LLM user-prompt context", "on" if rules_mod._llm_user_context_enabled() else "off"],
                 ["LLM cron context", "on" if rules_mod._llm_cron_context_enabled() else "off"],
                 ["LLM verifier model", rules_mod._llm_verifier_model() or "default"],
             ],
         ),
-        "`/guardian review mode strict|read-only|llm|off`\n`/guardian review owner-context on|off`\n`/guardian review cron-context on|off`\n`/guardian review verifier-model <model_id|default>`",
+        "`/guardian review egress-safety strict|read-only|llm|off`\n`/guardian review owner-context on|off`\n`/guardian review cron-context on|off`\n`/guardian review verifier-model <model_id|default>`",
     ])
 
 
@@ -1085,7 +1086,8 @@ def _guardian_review_command(owner_hash: str, tokens: list[str]) -> str:
         return _guardian_privacy_command(owner_hash, ["privacy"])
     # Rename review verbs to the privacy handler's expected tokens.
     rename = {
-        "mode": "mode",
+        "egress-safety": "egress-safety",
+        "egress_safety": "egress-safety",
         "owner-context": "user-context",
         "owner_context": "user-context",
         "cron-context": "cron-context",
@@ -1096,7 +1098,7 @@ def _guardian_review_command(owner_hash: str, tokens: list[str]) -> str:
     if sub not in rename:
         return (
             "Usage: `/guardian review` | "
-            "`/guardian review mode strict|read-only|llm|off` | "
+            "`/guardian review egress-safety strict|read-only|llm|off` | "
             "`/guardian review owner-context on|off` | "
             "`/guardian review cron-context on|off` | "
             "`/guardian review verifier-model <model_id|default>`"
@@ -1120,6 +1122,8 @@ def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
         return _guardian_source_command(owner_hash, tokens)
     if sub in {"unknown-tools", "unknown_tools"}:
         return _guardian_privacy_command(owner_hash, ["privacy", "unknown-tools", *tokens[2:]])
+    if sub in {"taint-classification", "taint_classification"}:
+        return _guardian_privacy_command(owner_hash, ["privacy", "taint-classification", *tokens[2:]])
     if sub in {"persist-prompts", "persist_prompts"}:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
@@ -1274,21 +1278,27 @@ def _parse_on_off(token: str) -> bool | None:
 def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
     if len(tokens) == 1:
         return (
-            f"Privacy mode: {core._privacy_policy()}\n"
+            f"Egress Safety: {core._egress_safety_policy()}\n"
             f"Unknown-tools mode: {rules_mod._unknown_tools_mode()}\n"
+            f"Taint Classification: {rules_mod._taint_classification_mode()}\n"
             f"LLM user-prompt context: {'on' if rules_mod._llm_user_context_enabled() else 'off'}\n"
             f"LLM cron context: {'on' if rules_mod._llm_cron_context_enabled() else 'off'}\n"
             f"LLM verifier model: {rules_mod._llm_verifier_model() or 'default'}"
         )
-    if len(tokens) == 3 and tokens[1].lower() == "mode":
+    if len(tokens) == 3 and tokens[1].lower() in {"egress-safety", "egress_safety"}:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
-        ok, message = rules_mod._set_privacy_mode(tokens[2])
+        ok, message = rules_mod._set_egress_safety_mode(tokens[2])
         return message
     if len(tokens) == 3 and tokens[1].lower() in {"unknown-tools", "unknown_tools"}:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
         ok, message = rules_mod._set_unknown_tools_mode(tokens[2])
+        return message
+    if len(tokens) == 3 and tokens[1].lower() in {"taint-classification", "taint_classification"}:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        ok, message = rules_mod._set_taint_classification_mode(tokens[2])
         return message
     if len(tokens) == 3 and tokens[1].lower() in {"user-context", "user_context"}:
         if not _slash_admin_allowed(owner_hash):
@@ -1312,11 +1322,12 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
         ok, message = rules_mod._set_llm_verifier_model(" ".join(tokens[2:]))
         return message
     return (
-        "Usage: /guardian review mode strict|read-only|llm|off | "
+        "Usage: /guardian review egress-safety strict|read-only|llm|off | "
         "/guardian review owner-context on|off | "
         "/guardian review cron-context on|off | "
         "`/guardian review verifier-model <model_id|default>` | "
-        "/guardian protection unknown-tools gate|allow"
+        "/guardian protection unknown-tools gate|allow | "
+        "/guardian protection taint-classification balanced|strict"
     )
 
 
@@ -1325,6 +1336,7 @@ def _guardian_tools_command() -> str:
     lines = [
         "Hermes Guardian tool overrides",
         f"Unknown-tools mode: {rules_mod._unknown_tools_mode()}",
+        f"Taint Classification: {rules_mod._taint_classification_mode()}",
     ]
     if not overrides:
         lines.append("No tool overrides configured.")
@@ -1839,8 +1851,9 @@ def _guardian_status(owner_hash: str) -> str:
     )
     lines = [
         "Hermes Guardian status",
-        f"Privacy mode (preset): {core._privacy_policy()}",
+        f"Egress Safety: {core._egress_safety_policy()}",
         f"Unknown tools: {rules_mod._unknown_tools_mode()} ({len(rules_mod._tool_overrides())} override(s))",
+        f"Taint Classification: {rules_mod._taint_classification_mode()}",
         f"LLM context: user-prompt {'on' if rules_mod._llm_user_context_enabled() else 'off'}, "
         f"cron {'on' if rules_mod._llm_cron_context_enabled() else 'off'}",
         f"Security rules: {len(rules_mod._SECURITY_RULE_IDS) - len(disabled_security)} enabled, {len(disabled_security)} disabled",
@@ -1876,7 +1889,7 @@ def _guardian_rules(owner_hash: str) -> str:
     rules = rules_mod._privacy_rules_for_owner(owner_hash)
     if not rules:
         return "No persistent Guardian privacy rules."
-    lines = [f"🛡️ **Guardian privacy rules** · mode `{core._privacy_policy()}` · {len(rules)} shown"]
+    lines = [f"🛡️ **Guardian privacy rules** · mode `{core._egress_safety_policy()}` · {len(rules)} shown"]
     for rule in rules:
         match = rule.get("match") if isinstance(rule.get("match"), dict) else {}
         effect = str(rule.get("effect") or "allow").strip().lower()

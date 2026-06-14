@@ -60,7 +60,7 @@ def _full_v4_document() -> dict:
             "outward": {"extra": ["crosspost"]},
         },
         "review": {
-            "mode": "llm",
+            "egress_safety": "llm",
             "owner_context": True,
             "cron_context": True,
             "verifier_model": "gpt-5.4-mini",
@@ -68,6 +68,7 @@ def _full_v4_document() -> dict:
         "protection": {
             "security": {"sensitive_links": False},
             "unknown_tools": "gate",
+            "taint_classification": "strict",
             "tools": [
                 {"match": "crm_*", "direction": "read", "taints": ["contacts"],
                  "destination": "store:crm", "egress": "ignore"},
@@ -102,12 +103,13 @@ def test_full_v4_file_parses_to_internal_structure():
     assert "crosspost" in config["outward_sharing"]["extra"]
     assert set(config["outward_sharing"]["builtin"]) == set(plugin._OUTWARD_SHARING_BUILTIN_SUBTYPES)
 
-    # review.* -> internal privacy.{mode,llm_*}; protection.unknown_tools -> privacy.unknown_tools.
-    assert config["privacy"]["mode"] == "llm"
+    # review.* -> internal privacy.{egress_safety,llm_*}; protection classification -> privacy.*.
+    assert config["privacy"]["egress_safety"] == "llm"
     assert config["privacy"]["llm_user_context"] is True
     assert config["privacy"]["llm_cron_context"] is True
     assert config["privacy"]["llm_verifier_model"] == "gpt-5.4-mini"
     assert config["privacy"]["unknown_tools"] == "gate"
+    assert config["privacy"]["taint_classification"] == "strict"
 
     # protection.* -> internal security/tools/language_packs/retention/dashboard.
     sec = {r["id"]: r["enabled"] for r in config["security"]["rules"]}
@@ -141,8 +143,8 @@ def _replay_old_outcome_bucket(decision: str) -> str:
 
 
 def _v4_file_for_mode(mode: str) -> dict:
-    """A minimal valid v4 file pinning only review.mode; all else safe defaults."""
-    return {"version": 4, "review": {"mode": mode}}
+    """A minimal valid v4 file pinning only review.egress_safety; all else safe defaults."""
+    return {"version": 4, "review": {"egress_safety": mode}}
 
 
 def test_corpus_parity_through_v4_loader_zero_floor_breaches():
@@ -166,7 +168,7 @@ def test_corpus_parity_through_v4_loader_zero_floor_breaches():
 
         # Drive the mode THROUGH the on-disk v4 file and the new loader front-end.
         _write_file(plugin, _v4_file_for_mode(rec["mode"]))
-        assert plugin._privacy_policy() == rec["mode"]
+        assert plugin._egress_safety_policy() == rec["mode"]
 
         if rec.get("taint"):
             plugin._taint_session(session_id, set(rec["taint"]))
@@ -209,11 +211,12 @@ def test_partial_file_only_whats_yours_fills_defaults():
     # The authored block is honored.
     assert config["self"]["destinations"] == ["store:crm"]
     assert config["self"]["identities"] == []  # conservative: never defaulted non-empty
-    # review.mode defaults to llm; contexts to their safe defaults.
-    assert config["privacy"]["mode"] == "llm" == plugin._DEFAULT_PRIVACY_MODE
+    # Egress Safety defaults to llm; contexts and taint classification to their safe defaults.
+    assert config["privacy"]["egress_safety"] == "llm" == plugin._DEFAULT_EGRESS_SAFETY
     assert config["privacy"]["llm_user_context"] is True
     assert config["privacy"]["llm_cron_context"] is False
     assert config["privacy"]["unknown_tools"] == "gate"
+    assert config["privacy"]["taint_classification"] == "balanced"
     # sharing empty; outward builtin code-owned.
     assert config["privacy"]["rules"] == []
     assert config["trusted_recipients"]["entries"] == []
@@ -225,6 +228,27 @@ def test_partial_file_only_whats_yours_fills_defaults():
     assert plugin.state._PERSISTENT_RULES_ERROR is False
 
 
+def test_invalid_taint_classification_normalizes_to_balanced():
+    plugin = load_plugin()
+    _write_file(plugin, {"version": 4, "protection": {"taint_classification": "banana"}})
+
+    config = plugin._load_privacy_config()
+
+    assert config["privacy"]["egress_safety"] == "llm"
+    assert config["privacy"]["taint_classification"] == "balanced"
+    assert plugin.state._PERSISTENT_RULES_ERROR is False
+
+
+def test_obsolete_review_mode_fails_closed_to_strict():
+    plugin = load_plugin()
+    _write_file(plugin, {"version": 4, "review": {"mode": "llm"}})
+
+    config = plugin._load_privacy_config()
+
+    assert config["privacy"]["egress_safety"] == "strict"
+    assert plugin.state._PERSISTENT_RULES_ERROR is True
+
+
 # --- 3a. Malformed sharing.rules -> empty rules + a logged warning (not fatal). -
 def test_malformed_sharing_rules_drop_to_empty_and_log(caplog):
     plugin = load_plugin()
@@ -232,14 +256,14 @@ def test_malformed_sharing_rules_drop_to_empty_and_log(caplog):
         plugin,
         {
             "version": 4,
-            "review": {"mode": "llm"},
+            "review": {"egress_safety": "llm"},
             "sharing": {"rules": "not-a-list"},  # malformed
         },
     )
     config = plugin._load_privacy_config()
     # The malformed block drops to empty rules; the rest of the document still loads.
     assert config["privacy"]["rules"] == []
-    assert config["privacy"]["mode"] == "llm"
+    assert config["privacy"]["egress_safety"] == "llm"
     # This is a tolerated block-level malformation, NOT a whole-file failure.
     assert plugin.state._PERSISTENT_RULES_ERROR is False
 
@@ -249,7 +273,7 @@ def test_corrupt_file_falls_back_to_strict():
     plugin = load_plugin()
     _write_file(plugin, "{ this is not valid json")
     config = plugin._load_privacy_config()
-    assert config["privacy"]["mode"] == "strict"
+    assert config["privacy"]["egress_safety"] == "strict"
     assert plugin.state._PERSISTENT_RULES_ERROR is True
 
 
@@ -268,7 +292,7 @@ def test_old_shape_file_fails_closed_to_strict(caplog):
     )
     config = plugin._load_privacy_config()
     # No partial/ambiguous parse: the old document is rejected outright -> strict.
-    assert config["privacy"]["mode"] == "strict"
+    assert config["privacy"]["egress_safety"] == "strict"
     assert plugin.state._PERSISTENT_RULES_ERROR is True
     # The legacy allow rule did NOT survive (no silent half-load of old keys).
     assert config["privacy"]["rules"] == []
@@ -285,20 +309,22 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     plugin.state._PERSISTENT_RULES_MTIME = None
 
     # Drive a representative mutation across several blocks via the normal mutators.
-    assert plugin._set_privacy_mode("read-only")[0]
+    assert plugin._set_egress_safety_mode("read-only")[0]
     assert plugin._add_self_destination("destination", "store:crm")[0]
     assert plugin._add_trusted_recipient("ally@example.com", classes=["communications"], note="team")[0]
     assert plugin._set_security_rule("sensitive_links", False)[0]
     assert plugin._set_unknown_tools_mode("allow")[0]
+    assert plugin._set_taint_classification_mode("strict")[0]
     assert plugin._add_outward_sharing_subtype("crosspost")[0]
 
     # The on-disk file is the v4 five-block schema, not the old keys.
     on_disk = json.loads((tmp_path / "rules.json").read_text())
     assert set(on_disk) == {"version", "whats_yours", "sharing", "review", "protection"}
-    assert on_disk["review"]["mode"] == "read-only"
+    assert on_disk["review"]["egress_safety"] == "read-only"
     assert "store:crm" in on_disk["whats_yours"]["stores"]
     assert on_disk["protection"]["security"]["sensitive_links"] is False
     assert on_disk["protection"]["unknown_tools"] == "allow"
+    assert on_disk["protection"]["taint_classification"] == "strict"
     assert "crosspost" in on_disk["sharing"]["outward"]["extra"]
     # builtin subtypes are NOT serialized (code-owned, never written to config).
     assert "builtin" not in on_disk["sharing"]["outward"]
@@ -311,10 +337,11 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
 
     # The internal structure the engine consumes is identical across the round-trip.
     assert before == after
-    assert after["privacy"]["mode"] == "read-only"
+    assert after["privacy"]["egress_safety"] == "read-only"
     assert "store:crm" in after["self"]["destinations"]
     assert [e["value"] for e in after["trusted_recipients"]["entries"]] == ["ally@example.com"]
     assert {r["id"]: r["enabled"] for r in after["security"]["rules"]}["sensitive_links"] is False
     assert after["privacy"]["unknown_tools"] == "allow"
+    assert after["privacy"]["taint_classification"] == "strict"
     assert "crosspost" in after["outward_sharing"]["extra"]
     assert plugin.state._PERSISTENT_RULES_ERROR is False

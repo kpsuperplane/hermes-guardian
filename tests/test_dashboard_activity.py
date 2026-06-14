@@ -25,7 +25,7 @@ def test_dashboard_payload_filters_activity_by_decision():
 
     payload = plugin._dashboard_payload({"decision": "blocked"}, limit=10)
 
-    assert payload["policy"]["privacy_policy"] == "llm"
+    assert payload["policy"]["egress_safety"] == "llm"
     assert payload["activity"]
     assert all(row["decision"] == "blocked" for row in payload["activity"])
 

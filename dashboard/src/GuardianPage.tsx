@@ -35,10 +35,12 @@ export function GuardianPage() {
     policy,
     loading,
     error,
-    privacyMode,
-    setPrivacyMode,
+    egressSafety,
+    setEgressSafety,
     unknownTools,
     setUnknownTools,
+    taintClassification,
+    setTaintClassification,
     llmUserContext,
     setLlmUserContext,
     llmCronContext,
@@ -57,10 +59,12 @@ export function GuardianPage() {
   const actions = useGuardianActions({
     policy,
     load,
-    privacyMode,
-    setPrivacyMode,
+    egressSafety,
+    setEgressSafety,
     unknownTools,
     setUnknownTools,
+    taintClassification,
+    setTaintClassification,
     llmUserContext,
     setLlmUserContext,
     llmCronContext,
@@ -191,9 +195,9 @@ export function GuardianPage() {
       {tab === "review" ? (
         <ReviewTab
           policy={policy}
-          privacyMode={privacyMode}
+          egressSafety={egressSafety}
           modeSaving={actions.modeSaving}
-          onChangePrivacyMode={actions.saveMode}
+          onChangeEgressSafety={actions.saveMode}
           llmUserContext={llmUserContext}
           llmCronContext={llmCronContext}
           userContextSaving={actions.userContextSaving}
@@ -218,6 +222,9 @@ export function GuardianPage() {
           unknownTools={unknownTools}
           unknownToolsSaving={actions.unknownToolsSaving}
           onChangeUnknownTools={actions.saveUnknownTools}
+          taintClassification={taintClassification}
+          taintClassificationSaving={actions.taintClassificationSaving}
+          onChangeTaintClassification={actions.saveTaintClassification}
           sourceSuggestions={actions.sourceSuggestions}
           onLoadSourceSuggestions={actions.loadSourceSuggestions}
           onClassifySource={actions.classifySource}

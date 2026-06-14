@@ -146,9 +146,9 @@ def _requires_wildcard_allow_confirmation(body: dict[str, Any]) -> bool:
 
 
 def _require_dashboard_confirmation(action: str, body: dict[str, Any]) -> None:
-    if action == "privacy_mode" and str(body.get("mode") or "").strip().lower() == "off":
-        if _confirmation_value(body) != "privacy-off":
-            raise HTTPException(status_code=400, detail="privacy mode off requires confirmation")
+    if action == "egress_safety" and str(body.get("mode") or "").strip().lower() == "off":
+        if _confirmation_value(body) != "egress-safety-off":
+            raise HTTPException(status_code=400, detail="Egress Safety off requires confirmation")
     if action in {"create_rule", "update_rule"} and "move" not in body:
         if _requires_wildcard_allow_confirmation(body) and _confirmation_value(body) != "wildcard-allow":
             raise HTTPException(status_code=400, detail="wildcard allow rule requires confirmation")
@@ -303,11 +303,11 @@ async def activity_turns(request: Request) -> dict[str, Any]:
     return payload
 
 
-@router.post("/privacy/mode")
-async def set_privacy_mode(request: Request, body: dict[str, Any]) -> JSONResponse:
+@router.post("/privacy/egress-safety")
+async def set_egress_safety(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
-    _require_dashboard_confirmation("privacy_mode", body)
-    return _json_mutation_result(_guardian()._dashboard_privacy_mode_action(str(body.get("mode") or "")))
+    _require_dashboard_confirmation("egress_safety", body)
+    return _json_mutation_result(_guardian()._dashboard_egress_safety_action(str(body.get("mode") or "")))
 
 
 @router.patch("/security/rules/{rule_id}")
@@ -381,6 +381,14 @@ async def set_unknown_tools(request: Request, body: dict[str, Any]) -> JSONRespo
     _require_dashboard_confirmation("unknown_tools", body)
     return _json_mutation_result(
         _guardian()._dashboard_unknown_tools_mode_action(str(body.get("mode") or "")),
+    )
+
+
+@router.post("/privacy/taint-classification")
+async def set_taint_classification(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    return _json_mutation_result(
+        _guardian()._dashboard_taint_classification_action(str(body.get("mode") or "")),
     )
 
 

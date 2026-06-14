@@ -13,6 +13,7 @@ import type {
 } from "@/types";
 
 const UNKNOWN_TOOL_MODES = ["gate", "allow"];
+const TAINT_CLASSIFICATION_MODES = ["balanced", "strict"];
 
 export interface ProtectionTabProps {
   policy: Policy | null;
@@ -26,6 +27,9 @@ export interface ProtectionTabProps {
   unknownTools: string;
   unknownToolsSaving: boolean;
   onChangeUnknownTools: (mode: string) => void;
+  taintClassification: string;
+  taintClassificationSaving: boolean;
+  onChangeTaintClassification: (mode: string) => void;
   // "Sources seen" picker: undeclared MCP doc-read servers awaiting classification
   sourceSuggestions: SourceSuggestion[];
   onLoadSourceSuggestions: () => void;
@@ -110,6 +114,9 @@ function ToolClassification(props: {
   unknownTools: string;
   unknownToolsSaving: boolean;
   onChangeUnknownTools: (mode: string) => void;
+  taintClassification: string;
+  taintClassificationSaving: boolean;
+  onChangeTaintClassification: (mode: string) => void;
 }) {
   const toolOverrides = (props.policy && props.policy.tool_overrides) || [];
   return (
@@ -186,7 +193,7 @@ function ToolClassification(props: {
         </div>
       ) : (
         <div className="hermes-guardian-muted">
-          No tool overrides. Unrecognized tools follow the unknown-tools mode in Review.
+          No tool overrides. Unrecognized tools follow the unknown-tools mode in Protection.
         </div>
       )}
       <div className="hermes-guardian-tools-override-actions">
@@ -207,6 +214,27 @@ function ToolClassification(props: {
           onChange={(event) => props.onChangeUnknownTools(event.target.value)}
         >
           {UNKNOWN_TOOL_MODES.map((mode) => (
+            <option key={mode} value={mode}>
+              {mode}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="hermes-guardian-unknown-tools-row">
+        <div className="hermes-guardian-unknown-tools-label">
+          <span>Taint Classification</span>
+          <span className="hermes-guardian-muted">
+            Balanced uses recognized sources, declarations, and content signals. Strict treats
+            otherwise-unknown read results as documents.
+          </span>
+        </div>
+        <select
+          className="hermes-guardian-select"
+          value={props.taintClassification}
+          disabled={props.taintClassificationSaving}
+          onChange={(event) => props.onChangeTaintClassification(event.target.value)}
+        >
+          {TAINT_CLASSIFICATION_MODES.map((mode) => (
             <option key={mode} value={mode}>
               {mode}
             </option>
@@ -453,6 +481,9 @@ export function ProtectionTab(props: ProtectionTabProps) {
         unknownTools={props.unknownTools}
         unknownToolsSaving={props.unknownToolsSaving}
         onChangeUnknownTools={props.onChangeUnknownTools}
+        taintClassification={props.taintClassification}
+        taintClassificationSaving={props.taintClassificationSaving}
+        onChangeTaintClassification={props.onChangeTaintClassification}
       />
       <SourcesSeen
         suggestions={props.sourceSuggestions}

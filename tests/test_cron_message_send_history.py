@@ -17,7 +17,7 @@ def test_cron_message_send_block_recorded_in_dashboard_history(monkeypatch):
     cron_session = "cron_aaaaaaaaaaaa_20260608_093642"
 
     # Incident conditions: llm mode (default) with the verifier unavailable.
-    assert plugin._privacy_policy() == "llm"
+    assert plugin._egress_safety_policy() == "llm"
     plugin.state._PLUGIN_LLM = None  # -> "LLM verifier unavailable"
 
     # Pin the notify target so the test is hermetic: the default "origin"

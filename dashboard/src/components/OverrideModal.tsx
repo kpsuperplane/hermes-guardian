@@ -111,13 +111,13 @@ export function OverrideModal({
                 />
               </Field>
             ) : null}
-            <Field label="Source (doc reads)">
+            <Field label="Source">
               <select
                 className="hermes-guardian-select"
                 value={form.source}
                 onChange={(event) => update("source", event.target.value)}
               >
-                <option value="">Default (tiered)</option>
+                <option value="">Default</option>
                 <option value="reference">Reference material</option>
                 <option value="private">Personal data</option>
               </select>

@@ -334,7 +334,7 @@ def test_untainted_mcp_private_source_share_blocks():
     assert rows[0]["data_classes"] == "documents"
 
 
-def test_privacy_mode_off_does_not_bypass_intrinsic_exfiltration():
+def test_egress_safety_off_does_not_bypass_intrinsic_exfiltration():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="off")
 

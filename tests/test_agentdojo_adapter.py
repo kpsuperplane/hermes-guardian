@@ -66,7 +66,7 @@ def test_missing_agentdojo_degrades_without_fabricating(monkeypatch):
 def test_full_adapter_run_reports_real_metrics():
     result = adapter.run_agentdojo_adapter()
     assert result["benchmark"] == "agentdojo_guardian"
-    assert result["privacy_mode"] == "strict"
+    assert result["egress_safety"] == "strict"
     assert result["real_llm_judgment"] is False
     assert result["verifier"] == "deterministic"
     counts = result["counts"]

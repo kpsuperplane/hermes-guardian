@@ -171,8 +171,8 @@ def _dashboard_rule_delete_action(rule_id: str) -> tuple[dict[str, Any], int]:
     return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, status
 
 
-def _dashboard_privacy_mode_action(mode: str) -> tuple[dict[str, Any], int]:
-    ok, message = rules_mod._set_privacy_mode(mode)
+def _dashboard_egress_safety_action(mode: str) -> tuple[dict[str, Any], int]:
+    ok, message = rules_mod._set_egress_safety_mode(mode)
     return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
@@ -188,6 +188,11 @@ def _dashboard_language_pack_action(pack_id: str, enabled: Any) -> tuple[dict[st
 
 def _dashboard_unknown_tools_mode_action(mode: str) -> tuple[dict[str, Any], int]:
     ok, message = rules_mod._set_unknown_tools_mode(mode)
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
+
+
+def _dashboard_taint_classification_action(mode: str) -> tuple[dict[str, Any], int]:
+    ok, message = rules_mod._set_taint_classification_mode(mode)
     return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
@@ -430,7 +435,7 @@ def _dashboard_preview_send(action_family: str, destination: str, classes: list[
     """
     cap = _build_preview_capability(action_family, destination, classes)
     outcome, step = policy._decide_with_step(
-        cap, classes or [], "unknown", core._privacy_policy()
+        cap, classes or [], "unknown", core._egress_safety_policy()
     )
     dest = getattr(cap, "destination", None)
     return {

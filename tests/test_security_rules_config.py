@@ -28,11 +28,11 @@ def test_security_rule_can_be_saved_in_json(tmp_path):
     assert ok is True
     assert "Disabled security rule account_security_content" in message
     data = json.loads((tmp_path / "rules.json").read_text())
-    # v4 on-disk: protection.security is a {rule_id: bool} toggle map; review.mode
-    # carries the privacy mode.
+    # v4 on-disk: protection.security is a {rule_id: bool} toggle map; review
+    # carries Egress Safety.
     configured = data["protection"]["security"]
     assert configured["account_security_content"] is False
-    assert data["review"]["mode"] == "llm"
+    assert data["review"]["egress_safety"] == "llm"
 
 
 def test_security_rule_can_be_disabled_by_direct_json_edit(tmp_path):
@@ -40,10 +40,10 @@ def test_security_rule_can_be_disabled_by_direct_json_edit(tmp_path):
     plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin.state._PERSISTENT_RULES_CACHE = None
     plugin.state._PERSISTENT_RULES_MTIME = None
-    # v4 five-block schema: review.mode + protection.security toggle map.
+    # v4 five-block schema: review.egress_safety + protection.security toggle map.
     (tmp_path / "rules.json").write_text(json.dumps({
         "version": 4,
-        "review": {"mode": "strict"},
+        "review": {"egress_safety": "strict"},
         "sharing": {"rules": []},
         "protection": {
             "security": {
@@ -65,12 +65,12 @@ def test_privacy_saves_preserve_security_rules(tmp_path):
     plugin.state._PERSISTENT_RULES_CACHE = None
 
     assert plugin._set_security_rule("sensitive_links", False)[0]
-    assert plugin._set_privacy_mode("read-only")[0]
+    assert plugin._set_egress_safety_mode("read-only")[0]
 
     data = json.loads((tmp_path / "rules.json").read_text())
     configured = data["protection"]["security"]
     assert configured["sensitive_links"] is False
-    assert data["review"]["mode"] == "read-only"
+    assert data["review"]["egress_safety"] == "read-only"
 
 
 def test_disabling_account_security_content_allows_semantic_auth_code_but_not_credentials():

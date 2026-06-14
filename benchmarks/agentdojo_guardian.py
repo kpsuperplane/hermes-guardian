@@ -38,7 +38,7 @@ Modeling assumptions, made explicit because they bound the numbers
    the injection vector. We therefore taint every session, reflecting the threat
    model in which the agent has already read untrusted content before it acts.
    Read-only benign tasks still pass clean because they perform no egress.
-3. **Deterministic strict mode.** Runs use ``privacy.mode=strict``: pure
+3. **Deterministic strict mode.** Runs use ``egress_safety=strict``: pure
    deterministic gating, no LLM verifier. No number here reflects real-LLM
    judgment.
 4. **Ground-truth traces only.** Tasks whose ``ground_truth`` is empty/undefined
@@ -372,7 +372,7 @@ def run_agentdojo_adapter(*, version: str | None = None) -> dict[str, Any]:
         "agentdojo_module": getattr(agentdojo, "__name__", "agentdojo"),
         "agentdojo_benchmark_version": resolved_version,
         "evaluation_unit": "guardian_egress_gate_over_ground_truth_traces",
-        "privacy_mode": "strict",
+        "egress_safety": "strict",
         "verifier": "deterministic",
         "real_llm_judgment": False,
         "prevented_rate": _rate(total_prevented, total_attack),
@@ -400,7 +400,7 @@ def run_agentdojo_adapter(*, version: str | None = None) -> dict[str, Any]:
             "AgentDojo tool semantics are supplied via an explicit, auditable "
             "tool-override mapping (see tool_classification); raw AgentDojo names "
             "are otherwise unknown to Guardian.",
-            "strict mode + deterministic verifier: no number here reflects "
+            "strict Egress Safety + deterministic verifier: no number here reflects "
             "real-LLM judgment.",
             "Not directly comparable to LlamaFirewall/Invariant AgentDojo scores, "
             "which measure attack success / utility under a live agent.",
@@ -413,7 +413,7 @@ def _summary_lines(result: dict[str, Any]) -> list[str]:
     counts = result["counts"]
     lines = [
         f"AgentDojo x Hermes Guardian ({result['agentdojo_benchmark_version']}, "
-        f"{result['privacy_mode']} mode, deterministic verifier)",
+        f"{result['egress_safety']} Egress Safety, deterministic verifier)",
         "Guardian as egress monitor over AgentDojo ground-truth tool-call traces.",
         "",
         f"prevented_rate      : {result['prevented_rate']:.3f}  "

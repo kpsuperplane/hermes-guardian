@@ -374,7 +374,7 @@ def _emit_activity(
                 (
                     int(state._now()),
                     decision,
-                    core._privacy_policy(),
+                    core._egress_safety_policy(),
                     core._safe_session_label(sid),
                     core._short_hash(sid),
                     core._short_hash(owner_hash),

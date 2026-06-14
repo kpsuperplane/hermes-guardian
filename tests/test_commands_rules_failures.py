@@ -43,14 +43,14 @@ def test_guardian_rule_delete_slash_alias_removes_persistent_rule(tmp_path):
     assert [rule["id"] for rule in data["sharing"]["rules"]] == ["rule_keep"]
 
 
-def test_non_owner_slash_cannot_change_global_privacy_mode():
+def test_non_owner_slash_cannot_change_global_egress_safety_mode():
     plugin = load_plugin()
 
-    plugin._on_pre_gateway_dispatch(gateway_event("/guardian review mode off", user_id="attacker"))
-    response = plugin._handle_guardian_command("review mode off")
+    plugin._on_pre_gateway_dispatch(gateway_event("/guardian review egress-safety off", user_id="attacker"))
+    response = plugin._handle_guardian_command("review egress-safety off")
 
     assert "Permission denied" in response
-    assert plugin._privacy_policy() == "llm"
+    assert plugin._egress_safety_policy() == "llm"
 
 
 def test_guardian_status_surfaces_concrete_risk_banners():

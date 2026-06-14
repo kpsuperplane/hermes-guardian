@@ -159,7 +159,7 @@ def test_overrides_survive_other_config_mutations():
     plugin._set_tool_override("mcp_acme_*", taints=["communications"], egress="ignore")
     plugin._set_unknown_tools_mode("allow")
 
-    plugin._set_privacy_mode("strict")
+    plugin._set_egress_safety_mode("strict")
     plugin._set_security_rule("sensitive_links", False)
     plugin._set_language_pack("es", True)
     rules = plugin._persistent_privacy_rules()
@@ -170,7 +170,7 @@ def test_overrides_survive_other_config_mutations():
     assert plugin._unknown_tools_mode() == "allow"
     assert plugin._tool_overrides()[0]["match"] == "mcp_acme_*"
     # other config preserved too
-    assert plugin._privacy_mode() == "strict"
+    assert plugin._egress_safety_mode() == "strict"
     assert not plugin._security_rule_enabled("sensitive_links")
     assert any(r.get("id") == "keep_me" for r in plugin._persistent_privacy_rules())
 

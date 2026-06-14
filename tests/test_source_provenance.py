@@ -101,6 +101,106 @@ def test_reference_by_path_skips_inbound_sensitive_link_suppression():
 _SIGNALLESS_PROSE = "The quarterly review went well and the client was pleased with progress."
 
 
+def test_balanced_unknown_non_mcp_read_of_signalless_prose_stays_untainted():
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note", result=_SIGNALLESS_PROSE, session_id="balanced"
+    )
+
+    assert plugin._taint_classification_mode() == "balanced"
+    assert plugin._session_taint("balanced") == set()
+
+
+def test_strict_unknown_non_mcp_read_of_signalless_prose_taints_documents():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    assert plugin._set_taint_classification_mode("strict")[0]
+
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note", result=_SIGNALLESS_PROSE, session_id="strict"
+    )
+
+    assert plugin._session_taint("strict") == {"documents"}
+    rows = _tainted_rows(plugin)
+    assert rows and rows[0]["reason"] == "source_default:unknown_read"
+
+
+def test_strict_unknown_non_mcp_read_preserves_specific_content_classes():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    assert plugin._set_taint_classification_mode("strict")[0]
+
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note", result="Reach Jane at jane.doe@gmail.com", session_id="strict"
+    )
+
+    assert plugin._session_taint("strict") == {"contacts"}
+
+
+def test_strict_does_not_change_web_browser_or_error_result_taint():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    assert plugin._set_taint_classification_mode("strict")[0]
+
+    plugin._on_transform_tool_result(
+        tool_name="browser_read",
+        result="Your reservation is confirmed for 7:30 PM.",
+        session_id="browser",
+    )
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note",
+        result=_SIGNALLESS_PROSE,
+        status="error",
+        session_id="error",
+    )
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note",
+        result="",
+        session_id="empty",
+    )
+    plugin._privacy_observe_tool_result(
+        tool_name="fetch_personal_note",
+        result={"text": _SIGNALLESS_PROSE},
+        session_id="structured",
+    )
+
+    assert plugin._session_taint("browser") == set()
+    assert plugin._session_taint("error") == set()
+    assert plugin._session_taint("empty") == set()
+    assert plugin._session_taint("structured") == set()
+
+
+def test_source_overrides_apply_to_arbitrary_unknown_reads():
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    assert plugin._set_tool_override("fetch_personal_note", source="private")[0]
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note", result=_SIGNALLESS_PROSE, session_id="private"
+    )
+    assert plugin._session_taint("private") == {"documents"}
+
+    assert plugin._set_tool_override("fetch_reference_note", source="reference")[0]
+    plugin._on_transform_tool_result(
+        tool_name="fetch_reference_note", result=_PLACEHOLDER_DOC, session_id="reference"
+    )
+    assert plugin._session_taint("reference") == set()
+
+
+def test_source_reference_does_not_override_known_private_source_names():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    assert plugin._set_tool_override("gmail_*", source="reference")[0]
+
+    plugin._on_transform_tool_result(
+        tool_name="gmail_fetch", result=_PLACEHOLDER_DOC, session_id="gmail"
+    )
+
+    assert plugin._session_taint("gmail") == {"communications"}
+
+
 def test_declared_reference_relaxes_to_placeholder_tolerant_scan():
     # A whole MCP server declared `source = "reference"` (prefix match) routes its doc-reads
     # through the relaxed scan: placeholders are tolerated where the undeclared floor taints.

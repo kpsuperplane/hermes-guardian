@@ -184,7 +184,7 @@ the tests/docs are updated accordingly:
 - Unknown or ambiguous egress surfaces should be classified conservatively,
   especially MCP tools, terminal/code execution, browser console/CDP, and model
   APIs.
-- `privacy.mode=off` disables private-egress approval checks only. It must not
+- `privacy.egress_safety=off` disables private-egress approval checks only. It must not
   disable Security Module blocking/suppression.
 - `read-only` mode should auto-approve only metadata-verified low-risk actions.
   Anything uncertain falls back to manual approval.
@@ -255,7 +255,7 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
     "outward": {"extra": []}
   },
   "review": {
-    "mode": "strict",
+    "egress_safety": "strict",
     "owner_context": true,
     "cron_context": false,
     "verifier_model": ""
@@ -269,6 +269,7 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
       "private_network_reads": true
     },
     "unknown_tools": "gate",
+    "taint_classification": "balanced",
     "tools": [
       {
         "id": "tool_ab12cd34",
@@ -288,8 +289,8 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
 ```
 
 Internally, `privacy/rules.py` consumes a normalized in-memory structure
-(`privacy.{mode,unknown_tools,llm_user_context,llm_cron_context,
-llm_verifier_model,rules,tools}`, `self`, `trusted_recipients`,
+(`privacy.{egress_safety,unknown_tools,taint_classification,llm_user_context,
+llm_cron_context,llm_verifier_model,rules,tools}`, `self`, `trusted_recipients`,
 `outward_sharing`, `security.rules`, `language_packs.enabled`, `retention`,
 `dashboard`); these internal keys are what the engine and mutators use.
 `_normalize_privacy_config` parses the v4 file into that structure,
@@ -300,10 +301,11 @@ The file→internal map (doc 04 §3): `whats_yours.stores/.identities/.hosts`
 → `self.destinations/.identities/.hosts`; `sharing.trusted_recipients` →
 `trusted_recipients.entries`; `sharing.rules` → `privacy.rules`;
 `sharing.outward.extra` → `outward_sharing.extra` (builtin subtypes are code-owned and
-never read from / written to config); `review.mode/.owner_context/.cron_context/
-.verifier_model` → `privacy.mode/.llm_user_context/.llm_cron_context/
+never read from / written to config); `review.egress_safety/.owner_context/.cron_context/
+.verifier_model` → `privacy.egress_safety/.llm_user_context/.llm_cron_context/
 .llm_verifier_model`; `protection.security` (a `{id: bool}` toggle map)
-→ `security.rules`; `protection.unknown_tools` → `privacy.unknown_tools`;
+→ `security.rules`; `protection.unknown_tools/.taint_classification` →
+`privacy.unknown_tools/.taint_classification`;
 `protection.tools` → `privacy.tools`; `protection.language_packs`
 (a `{id: bool}` toggle map) → `language_packs.enabled`; `protection.retention` →
 `retention`; `protection.runtime` → `dashboard`.
@@ -312,6 +314,11 @@ never read from / written to config); `review.mode/.owner_context/.cron_context/
 tool (not a known built-in, not covered by a `privacy.tools` override) is classified
 as `tool_unknown` and gated under taint, mirroring `mcp_unknown`. `allow` leaves
 unrecognized non-MCP tools ungated and raises a runtime risk banner.
+
+`protection.taint_classification` is `balanced` (default) or `strict`. In `balanced`,
+arbitrary unknown non-MCP read results use recognized source names, tool overrides,
+and content signals. In `strict`, an otherwise-unknown non-MCP read result that
+carries no stronger classification taints as `documents`.
 
 `privacy.tools` is the user-managed tool override registry. Each entry has a `match`
 (exact tool name or a single trailing-`*` prefix), optional `taints` (source classes
@@ -411,8 +418,8 @@ Keep `dashboard/plugin_api.py` as a thin adapter:
   `HERMES_GUARDIAN_DASHBOARD_MUTATIONS=0` disables mutations, and
   `HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN` requires
   `x-hermes-guardian-token`.
-- It should require explicit confirmation for the weakening actions: privacy mode
-  `off` (`privacy-off`), global wildcard allow rules (`wildcard-allow`),
+- It should require explicit confirmation for the weakening actions: Egress Safety
+  `off` (`egress-safety-off`), global wildcard allow rules (`wildcard-allow`),
   `unknown_tools=allow` (`unknown-tools-allow`), `egress:ignore` tool overrides
   (`tool-ignore`), and enabling cron context (`cron-context-on`).
 - Tool override, unknown-tools, and LLM-context routes (`POST /tools`,
@@ -570,5 +577,5 @@ sharing process-global state across tests.
 - Clearing taint on `on_session_end`; current behavior intentionally prunes
   volatile state only because Hermes may fire it at run-conversation
   boundaries.
-- Forgetting to preserve security rule config when saving privacy mode/rules.
+- Forgetting to preserve security rule config when saving Egress Safety/rules.
 - Forking dashboard mutation logic away from slash/CLI mutation logic.

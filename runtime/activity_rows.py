@@ -547,7 +547,7 @@ def _activity_row_from_sql(row: sqlite3.Row) -> dict[str, Any]:
         "ts": row["ts"],
         "decision": row["decision"],
         "mode": row["mode"],
-        "privacy_policy": row["mode"],
+        "egress_safety": row["mode"],
         "session_label": row["session_label"],
         "session_hash": row["session_hash"],
         "owner_hash": row["owner_hash"],
@@ -622,7 +622,7 @@ def _activity_datatables_row(row: dict[str, Any]) -> dict[str, Any]:
         "reason_short": _activity_plain_reason_line(row),
         "reason": dashboard._activity_display_reason(row),
         "action_detail": str(row.get("action_detail") or ""),
-        "mode": str(row.get("mode") or row.get("privacy_policy") or ""),
+        "mode": str(row.get("mode") or row.get("egress_safety") or ""),
         "session_hash": str(row.get("session_hash") or ""),
         "owner_hash": str(row.get("owner_hash") or ""),
         "approval_id": str(row.get("approval_id") or ""),
@@ -1287,9 +1287,9 @@ def _policy_snapshot() -> dict[str, Any]:
     recent_blocks = _dashboard_recent_blocks(pending)
     risk_banners = _runtime_risk_banners()
     return {
-        "privacy_policy": core._privacy_policy(),
-        "privacy_mode": core._privacy_policy(),
+        "egress_safety": core._egress_safety_policy(),
         "unknown_tools": rules_mod._unknown_tools_mode(),
+        "taint_classification": rules_mod._taint_classification_mode(),
         "llm_user_context": rules_mod._llm_user_context_enabled(),
         "llm_cron_context": rules_mod._llm_cron_context_enabled(),
         "persist_prompts": rules_mod._persist_prompts_enabled(),

@@ -89,7 +89,7 @@ def _on_pre_llm_call_impl(
     # While the session is still clean, hand the agent an ephemeral hygiene note
     # (Hermes appends it to the current turn's user message at API-call time only).
     # Once tainted — or with privacy checks off — the note has nothing to protect.
-    if rules._privacy_mode() == "off":
+    if rules._egress_safety_mode() == "off":
         return None
     if tool_policy._session_taint(session_id):
         return None

@@ -579,7 +579,7 @@ def _shadow_decision_for(tool_name: str, args: Any, session_id: str | None):
     cap = capability.classify(tool_name, args, session_id)
     taint = tool_policy._data_classes_for_egress(session_id, args)
     purpose = tool_policy._purpose_from_args(args)
-    mode = core._privacy_policy()
+    mode = core._egress_safety_policy()
     decision = policy.decide(cap, taint, purpose, mode)
     return cap, decision
 
@@ -675,7 +675,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
 
     Order (charter §5 invariant #1, security before privacy):
       1. Security/intrinsic hard-block short-circuit — UNCHANGED, runs before decide.
-      2. ``privacy.mode == off`` disables ONLY private-egress checks (security still ran).
+      2. ``privacy.egress_safety == off`` disables ONLY private-egress checks (security still ran).
       3. Non-sink calls are reads (taint, never egress; charter invariant #3).
       4. A sink: build the Capability, resolve the runtime/persistent approval source, then
          call ``decide`` and map ALLOW/BLOCK/APPROVE onto the existing mechanics.
@@ -713,10 +713,10 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
         )
         return {"action": "block", "message": f"Blocked by {core._PLUGIN_NAME}: {reason}."}
 
-    privacy_policy = core._privacy_policy()
+    egress_safety = core._egress_safety_policy()
     action = tool_policy._egress_action_context_for_tool(tool_name, args, session_id)
 
-    if privacy_policy == "off":
+    if egress_safety == "off":
         # off disables ONLY private-egress checks; security already ran (charter §5).
         _allow_privacy_off_tool_call(tool_name, args, session_id, action)
         return None
@@ -734,7 +734,7 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
     # destination trust + decide step (doc 03 §3.2). decide_with_step is pure; the outcome
     # it returns equals what the authoritative decide() below returns (asserted by test).
     cap = capability.classify(tool_name, args, session_id)
-    decision, decision_step = policy.decide_with_step(cap, data_classes, action.purpose, privacy_policy)
+    decision, decision_step = policy.decide_with_step(cap, data_classes, action.purpose, egress_safety)
     destination_trust = _trust_label(getattr(cap.destination, "trust", None))
     shape = llm._approval_shape(
         session_id=session_id,
@@ -840,14 +840,14 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
     # this turn. Channel-agnostic; turn-scoped (cleared on the next user input).
     lockdown = _turn_external_denial_hit(session_id, data_classes)
 
-    if privacy_policy == "read-only" and not lockdown and llm._read_only_auto_approves(shape, args):
+    if egress_safety == "read-only" and not lockdown and llm._read_only_auto_approves(shape, args):
         # read-only's metadata-verified low-risk auto-approve preset (doc 02 §6): a
         # read-only auto-approval that happens today must still happen.
         _allow_read_only_tool_call(shape, tool_name, args)
         return None
 
     blocked_reason = _LOCKDOWN_BLOCKED_REASON if lockdown else "requires approval"
-    if privacy_policy == "llm":
+    if egress_safety == "llm":
         # llm mode: the verifier may UPGRADE the APPROVE to allow/hold/deny, including the
         # cron high-risk downgrade and _validated_llm_security_verdict — UNCHANGED.
         llm_result, llm_blocked_reason, llm_apply_allow = _llm_policy_tool_call_result(shape, tool_name, args)
@@ -895,6 +895,7 @@ def _privacy_observe_tool_result(
     # on the security inbound path so both sides agree on what "reference material" is.
     is_reference_read = tool_policy._is_reference_read(tool_name, tool_args)
     source_default = tool_policy._is_source_default_read(tool_name, tool_args)
+    strict_unknown_read = False
     taint_classes = tool_policy._taint_classes_for_tool_result(
         tool_name,
         parsed,
@@ -904,6 +905,10 @@ def _privacy_observe_tool_result(
         tool_args=tool_args,
     )
     if taint_classes:
+        strict_unknown_read = tool_policy._is_strict_unknown_read(
+            tool_name, parsed, status=status, tool_args=tool_args
+        )
+    if taint_classes:
         tool_policy._taint_session(session_id, taint_classes)
         # Provenance retired (doc 02 §4): the read taints the session ambiently; there is
         # no read-time fingerprint index. ``decide`` reasons over this ambient taint. An
@@ -912,6 +917,8 @@ def _privacy_observe_tool_result(
         reason = (
             tool_policy._SOURCE_DEFAULT_REASON
             if source_default
+            else tool_policy._STRICT_UNKNOWN_READ_REASON
+            if strict_unknown_read
             else tool_policy._taint_reason_for_tool_result(tool_name, taint_classes)
         )
         activity_store._emit_activity(
@@ -922,7 +929,13 @@ def _privacy_observe_tool_result(
             reason=reason,
             # The conservative-default taint row deep-links to the Protection picker so the
             # operator can classify the server one click away (see deepLinks.ts).
-            decision_step=(tool_policy._SOURCE_DEFAULT_REASON if source_default else ""),
+            decision_step=(
+                tool_policy._SOURCE_DEFAULT_REASON
+                if source_default
+                else tool_policy._STRICT_UNKNOWN_READ_REASON
+                if strict_unknown_read
+                else ""
+            ),
         )
     else:
         tool_policy._record_public_discovered_urls(

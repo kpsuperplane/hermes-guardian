@@ -831,7 +831,7 @@ def test_approve_route_allows_with_token(monkeypatch):
 def _mutation_route_invokers(api):
     req = _request({})  # no x-hermes-guardian-token header -> wrong credential
     return {
-        "set_privacy_mode": lambda: api.set_privacy_mode(req, {"mode": "strict"}),
+        "set_egress_safety": lambda: api.set_egress_safety(req, {"mode": "strict"}),
         "update_security_rule": lambda: api.update_security_rule(req, "sensitive_links", {"enabled": False}),
         "update_language_pack": lambda: api.update_language_pack(req, "es", {"enabled": True}),
         "create_rule": lambda: api.create_rule(req, {}),
@@ -841,6 +841,7 @@ def _mutation_route_invokers(api):
         "dismiss": lambda: api.dismiss(req, "1234"),
         "clear_taint": lambda: api.clear_taint(req),
         "set_unknown_tools": lambda: api.set_unknown_tools(req, {"mode": "gate"}),
+        "set_taint_classification": lambda: api.set_taint_classification(req, {"mode": "strict"}),
         "set_user_context": lambda: api.set_user_context(req, {"enabled": True}),
         "set_cron_context": lambda: api.set_cron_context(req, {"enabled": False}),
         "set_verifier_model": lambda: api.set_verifier_model(req, {"model": ""}),
@@ -874,7 +875,7 @@ def test_every_mutation_route_requires_admin(monkeypatch, route_name):
 def _confirmation_gate_invokers(api):
     req = _request({})
     return {
-        "privacy-off": lambda: api.set_privacy_mode(req, {"mode": "off"}),
+        "egress-safety-off": lambda: api.set_egress_safety(req, {"mode": "off"}),
         "wildcard-allow": lambda: api.create_rule(
             req,
             {

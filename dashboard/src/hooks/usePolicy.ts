@@ -6,10 +6,12 @@ export interface PolicyController {
   policy: Policy | null;
   loading: boolean;
   error: string;
-  privacyMode: string;
-  setPrivacyMode: (mode: string) => void;
+  egressSafety: string;
+  setEgressSafety: (mode: string) => void;
   unknownTools: string;
   setUnknownTools: (mode: string) => void;
+  taintClassification: string;
+  setTaintClassification: (mode: string) => void;
   llmUserContext: boolean;
   setLlmUserContext: (enabled: boolean) => void;
   llmCronContext: boolean;
@@ -21,15 +23,16 @@ export interface PolicyController {
   load: () => Promise<void>;
 }
 
-// Loads the full policy snapshot and tracks the privacy/unknown-tools modes it
+// Loads the full policy snapshot and tracks the egress/source-classification modes it
 // reports. The mode setters are exposed so the Settings/Tools tabs can apply
 // optimistic updates (and roll back on failure).
 export function usePolicy(): PolicyController {
   const [policy, setPolicy] = useState<Policy | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [privacyMode, setPrivacyMode] = useState("llm");
+  const [egressSafety, setEgressSafety] = useState("llm");
   const [unknownTools, setUnknownTools] = useState("gate");
+  const [taintClassification, setTaintClassification] = useState("balanced");
   const [llmUserContext, setLlmUserContext] = useState(true);
   const [llmCronContext, setLlmCronContext] = useState(false);
   const [persistPrompts, setPersistPrompts] = useState(false);
@@ -41,8 +44,9 @@ export function usePolicy(): PolicyController {
     return api("/policy")
       .then((value: Policy) => {
         setPolicy(value);
-        setPrivacyMode(value.privacy_mode || value.privacy_policy || "llm");
+        setEgressSafety(value.egress_safety || "llm");
         setUnknownTools(value.unknown_tools || "gate");
+        setTaintClassification(value.taint_classification || "balanced");
         setLlmUserContext(value.llm_user_context !== false);
         setLlmCronContext(value.llm_cron_context === true);
         setPersistPrompts(value.persist_prompts === true);
@@ -64,10 +68,12 @@ export function usePolicy(): PolicyController {
     policy,
     loading,
     error,
-    privacyMode,
-    setPrivacyMode,
+    egressSafety,
+    setEgressSafety,
     unknownTools,
     setUnknownTools,
+    taintClassification,
+    setTaintClassification,
     llmUserContext,
     setLlmUserContext,
     llmCronContext,

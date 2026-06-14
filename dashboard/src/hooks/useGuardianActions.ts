@@ -18,10 +18,12 @@ import type {
 export interface GuardianActionDeps {
   policy: Policy | null;
   load: () => Promise<void>;
-  privacyMode: string;
-  setPrivacyMode: (mode: string) => void;
+  egressSafety: string;
+  setEgressSafety: (mode: string) => void;
   unknownTools: string;
   setUnknownTools: (mode: string) => void;
+  taintClassification: string;
+  setTaintClassification: (mode: string) => void;
   llmUserContext: boolean;
   setLlmUserContext: (enabled: boolean) => void;
   llmCronContext: boolean;
@@ -52,10 +54,12 @@ export function useGuardianActions(deps: GuardianActionDeps) {
   const {
     policy,
     load,
-    privacyMode,
-    setPrivacyMode,
+    egressSafety,
+    setEgressSafety,
     unknownTools,
     setUnknownTools,
+    taintClassification,
+    setTaintClassification,
     llmUserContext,
     setLlmUserContext,
     llmCronContext,
@@ -71,6 +75,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
   const [modeSaving, setModeSaving] = useState(false);
   const [languagePacksSaving, setLanguagePacksSaving] = useState(false);
   const [unknownToolsSaving, setUnknownToolsSaving] = useState(false);
+  const [taintClassificationSaving, setTaintClassificationSaving] = useState(false);
   const [userContextSaving, setUserContextSaving] = useState(false);
   const [cronContextSaving, setCronContextSaving] = useState(false);
   const [persistPromptsSaving, setPersistPromptsSaving] = useState(false);
@@ -86,29 +91,29 @@ export function useGuardianActions(deps: GuardianActionDeps) {
   const [sourceSuggestions, setSourceSuggestions] = useState<SourceSuggestion[]>([]);
 
   function saveMode(nextMode: string) {
-    const mode = text(nextMode, privacyMode);
-    if (mode === privacyMode) return;
-    const previousMode = privacyMode;
+    const mode = text(nextMode, egressSafety);
+    if (mode === egressSafety) return;
+    const previousMode = egressSafety;
     const body: { mode: string; confirm?: string } = { mode };
     if (mode === "off") {
       if (
         !window.confirm(
-          "Turn Guardian privacy egress checks off? Security-sensitive blocking remains active.",
+          "Turn Egress Safety off? Security-sensitive blocking remains active.",
         )
       ) {
         return;
       }
-      body.confirm = "privacy-off";
+      body.confirm = "egress-safety-off";
     }
-    setPrivacyMode(mode);
+    setEgressSafety(mode);
     setModeSaving(true);
-    api("/privacy/mode", { method: "POST", body: JSON.stringify(body) })
+    api("/privacy/egress-safety", { method: "POST", body: JSON.stringify(body) })
       .then((payload) => {
         showToast(payload.message || "Saved.");
         return load();
       })
       .catch((err) => {
-        setPrivacyMode(previousMode);
+        setEgressSafety(previousMode);
         showToast(errText(err), "error");
       })
       .finally(() => setModeSaving(false));
@@ -141,6 +146,24 @@ export function useGuardianActions(deps: GuardianActionDeps) {
         showToast(errText(err), "error");
       })
       .finally(() => setUnknownToolsSaving(false));
+  }
+
+  function saveTaintClassification(nextMode: string) {
+    const mode = text(nextMode, taintClassification);
+    if (mode === taintClassification) return;
+    const previousMode = taintClassification;
+    setTaintClassification(mode);
+    setTaintClassificationSaving(true);
+    api("/privacy/taint-classification", { method: "POST", body: JSON.stringify({ mode }) })
+      .then((payload) => {
+        showToast(payload.message || "Saved.");
+        return load();
+      })
+      .catch((err) => {
+        setTaintClassification(previousMode);
+        showToast(errText(err), "error");
+      })
+      .finally(() => setTaintClassificationSaving(false));
   }
 
   function saveUserContext(enabled: boolean) {
@@ -585,6 +608,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     // saving flags
     modeSaving,
     unknownToolsSaving,
+    taintClassificationSaving,
     userContextSaving,
     cronContextSaving,
     verifierModelSaving,
@@ -605,6 +629,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     // settings / tools
     saveMode,
     saveUnknownTools,
+    saveTaintClassification,
     saveUserContext,
     saveCronContext,
     savePersistPrompts,

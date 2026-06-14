@@ -111,8 +111,8 @@ def test_guardian_debug_command_reports_privacy_off(monkeypatch):
     )
 
     assert "Decision: allowed" in response
-    assert "Privacy policy: off" in response
-    assert "privacy policy is off" in response
+    assert "Egress Safety: off" in response
+    assert "Egress Safety is off" in response
 
 
 def test_guardian_history_command_lists_recent_sanitized_activity():

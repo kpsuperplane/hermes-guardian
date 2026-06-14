@@ -18,7 +18,7 @@ Guardian adds two policy layers:
 - **Security Module**: non-approvable blocking and suppression for credentials,
   OTPs, magic links, password resets, security alerts, sensitive account links,
   and similar access-sensitive content.
-- **Privacy Module**: session taint, egress classification, privacy modes,
+- **Privacy Module**: session taint, egress classification, Egress Safety,
   optional declassification rules, and a sanitized, largely metadata activity
   history for private data flows.
 
@@ -40,12 +40,12 @@ URLs, search queries, terminal commands, code execution, model APIs, cron jobs,
 and final responses.
 
 Guardian treats mediated actions as Privacy-module egress. Once a session has
-observed private data, the active privacy mode evaluates classified outbound
+observed private data, the active Egress Safety setting evaluates classified outbound
 actions before they run. Some actions are auto-approved, some are blocked
 immediately, and some fall back to manual approval. Final responses are not
 privacy-gated, but the Security Module still scans them before delivery.
 Security-sensitive content is stricter: it is blocked or suppressed outright,
-even if privacy mode is off.
+even if Egress Safety is off.
 
 Use Guardian when you want:
 
@@ -167,18 +167,18 @@ retain the prior safety.
 ### One declarative policy document
 
 The entire risk posture lives in one policy document (the persisted Guardian config):
-privacy mode, the self allowlist (destinations / identities / hosts), declassification
+Egress Safety, the self allowlist (destinations / identities / hosts), declassification
 rules, and tool overrides. The file format is shown under
-[Privacy Modes](#privacy-modes).
+[Egress Safety](#egress-safety).
 
 Security checks run before privacy checks. Privacy allow rules and approval
 commands cannot bypass Security Module blocks. Privacy rules are customization
 hooks on top of the decision engine, not a requirement for Guardian to protect a
 session.
 
-## Privacy Modes
+## Egress Safety
 
-Privacy mode is the foundation of the Privacy Module. It controls how
+Egress Safety is the foundation of the Privacy Module. It controls how
 private-context egress is handled by default:
 
 | Mode | Behavior |
@@ -188,12 +188,12 @@ private-context egress is handled by default:
 | `llm` | Run deterministic hard blocks first, then ask an LLM verifier for low-risk judgment. The verifier reads the real action payload (see note below). Optional rules can override known routes. |
 | `off` | Disable private-egress approval checks. Security-sensitive content is still blocked. |
 
-The default mode is `llm`.
+The default Egress Safety setting is `llm`.
 
 Set the mode from a Hermes gateway:
 
 ```text
-/guardian review mode llm
+/guardian review egress-safety llm
 ```
 
 Or edit `guardian-rules.json`. The file is organized into the five IA concepts,
@@ -215,7 +215,7 @@ decision:
     "outward": { "extra": [] }
   },
   "review": {
-    "mode": "llm",
+    "egress_safety": "llm",
     "owner_context": true,
     "cron_context": false,
     "verifier_model": ""
@@ -229,6 +229,7 @@ decision:
       "private_network_reads": true
     },
     "unknown_tools": "gate",
+    "taint_classification": "balanced",
     "tools": [],
     "language_packs": { "en": true },
     "retention": { "max_rows": 100, "max_age_days": 7 },
@@ -240,8 +241,9 @@ decision:
 This v4 schema is the only shape the loader accepts: there is no version
 detection, and a file that does not match it (including a wholly corrupt one)
 fails closed to `strict` with a clear log line — never to anything permissive.
-Any block may be omitted; missing blocks fill from safe defaults (`review.mode`
-defaults to `llm`, `whats_yours.stores` seeds the single-operator stores,
+Any block may be omitted; missing blocks fill from safe defaults (`review.egress_safety`
+defaults to `llm`, `protection.taint_classification` defaults to `balanced`,
+`whats_yours.stores` seeds the single-operator stores,
 `sharing` is empty). Outward-sharing builtin subtypes are code-owned and never
 read from config; only `sharing.outward.extra` adds to them. Mutations from the
 dashboard, the slash commands, and direct edits all persist this shape, and rule
@@ -460,7 +462,7 @@ Keep persistent rules narrow. A good rule should mean:
 > this action family to this destination.
 
 Deny rules are useful for hard policy choices that should block even when the
-current privacy mode would otherwise ask for approval.
+current Egress Safety setting would otherwise ask for approval.
 
 ## Security Rules
 
@@ -565,7 +567,7 @@ env-assignment prefixes (`TZ=… date`), and output-discarding `>/dev/null`
 redirects. Any segment outside that set (content-bearing reads, `$`-expansion in
 output, real redirects, network tools, substitution) taints the whole command.
 
-While a session is still untainted (and privacy mode is not `off`), Guardian's
+While a session is still untainted (and Egress Safety is not `off`), Guardian's
 `pre_llm_call` hook returns a short static hygiene note that Hermes appends to
 the current turn's user message at API-call time only — never persisted — steering
 the agent toward those metadata-only preflight commands so routine environment
@@ -591,8 +593,21 @@ that declaration. An undeclared MCP document read (`…_read_resource`,
 `…_read_document`, `…_get_resource`) of unknown provenance fails closed: it taints
 `documents` conservatively — even with no detectable signal — and Guardian surfaces
 a one-click "Sources seen" classification in Protection so you can declare the
-server once. Unknown source → private until declared, mirroring unknown
-destination → external.
+server once.
+
+For arbitrary unknown non-MCP reads, **Taint Classification** controls the fallback:
+
+- `balanced` (default): use recognized source names, tool overrides, and content
+  signals. Mundane private prose from an unknown tool can remain untainted.
+- `strict`: if an otherwise-unknown non-MCP read returns content with no stronger
+  classification, taint it as `documents`.
+
+```text
+/guardian protection taint-classification balanced|strict
+```
+
+Unknown MCP document source → private until declared; strict extends that
+conservative posture to otherwise-unknown non-MCP reads.
 
 Egress decisions reason over the **ambient session taint**: the union of the data
 classes the session has read so far and any private-looking classes intrinsic to
@@ -764,7 +779,7 @@ sit on top as the everyday commands.
 
 # REVIEW — who judges everything else
 /guardian review
-/guardian review mode strict|read-only|llm|off
+/guardian review egress-safety strict|read-only|llm|off
 /guardian review owner-context on|off
 /guardian review cron-context on|off
 /guardian review verifier-model <model_id|default>
@@ -777,6 +792,7 @@ sit on top as the everyday commands.
 /guardian protection tool enable|disable <id_or_match>
 /guardian protection source suggest|set <server> reference|private
 /guardian protection unknown-tools gate|allow
+/guardian protection taint-classification balanced|strict
 /guardian protection persist-prompts on|off
 /guardian protection language-packs enable|disable <pack_id>
 ```
@@ -852,9 +868,10 @@ GET /api/plugins/hermes-guardian/destinations/suggestions
 GET /api/plugins/hermes-guardian/tools/source-suggestions
 GET /api/plugins/hermes-guardian/sharing/preview
 POST /api/plugins/hermes-guardian/sharing/impact
-POST /api/plugins/hermes-guardian/privacy/mode
+POST /api/plugins/hermes-guardian/privacy/egress-safety
 POST /api/plugins/hermes-guardian/privacy/clear-taint
 POST /api/plugins/hermes-guardian/privacy/unknown-tools
+POST /api/plugins/hermes-guardian/privacy/taint-classification
 POST /api/plugins/hermes-guardian/privacy/user-context
 POST /api/plugins/hermes-guardian/privacy/cron-context
 POST /api/plugins/hermes-guardian/privacy/verifier-model
@@ -945,7 +962,7 @@ Persistent files live in the plugin directory (override the location with
 
 | File | Purpose |
 | --- | --- |
-| `guardian-rules.json` | Privacy mode, privacy allow/deny rules, security-rule toggles, and language-pack selection. |
+| `guardian-rules.json` | Egress Safety, privacy allow/deny rules, security-rule toggles, and language-pack selection. |
 | `activity.sqlite3` | Sanitized activity history and pending approvals. Pending approval rows may temporarily hold bounded `permit_recipient`, `permit_host`, and `permit_command` values for precise `mine`/`trust` approvals; they expire with the approval and are removed on approve, dismiss, or expiry pruning. |
 | `.guardian-hmac-key` | Local key for exact-argument one-time approval binding. |
 | `.unsafe-diagnostics` | Opt-in unsafe diagnostics flag for development only. |

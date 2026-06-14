@@ -3,22 +3,21 @@ import { Mono } from "@/components/Mono";
 import { text } from "@/lib/format";
 import type { Performance, Policy } from "@/types";
 
-// Mode options written as who-reviews sentences (doc 02 §Tab4.1). Values are the
-// existing privacy.mode values, unchanged.
+// Egress Safety options written as who-reviews sentences (doc 02 §Tab4.1).
 const MODE_OPTIONS: Array<{ value: string; label: string; consequence: string }> = [
   {
     value: "llm",
-    label: "llm",
+    label: "LLM pre-screen (llm)",
     consequence: "The verifier pre-screens; you see only genuine boundary crossings.",
   },
   {
     value: "strict",
-    label: "strict",
+    label: "Manual review (strict)",
     consequence: "You review every outbound action yourself.",
   },
   {
     value: "read-only",
-    label: "read-only",
+    label: "Read-only preset",
     consequence: "Nothing outward is auto-allowed.",
   },
   {
@@ -30,9 +29,9 @@ const MODE_OPTIONS: Array<{ value: string; label: string; consequence: string }>
 
 export interface ReviewTabProps {
   policy: Policy | null;
-  privacyMode: string;
+  egressSafety: string;
   modeSaving: boolean;
-  onChangePrivacyMode: (mode: string) => void;
+  onChangeEgressSafety: (mode: string) => void;
   llmUserContext: boolean;
   llmCronContext: boolean;
   userContextSaving: boolean;
@@ -52,9 +51,9 @@ function ms(value: number): string {
 export function ReviewTab(props: ReviewTabProps) {
   const {
     policy,
-    privacyMode,
+    egressSafety,
     modeSaving,
-    onChangePrivacyMode,
+    onChangeEgressSafety,
     llmUserContext,
     llmCronContext,
     userContextSaving,
@@ -77,13 +76,13 @@ export function ReviewTab(props: ReviewTabProps) {
   return (
     <div className="hermes-guardian-grid">
       <div className="hermes-guardian-card">
-        <div className="hermes-guardian-card-title">Who reviews outbound actions</div>
+        <div className="hermes-guardian-card-title">Egress Safety</div>
         <div className="hermes-guardian-review-control">
           <select
             className="hermes-guardian-select"
-            value={privacyMode}
+            value={egressSafety}
             disabled={modeSaving}
-            onChange={(event) => onChangePrivacyMode(event.target.value)}
+            onChange={(event) => onChangeEgressSafety(event.target.value)}
           >
             {MODE_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -94,7 +93,7 @@ export function ReviewTab(props: ReviewTabProps) {
         </div>
       </div>
 
-      {privacyMode === "llm" ? (
+      {egressSafety === "llm" ? (
         <div className="hermes-guardian-card">
           <div className="hermes-guardian-card-title">Authorization context</div>
           <div className="hermes-guardian-muted hermes-guardian-section-description">

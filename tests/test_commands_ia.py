@@ -106,10 +106,12 @@ def test_review_maps_privacy_setters_and_old_privacy_name_is_gone():
     assert plugin._handle_guardian_command("privacy mode off") == (
         "Invalid /guardian command. Try /guardian help."
     )
-    # Each review verb reuses the privacy handler's setter.
-    plugin._remember_command_owner("review mode read-only", plugin._CLI_OWNER_HASH)
-    assert "read-only" in plugin._handle_guardian_command("review mode read-only")
-    assert plugin._privacy_policy() == "read-only"
+    # Each review verb reuses the review/egress setter.
+    plugin._remember_command_owner("review egress-safety read-only", plugin._CLI_OWNER_HASH)
+    assert "read-only" in plugin._handle_guardian_command("review egress-safety read-only")
+    assert plugin._egress_safety_policy() == "read-only"
+    assert "Usage" in plugin._handle_guardian_command("review mode strict")
+    assert plugin._egress_safety_policy() == "read-only"
     plugin._remember_command_owner("review owner-context off", plugin._CLI_OWNER_HASH)
     plugin._handle_guardian_command("review owner-context off")
     assert plugin._llm_user_context_enabled() is False
@@ -259,13 +261,13 @@ def test_mine_delegates_to_self_handler_identically():
     assert "store:crm" in via_group
 
 
-def test_review_mode_delegates_to_privacy_setter_identically():
+def test_review_egress_safety_delegates_to_setter_identically():
     plugin_a = load_plugin()
     plugin_b = load_plugin()
-    plugin_a._remember_command_owner("review mode strict", plugin_a._CLI_OWNER_HASH)
-    via_group = plugin_a._handle_guardian_command("review mode strict")
+    plugin_a._remember_command_owner("review egress-safety strict", plugin_a._CLI_OWNER_HASH)
+    via_group = plugin_a._handle_guardian_command("review egress-safety strict")
     via_handler = plugin_b._guardian_privacy_command(
-        plugin_b._CLI_OWNER_HASH, ["privacy", "mode", "strict"]
+        plugin_b._CLI_OWNER_HASH, ["privacy", "egress-safety", "strict"]
     )
     assert via_group == via_handler
-    assert plugin_a._privacy_policy() == plugin_b._privacy_policy() == "strict"
+    assert plugin_a._egress_safety_policy() == plugin_b._egress_safety_policy() == "strict"

@@ -42,7 +42,7 @@ def test_language_pack_can_be_disabled_by_direct_json_edit(tmp_path):
     # v4 five-block schema: only English enabled in protection.language_packs.
     (tmp_path / "rules.json").write_text(json.dumps({
         "version": 4,
-        "review": {"mode": "strict"},
+        "review": {"egress_safety": "strict"},
         "sharing": {"rules": []},
         "protection": {
             "language_packs": {"en": True, "es": False},
@@ -62,12 +62,12 @@ def test_privacy_and_security_saves_preserve_language_pack_config(tmp_path):
     plugin.state._PERSISTENT_RULES_CACHE = None
 
     assert plugin._set_language_pack("es", True)[0]
-    assert plugin._set_privacy_mode("read-only")[0]
+    assert plugin._set_egress_safety_mode("read-only")[0]
     assert plugin._set_security_rule("sensitive_links", False)[0]
 
     data = json.loads((tmp_path / "rules.json").read_text())
 
-    assert data["review"]["mode"] == "read-only"
+    assert data["review"]["egress_safety"] == "read-only"
     enabled = {pack_id for pack_id, on in data["protection"]["language_packs"].items() if on}
     assert enabled == {"en", "es"}
 

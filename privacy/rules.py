@@ -18,10 +18,12 @@ from ..runtime import activity_store
 
 
 _PRIVACY_RULE_FILE_VERSION = 4
-_DEFAULT_PRIVACY_MODE = "llm"
-_PRIVACY_MODES = {"strict", "read-only", "llm", "off"}
+_DEFAULT_EGRESS_SAFETY = "llm"
+_EGRESS_SAFETY_MODES = {"strict", "read-only", "llm", "off"}
 _DEFAULT_UNKNOWN_TOOLS = "gate"
 _UNKNOWN_TOOLS_MODES = {"gate", "allow"}
+_DEFAULT_TAINT_CLASSIFICATION = "balanced"
+_TAINT_CLASSIFICATION_MODES = {"balanced", "strict"}
 # Whether the llm-mode verifier receives sanitized authorization-evidence context.
 # user context (authenticated owner's inbound request) defaults on; cron context
 # (a job's own stored instruction) defaults off because cron runs unattended.
@@ -163,8 +165,9 @@ def _default_privacy_config() -> dict[str, Any]:
     return {
         "version": _PRIVACY_RULE_FILE_VERSION,
         "privacy": {
-            "mode": _DEFAULT_PRIVACY_MODE,
+            "egress_safety": _DEFAULT_EGRESS_SAFETY,
             "unknown_tools": _DEFAULT_UNKNOWN_TOOLS,
+            "taint_classification": _DEFAULT_TAINT_CLASSIFICATION,
             "llm_user_context": _DEFAULT_LLM_USER_CONTEXT,
             "llm_cron_context": _DEFAULT_LLM_CRON_CONTEXT,
             "llm_verifier_model": _DEFAULT_LLM_VERIFIER_MODEL,
@@ -259,14 +262,19 @@ def _default_outward_sharing_config() -> dict[str, Any]:
 
 def _strict_privacy_config() -> dict[str, Any]:
     config = _default_privacy_config()
-    config["privacy"]["mode"] = "strict"
+    config["privacy"]["egress_safety"] = "strict"
     config["privacy"]["rules"] = []
     return config
 
 
-def _normalize_privacy_mode(value: Any) -> str:
-    mode = str(value or _DEFAULT_PRIVACY_MODE).strip().lower().replace("_", "-")
-    return mode if mode in _PRIVACY_MODES else _DEFAULT_PRIVACY_MODE
+def _normalize_egress_safety(value: Any) -> str:
+    mode = str(value or _DEFAULT_EGRESS_SAFETY).strip().lower().replace("_", "-")
+    return mode if mode in _EGRESS_SAFETY_MODES else _DEFAULT_EGRESS_SAFETY
+
+
+def _normalize_taint_classification(value: Any) -> str:
+    mode = str(value or _DEFAULT_TAINT_CLASSIFICATION).strip().lower().replace("_", "-")
+    return mode if mode in _TAINT_CLASSIFICATION_MODES else _DEFAULT_TAINT_CLASSIFICATION
 
 
 # Legacy data-class aliases. The old "email" class was split into "contacts"
@@ -694,10 +702,11 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
 #   sharing.trusted_recipients            -> trusted_recipients.entries
 #   sharing.rules                         -> privacy.rules
 #   sharing.outward.extra                 -> outward_sharing.extra (builtin code-owned)
-#   review.mode/.owner_context/.cron_context/.verifier_model
-#                                         -> privacy.mode/.llm_user_context/...
+#   review.egress_safety/.owner_context/.cron_context/.verifier_model
+#                                         -> privacy.egress_safety/.llm_user_context/...
 #   protection.security                   -> security.rules
-#   protection.unknown_tools              -> privacy.unknown_tools
+#   protection.unknown_tools/.taint_classification
+#                                         -> privacy.unknown_tools/.taint_classification
 #   protection.tools                      -> privacy.tools
 #   protection.language_packs             -> language_packs.enabled
 #   protection.retention                  -> retention
@@ -836,9 +845,12 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
         "version": _PRIVACY_RULE_FILE_VERSION,
         # 4 — REVIEW: case-by-case judgment (decide step 6).
         "privacy": {
-            "mode": _normalize_privacy_mode(review.get("mode")),
+            "egress_safety": _normalize_egress_safety(review.get("egress_safety")),
             # 5 — PROTECTION: unknown-tools mode lives with tool classification.
             "unknown_tools": _normalize_unknown_tools_mode(protection.get("unknown_tools")),
+            "taint_classification": _normalize_taint_classification(
+                protection.get("taint_classification")
+            ),
             "llm_user_context": _config_bool(
                 review.get("owner_context"), default=_DEFAULT_LLM_USER_CONTEXT
             ),
@@ -874,7 +886,7 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
     Block-level malformations (e.g. a non-list ``sharing.rules``) are NOT fatal here —
     they drop to their safe default in the normalizer (doc 04 §5.3). This validator
     only rejects shapes that signal a wholly wrong document: a non-object top level, a
-    non-recognizable (old-shape) file, an invalid ``review.mode``, or a hard-typed
+    non-recognizable (old-shape) file, an invalid ``review.egress_safety``, or a hard-typed
     ``review`` context flag — each of which must fail closed rather than half-load.
     """
     if not isinstance(parsed, dict):
@@ -889,9 +901,11 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
         raise ValueError("privacy rule file review must be an object")
     if isinstance(review, dict):
         if "mode" in review:
-            raw_mode = str(review.get("mode") or "").strip().lower().replace("_", "-")
-            if raw_mode not in _PRIVACY_MODES:
-                raise ValueError("privacy rule file has invalid review.mode")
+            raise ValueError("privacy rule file has obsolete review.mode")
+        if "egress_safety" in review:
+            raw_mode = str(review.get("egress_safety") or "").strip().lower().replace("_", "-")
+            if raw_mode not in _EGRESS_SAFETY_MODES:
+                raise ValueError("privacy rule file has invalid review.egress_safety")
         for context_key in ("owner_context", "cron_context"):
             if context_key in review and not isinstance(review.get(context_key), (bool, int, str)):
                 raise ValueError(f"privacy rule file has invalid review.{context_key}")
@@ -966,8 +980,11 @@ def _normalize_internal_config(data: Any) -> dict[str, Any]:
     return {
         "version": _PRIVACY_RULE_FILE_VERSION,
         "privacy": {
-            "mode": _normalize_privacy_mode(privacy.get("mode")),
+            "egress_safety": _normalize_egress_safety(privacy.get("egress_safety")),
             "unknown_tools": _normalize_unknown_tools_mode(privacy.get("unknown_tools")),
+            "taint_classification": _normalize_taint_classification(
+                privacy.get("taint_classification")
+            ),
             "llm_user_context": _config_bool(
                 privacy.get("llm_user_context"), default=_DEFAULT_LLM_USER_CONTEXT
             ),
@@ -1034,7 +1051,7 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
             "outward": {"extra": list(outward.get("extra") or [])},
         },
         "review": {
-            "mode": _normalize_privacy_mode(privacy.get("mode")),
+            "egress_safety": _normalize_egress_safety(privacy.get("egress_safety")),
             "owner_context": _config_bool(
                 privacy.get("llm_user_context"), default=_DEFAULT_LLM_USER_CONTEXT
             ),
@@ -1050,6 +1067,9 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
                 if isinstance(rule, dict) and rule.get("id")
             },
             "unknown_tools": _normalize_unknown_tools_mode(privacy.get("unknown_tools")),
+            "taint_classification": _normalize_taint_classification(
+                privacy.get("taint_classification")
+            ),
             "tools": list(privacy.get("tools") or []),
             "language_packs": {pack_id: (pack_id in enabled_packs) for pack_id in ordered_pack_ids},
             "retention": {
@@ -1118,20 +1138,22 @@ def _config_for_save(data: dict[str, Any], **overrides: Any) -> dict[str, Any]:
     return out
 
 
-def _privacy_mode() -> str:
-    return _normalize_privacy_mode(_load_privacy_config().get("privacy", {}).get("mode"))
+def _egress_safety_mode() -> str:
+    return _normalize_egress_safety(
+        _load_privacy_config().get("privacy", {}).get("egress_safety")
+    )
 
 
-def _set_privacy_mode(mode: str) -> tuple[bool, str]:
-    normalized = _normalize_privacy_mode(mode)
+def _set_egress_safety_mode(mode: str) -> tuple[bool, str]:
+    normalized = _normalize_egress_safety(mode)
     if normalized != str(mode or "").strip().lower().replace("_", "-"):
-        return False, "Privacy mode must be one of: strict, read-only, llm, off."
+        return False, "Egress Safety must be one of: strict, read-only, llm, off."
     data = _load_privacy_config()
     privacy = dict(data.get("privacy") or {})
-    privacy["mode"] = normalized
+    privacy["egress_safety"] = normalized
     if not _save_privacy_config(_config_for_save(data, privacy=privacy)):
-        return False, "Failed to save privacy mode; Guardian remains unchanged."
-    return True, f"Privacy mode set to {normalized}."
+        return False, "Failed to save Egress Safety; Guardian remains unchanged."
+    return True, f"Egress Safety set to {normalized}."
 
 
 def _persistent_privacy_rules() -> list[dict[str, Any]]:
@@ -1148,7 +1170,7 @@ def _persistent_privacy_rules() -> list[dict[str, Any]]:
 def _save_persistent_privacy_rules(rules: list[dict[str, Any]]) -> bool:
     data = _load_privacy_config()
     privacy = dict(data.get("privacy") or {})
-    privacy["mode"] = _privacy_mode()
+    privacy["egress_safety"] = _egress_safety_mode()
     privacy["rules"] = rules
     return _save_privacy_config(_config_for_save(data, privacy=privacy))
 
@@ -1221,6 +1243,25 @@ def _set_unknown_tools_mode(mode: str) -> tuple[bool, str]:
     if not _save_privacy_config(_config_for_save(data, privacy=privacy)):
         return False, "Failed to save unknown-tools mode; Guardian remains unchanged."
     return True, f"Unknown-tools mode set to {normalized}."
+
+
+def _taint_classification_mode() -> str:
+    return _normalize_taint_classification(
+        _load_privacy_config().get("privacy", {}).get("taint_classification")
+    )
+
+
+def _set_taint_classification_mode(mode: str) -> tuple[bool, str]:
+    requested = str(mode or "").strip().lower().replace("_", "-")
+    normalized = _normalize_taint_classification(requested)
+    if requested not in _TAINT_CLASSIFICATION_MODES:
+        return False, "Taint Classification must be one of: balanced, strict."
+    data = _load_privacy_config()
+    privacy = dict(data.get("privacy") or {})
+    privacy["taint_classification"] = normalized
+    if not _save_privacy_config(_config_for_save(data, privacy=privacy)):
+        return False, "Failed to save Taint Classification; Guardian remains unchanged."
+    return True, f"Taint Classification set to {normalized}."
 
 
 def _llm_user_context_enabled() -> bool:

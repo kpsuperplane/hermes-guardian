@@ -719,8 +719,8 @@ def _unsafe_diagnostics_enabled() -> bool:
     ).lower() in {"1", "true", "yes", "on"}
 
 
-def _privacy_policy() -> str:
-    return rules._privacy_mode()
+def _egress_safety_policy() -> str:
+    return rules._egress_safety_mode()
 
 
 def _short_hash(value: str | None) -> str:

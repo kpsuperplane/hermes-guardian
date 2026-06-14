@@ -31,7 +31,7 @@ def test_v4_partial_config_fills_defaults():
         {
             "version": 4,
             "review": {
-                "mode": "strict",
+                "egress_safety": "strict",
             },
             "sharing": {
                 "rules": [privacy_rule(rule_id="rule_allow", effect="allow")],
@@ -61,7 +61,7 @@ def test_malformed_self_block_drops_to_safe_subset():
         plugin,
         {
             "version": 4,
-            "review": {"mode": "strict"},
+            "review": {"egress_safety": "strict"},
             "whats_yours": "not-a-dict",  # wholly malformed block
             "sharing": {"outward": 12345},  # malformed outward block
         },
@@ -82,7 +82,7 @@ def test_outward_sharing_builtin_is_not_narrowable():
         plugin,
         {
             "version": 4,
-            "review": {"mode": "strict"},
+            "review": {"egress_safety": "strict"},
             # operator tries to drop "share" and keep only "invite"; add an extra.
             "sharing": {"outward": {"builtin": ["invite"], "extra": ["crosspost"]}},
         },
@@ -106,7 +106,7 @@ def test_self_customization_survives_unrelated_mode_change():
     assert ok
     assert "store:crm" in plugin._self_config_snapshot()["destinations"]
     # An UNRELATED mode change must not re-default the self block (Phase 1 carryover bug).
-    plugin._set_privacy_mode("strict")
+    plugin._set_egress_safety_mode("strict")
     assert "store:crm" in plugin._self_config_snapshot()["destinations"]
     # Same for an unrelated security-rule toggle and a rule save.
     plugin._set_security_rule("intrinsic_exfiltration", False)

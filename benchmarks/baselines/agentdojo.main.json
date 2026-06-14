@@ -71,7 +71,7 @@
     }
   },
   "prevented_rate": 0.9615384615384616,
-  "privacy_mode": "strict",
+  "egress_safety": "strict",
   "real_llm_judgment": false,
   "tasks": [
     {

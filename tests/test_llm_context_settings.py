@@ -35,16 +35,16 @@ def test_settings_persist_and_preserve_other_privacy_config(tmp_path):
     assert plugin._set_llm_cron_context(True)[0]
     # A later, unrelated mutation must not clobber the context flags.
     assert plugin._set_unknown_tools_mode("allow")[0]
-    assert plugin._set_privacy_mode("strict")[0]
+    assert plugin._set_egress_safety_mode("strict")[0]
 
     data = json.loads((tmp_path / "rules.json").read_text())
-    # v4 on-disk: the review block carries mode + context flags; unknown-tools
+    # v4 on-disk: the review block carries Egress Safety + context flags; unknown-tools
     # lives in the protection block (with tool classification).
     review = data["review"]
     assert review["owner_context"] is False
     assert review["cron_context"] is True
     assert data["protection"]["unknown_tools"] == "allow"
-    assert review["mode"] == "strict"
+    assert review["egress_safety"] == "strict"
     assert plugin._llm_user_context_enabled() is False
     assert plugin._llm_cron_context_enabled() is True
 
@@ -55,7 +55,7 @@ def test_normalization_coerces_loose_values(tmp_path):
     # v4 review block; loose string booleans normalize via _config_bool.
     path.write_text(json.dumps({
         "version": 4,
-        "review": {"mode": "llm", "owner_context": "off", "cron_context": "yes"},
+        "review": {"egress_safety": "llm", "owner_context": "off", "cron_context": "yes"},
     }))
     plugin.state._PERSISTENT_RULES_PATH = path
     plugin.state._PERSISTENT_RULES_CACHE = None
@@ -72,14 +72,14 @@ def test_invalid_context_value_is_rejected_to_fail_closed(tmp_path):
     # whole document fails closed to strict rather than silently coercing.
     path.write_text(json.dumps({
         "version": 4,
-        "review": {"mode": "llm", "cron_context": {"unexpected": "object"}},
+        "review": {"egress_safety": "llm", "cron_context": {"unexpected": "object"}},
     }))
     plugin.state._PERSISTENT_RULES_PATH = path
     plugin.state._PERSISTENT_RULES_CACHE = None
     plugin.state._PERSISTENT_RULES_MTIME = None
 
     # Invalid config falls back to strict; cron context stays off (fail-closed).
-    assert plugin._privacy_policy() == "strict"
+    assert plugin._egress_safety_policy() == "strict"
     assert plugin._llm_cron_context_enabled() is False
 
 

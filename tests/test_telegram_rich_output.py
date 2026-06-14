@@ -17,7 +17,7 @@ def test_telegram_slash_command_uses_rich_output_when_hermes_supports_it(monkeyp
 
     assert output.startswith("## Hermes Guardian Status")
     assert "| Signal | Value |" in output
-    assert "Privacy mode" in output
+    assert "Egress Safety" in output
 
 
 def test_telegram_slash_command_falls_back_to_shared_output_without_hermes_support(monkeypatch):
@@ -48,7 +48,7 @@ def test_local_direct_command_does_not_use_telegram_rich_output(monkeypatch):
 
     output = plugin._handle_guardian_command("review")
 
-    assert output.startswith("Privacy mode:")
+    assert output.startswith("Egress Safety:")
     assert "| Setting | Value |" not in output
 
 

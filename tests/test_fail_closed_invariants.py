@@ -42,17 +42,17 @@ class TextOnlyLlm:
         return SimpleNamespace(parsed=None, text=self.text)
 
 
-def test_missing_privacy_policy_file_keeps_normal_default(tmp_path):
+def test_missing_egress_safety_file_keeps_normal_default(tmp_path):
     plugin = load_plugin()
     rules_path = tmp_path / "guardian-rules.json"
     _use_rules_path(plugin, rules_path)
 
     assert not rules_path.exists()
-    assert plugin._privacy_policy() == "llm"
+    assert plugin._egress_safety_policy() == "llm"
     assert plugin.state._PERSISTENT_RULES_ERROR is False
 
 
-def test_corrupt_privacy_policy_file_forces_strict_without_llm_auto_allow(tmp_path):
+def test_corrupt_egress_safety_file_forces_strict_without_llm_auto_allow(tmp_path):
     plugin = load_plugin()
     rules_path = tmp_path / "guardian-rules.json"
     rules_path.write_text("{not json")
@@ -64,31 +64,31 @@ def test_corrupt_privacy_policy_file_forces_strict_without_llm_auto_allow(tmp_pa
 
     result = plugin._on_pre_tool_call("terminal", {"command": "pwd"}, session_id="s1")
 
-    assert plugin._privacy_policy() == "strict"
+    assert plugin._egress_safety_policy() == "strict"
     assert plugin.state._PERSISTENT_RULES_ERROR is True
     assert result is not None
     assert "Approval ID:" in result["message"]
     assert not fake_llm.calls
 
 
-def test_malformed_privacy_policy_file_forces_strict(tmp_path):
+def test_malformed_egress_safety_file_forces_strict(tmp_path):
     plugin = load_plugin()
     rules_path = tmp_path / "guardian-rules.json"
-    # An invalid v4 review.mode is rejected at validation, forcing fail-closed strict.
-    rules_path.write_text(json.dumps({"version": 4, "review": {"mode": "auto-approve"}}))
+    # An invalid v4 review.egress_safety is rejected at validation, forcing fail-closed strict.
+    rules_path.write_text(json.dumps({"version": 4, "review": {"egress_safety": "auto-approve"}}))
     _use_rules_path(plugin, rules_path)
 
-    assert plugin._privacy_policy() == "strict"
+    assert plugin._egress_safety_policy() == "strict"
     assert plugin.state._PERSISTENT_RULES_ERROR is True
 
 
-def test_unreadable_privacy_policy_path_forces_strict(tmp_path):
+def test_unreadable_egress_safety_path_forces_strict(tmp_path):
     plugin = load_plugin()
     rules_path = tmp_path / "guardian-rules.json"
     rules_path.mkdir()
     _use_rules_path(plugin, rules_path)
 
-    assert plugin._privacy_policy() == "strict"
+    assert plugin._egress_safety_policy() == "strict"
     assert plugin.state._PERSISTENT_RULES_ERROR is True
 
 

@@ -139,7 +139,7 @@ def test_invariant_5_corrupt_config_loads_as_strict_not_permissive():
 
     config = plugin._load_privacy_config()
 
-    assert config["privacy"]["mode"] == "strict"
+    assert config["privacy"]["egress_safety"] == "strict"
     assert plugin.state._PERSISTENT_RULES_ERROR is True
     # A corrupt store falls back to STRICT mode and only the floor-safe BUILTIN self
     # destinations (the user's own stores) — it must NOT inject any operator-supplied
