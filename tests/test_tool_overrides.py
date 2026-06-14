@@ -47,17 +47,17 @@ def test_recognized_read_tools_not_gated_under_taint():
     assert plugin._on_pre_tool_call("skill_view", {"name": "deep-research"}, session_id="s1") is None
 
 
-def test_unknown_tools_allow_mode_reverts_to_legacy_allow():
+def test_relaxed_taint_classification_allows_unknown_tools_under_taint():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
     save_privacy_config(plugin, mode="llm")
-    ok, _ = plugin._set_unknown_tools_mode("allow")
+    ok, _ = plugin._set_taint_classification_mode("relaxed")
     assert ok
 
     assert plugin._on_pre_tool_call("transmit", {"data": "x"}, session_id="s1") is None
     banner_ids = {b["id"] for b in plugin._runtime_risk_banners()}
-    assert "unknown_tools_allow" in banner_ids
+    assert "taint_classification_relaxed" in banner_ids
 
 
 # --- Tool override registry --------------------------------------------------
@@ -144,11 +144,11 @@ def test_set_override_rejects_invalid_egress_and_classes():
     assert not ok and "Unknown data class" in message
 
 
-def test_set_unknown_tools_mode_rejects_invalid():
+def test_set_taint_classification_mode_rejects_invalid():
     plugin = load_plugin()
-    ok, message = plugin._set_unknown_tools_mode("banana")
+    ok, message = plugin._set_taint_classification_mode("banana")
     assert not ok
-    assert "gate, allow" in message
+    assert "balanced, strict, relaxed" in message
 
 
 # --- Persistence preservation ------------------------------------------------
@@ -157,7 +157,7 @@ def test_set_unknown_tools_mode_rejects_invalid():
 def test_overrides_survive_other_config_mutations():
     plugin = load_plugin()
     plugin._set_tool_override("mcp_acme_*", taints=["communications"], egress="ignore")
-    plugin._set_unknown_tools_mode("allow")
+    plugin._set_taint_classification_mode("relaxed")
 
     plugin._set_egress_safety_mode("strict")
     plugin._set_security_rule("sensitive_links", False)
@@ -167,7 +167,7 @@ def test_overrides_survive_other_config_mutations():
     plugin._save_persistent_privacy_rules(rules)
 
     assert len(plugin._tool_overrides()) == 1
-    assert plugin._unknown_tools_mode() == "allow"
+    assert plugin._taint_classification_mode() == "relaxed"
     assert plugin._tool_overrides()[0]["match"] == "mcp_acme_*"
     # other config preserved too
     assert plugin._egress_safety_mode() == "strict"

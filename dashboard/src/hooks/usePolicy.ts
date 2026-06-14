@@ -8,8 +8,6 @@ export interface PolicyController {
   error: string;
   egressSafety: string;
   setEgressSafety: (mode: string) => void;
-  unknownTools: string;
-  setUnknownTools: (mode: string) => void;
   taintClassification: string;
   setTaintClassification: (mode: string) => void;
   llmUserContext: boolean;
@@ -31,7 +29,6 @@ export function usePolicy(): PolicyController {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [egressSafety, setEgressSafety] = useState("llm");
-  const [unknownTools, setUnknownTools] = useState("gate");
   const [taintClassification, setTaintClassification] = useState("balanced");
   const [llmUserContext, setLlmUserContext] = useState(true);
   const [llmCronContext, setLlmCronContext] = useState(false);
@@ -45,7 +42,6 @@ export function usePolicy(): PolicyController {
       .then((value: Policy) => {
         setPolicy(value);
         setEgressSafety(value.egress_safety || "llm");
-        setUnknownTools(value.unknown_tools || "gate");
         setTaintClassification(value.taint_classification || "balanced");
         setLlmUserContext(value.llm_user_context !== false);
         setLlmCronContext(value.llm_cron_context === true);
@@ -70,8 +66,6 @@ export function usePolicy(): PolicyController {
     error,
     egressSafety,
     setEgressSafety,
-    unknownTools,
-    setUnknownTools,
     taintClassification,
     setTaintClassification,
     llmUserContext,

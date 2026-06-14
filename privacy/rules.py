@@ -20,10 +20,8 @@ from ..runtime import activity_store
 _PRIVACY_RULE_FILE_VERSION = 4
 _DEFAULT_EGRESS_SAFETY = "llm"
 _EGRESS_SAFETY_MODES = {"strict", "read-only", "llm", "off"}
-_DEFAULT_UNKNOWN_TOOLS = "gate"
-_UNKNOWN_TOOLS_MODES = {"gate", "allow"}
 _DEFAULT_TAINT_CLASSIFICATION = "balanced"
-_TAINT_CLASSIFICATION_MODES = {"balanced", "strict"}
+_TAINT_CLASSIFICATION_MODES = {"balanced", "strict", "relaxed"}
 # Whether the llm-mode verifier receives sanitized authorization-evidence context.
 # user context (authenticated owner's inbound request) defaults on; cron context
 # (a job's own stored instruction) defaults off because cron runs unattended.
@@ -166,7 +164,6 @@ def _default_privacy_config() -> dict[str, Any]:
         "version": _PRIVACY_RULE_FILE_VERSION,
         "privacy": {
             "egress_safety": _DEFAULT_EGRESS_SAFETY,
-            "unknown_tools": _DEFAULT_UNKNOWN_TOOLS,
             "taint_classification": _DEFAULT_TAINT_CLASSIFICATION,
             "llm_user_context": _DEFAULT_LLM_USER_CONTEXT,
             "llm_cron_context": _DEFAULT_LLM_CRON_CONTEXT,
@@ -305,15 +302,6 @@ def _normalize_verifier_model(value: Any) -> str:
         return ""
     text = re.sub(r"[^A-Za-z0-9_.:/@-]+", "", text)
     return text[:120]
-
-
-def _normalize_unknown_tools_mode(value: Any) -> str:
-    mode = str(value or _DEFAULT_UNKNOWN_TOOLS).strip().lower().replace("_", "-").replace("-", "")
-    if mode in {"gate", "secure", "block"}:
-        return "gate"
-    if mode in {"allow", "permissive", "off", "legacy"}:
-        return "allow"
-    return _DEFAULT_UNKNOWN_TOOLS
 
 
 def _normalize_tool_match(value: Any) -> str:
@@ -705,8 +693,7 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
 #   review.egress_safety/.owner_context/.cron_context/.verifier_model
 #                                         -> privacy.egress_safety/.llm_user_context/...
 #   protection.security                   -> security.rules
-#   protection.unknown_tools/.taint_classification
-#                                         -> privacy.unknown_tools/.taint_classification
+#   protection.taint_classification      -> privacy.taint_classification
 #   protection.tools                      -> privacy.tools
 #   protection.language_packs             -> language_packs.enabled
 #   protection.retention                  -> retention
@@ -846,8 +833,7 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
         # 4 — REVIEW: case-by-case judgment (decide step 6).
         "privacy": {
             "egress_safety": _normalize_egress_safety(review.get("egress_safety")),
-            # 5 — PROTECTION: unknown-tools mode lives with tool classification.
-            "unknown_tools": _normalize_unknown_tools_mode(protection.get("unknown_tools")),
+            # 5 — PROTECTION: source/sink fallback classification.
             "taint_classification": _normalize_taint_classification(
                 protection.get("taint_classification")
             ),
@@ -917,11 +903,7 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
             raise ValueError(f"privacy rule file {block_name} must be an object")
     protection = parsed.get("protection")
     if isinstance(protection, dict) and "unknown_tools" in protection:
-        raw_unknown = (
-            str(protection.get("unknown_tools") or "").strip().lower().replace("_", "-").replace("-", "")
-        )
-        if raw_unknown not in {"gate", "secure", "block", "allow", "permissive", "off", "legacy"}:
-            raise ValueError("privacy rule file has invalid protection.unknown_tools")
+        raise ValueError("privacy rule file has obsolete protection.unknown_tools")
 
 
 def _load_privacy_config() -> dict[str, Any]:
@@ -981,7 +963,6 @@ def _normalize_internal_config(data: Any) -> dict[str, Any]:
         "version": _PRIVACY_RULE_FILE_VERSION,
         "privacy": {
             "egress_safety": _normalize_egress_safety(privacy.get("egress_safety")),
-            "unknown_tools": _normalize_unknown_tools_mode(privacy.get("unknown_tools")),
             "taint_classification": _normalize_taint_classification(
                 privacy.get("taint_classification")
             ),
@@ -1066,7 +1047,6 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
                 for rule in security_rules
                 if isinstance(rule, dict) and rule.get("id")
             },
-            "unknown_tools": _normalize_unknown_tools_mode(privacy.get("unknown_tools")),
             "taint_classification": _normalize_taint_classification(
                 privacy.get("taint_classification")
             ),
@@ -1226,25 +1206,6 @@ def _set_security_rule(rule_id: str, enabled: bool) -> tuple[bool, str]:
     return True, f"{'Enabled' if desired else 'Disabled'} security rule {normalized_id} ({label})."
 
 
-def _unknown_tools_mode() -> str:
-    return _normalize_unknown_tools_mode(
-        _load_privacy_config().get("privacy", {}).get("unknown_tools")
-    )
-
-
-def _set_unknown_tools_mode(mode: str) -> tuple[bool, str]:
-    requested = str(mode or "").strip().lower()
-    normalized = _normalize_unknown_tools_mode(requested)
-    if requested not in {"gate", "allow"}:
-        return False, "Unknown-tools mode must be one of: gate, allow."
-    data = _load_privacy_config()
-    privacy = dict(data.get("privacy") or {})
-    privacy["unknown_tools"] = normalized
-    if not _save_privacy_config(_config_for_save(data, privacy=privacy)):
-        return False, "Failed to save unknown-tools mode; Guardian remains unchanged."
-    return True, f"Unknown-tools mode set to {normalized}."
-
-
 def _taint_classification_mode() -> str:
     return _normalize_taint_classification(
         _load_privacy_config().get("privacy", {}).get("taint_classification")
@@ -1255,7 +1216,7 @@ def _set_taint_classification_mode(mode: str) -> tuple[bool, str]:
     requested = str(mode or "").strip().lower().replace("_", "-")
     normalized = _normalize_taint_classification(requested)
     if requested not in _TAINT_CLASSIFICATION_MODES:
-        return False, "Taint Classification must be one of: balanced, strict."
+        return False, "Taint Classification must be one of: balanced, strict, relaxed."
     data = _load_privacy_config()
     privacy = dict(data.get("privacy") or {})
     privacy["taint_classification"] = normalized

@@ -37,8 +37,6 @@ export function GuardianPage() {
     error,
     egressSafety,
     setEgressSafety,
-    unknownTools,
-    setUnknownTools,
     taintClassification,
     setTaintClassification,
     llmUserContext,
@@ -61,8 +59,6 @@ export function GuardianPage() {
     load,
     egressSafety,
     setEgressSafety,
-    unknownTools,
-    setUnknownTools,
     taintClassification,
     setTaintClassification,
     llmUserContext,
@@ -219,9 +215,6 @@ export function GuardianPage() {
           onEditOverride={actions.openEditOverride}
           onToggleOverride={actions.toggleOverride}
           onDeleteOverride={actions.deleteOverride}
-          unknownTools={unknownTools}
-          unknownToolsSaving={actions.unknownToolsSaving}
-          onChangeUnknownTools={actions.saveUnknownTools}
           taintClassification={taintClassification}
           taintClassificationSaving={actions.taintClassificationSaving}
           onChangeTaintClassification={actions.saveTaintClassification}

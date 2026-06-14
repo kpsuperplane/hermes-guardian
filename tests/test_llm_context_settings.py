@@ -34,16 +34,16 @@ def test_settings_persist_and_preserve_other_privacy_config(tmp_path):
     assert plugin._set_llm_user_context(False)[0]
     assert plugin._set_llm_cron_context(True)[0]
     # A later, unrelated mutation must not clobber the context flags.
-    assert plugin._set_unknown_tools_mode("allow")[0]
+    assert plugin._set_taint_classification_mode("relaxed")[0]
     assert plugin._set_egress_safety_mode("strict")[0]
 
     data = json.loads((tmp_path / "rules.json").read_text())
-    # v4 on-disk: the review block carries Egress Safety + context flags; unknown-tools
-    # lives in the protection block (with tool classification).
+    # v4 on-disk: the review block carries Egress Safety + context flags; source/sink
+    # fallback lives in the protection block.
     review = data["review"]
     assert review["owner_context"] is False
     assert review["cron_context"] is True
-    assert data["protection"]["unknown_tools"] == "allow"
+    assert data["protection"]["taint_classification"] == "relaxed"
     assert review["egress_safety"] == "strict"
     assert plugin._llm_user_context_enabled() is False
     assert plugin._llm_cron_context_enabled() is True

@@ -959,12 +959,12 @@ def _runtime_risk_banners() -> list[dict[str, str]]:
                 "message": "Security rule intrinsic_exfiltration is disabled; same-call source-and-sink hard blocks are not active.",
             }
         )
-    if rules_mod._unknown_tools_mode() == "allow":
+    if rules_mod._taint_classification_mode() == "relaxed":
         banners.append(
             {
-                "id": "unknown_tools_allow",
+                "id": "taint_classification_relaxed",
                 "severity": "high",
-                "message": "Unknown-tools mode is allow; unrecognized tools are not gated under taint (legacy fail-open).",
+                "message": "Taint Classification is relaxed; unrecognized tools are not gated under taint.",
             }
         )
     if rules_mod._self_grants_present():
@@ -1288,7 +1288,6 @@ def _policy_snapshot() -> dict[str, Any]:
     risk_banners = _runtime_risk_banners()
     return {
         "egress_safety": core._egress_safety_policy(),
-        "unknown_tools": rules_mod._unknown_tools_mode(),
         "taint_classification": rules_mod._taint_classification_mode(),
         "llm_user_context": rules_mod._llm_user_context_enabled(),
         "llm_cron_context": rules_mod._llm_cron_context_enabled(),

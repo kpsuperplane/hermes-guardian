@@ -314,8 +314,8 @@ def run_agentdojo_adapter(*, version: str | None = None) -> dict[str, Any]:
         plugin = _load_plugin(Path(temp_name))
         # Switch the loaded plugin into deterministic strict mode plus our overrides.
         cache = plugin._PERSISTENT_RULES_CACHE
-        cache["privacy"]["mode"] = "strict"
-        cache["privacy"]["unknown_tools"] = "gate"
+        cache["privacy"]["egress_safety"] = "strict"
+        cache["privacy"]["taint_classification"] = "strict"
         cache["privacy"]["tools"] = plugin._normalize_tool_overrides(overrides)
         plugin._apply_language_pack_config(cache)
 

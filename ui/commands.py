@@ -66,8 +66,7 @@ _GUARDIAN_HELP_LINES = [
     "- `/guardian protection security enable|disable <rule_id>`",
     "- `/guardian protection tool set|delete|enable|disable ...`",
     "- `/guardian protection source suggest|set <server> reference|private`",
-    "- `/guardian protection unknown-tools gate|allow`",
-    "- `/guardian protection taint-classification balanced|strict`",
+    "- `/guardian protection taint-classification balanced|strict|relaxed`",
     "- `/guardian protection persist-prompts on|off`",
     "- `/guardian protection language-packs enable|disable <pack_id>`",
 ]
@@ -571,8 +570,7 @@ def _guardian_status_telegram(owner_hash: str) -> str:
     enabled_packs = ", ".join(pack.get("id", "") for pack in snapshot["enabled_language_packs"]) or "none"
     rows = [
         ["Egress Safety", core._egress_safety_policy()],
-        ["Unknown tools", f"{rules_mod._unknown_tools_mode()} ({len(rules_mod._tool_overrides())} override(s))"],
-        ["Taint Classification", rules_mod._taint_classification_mode()],
+        ["Taint Classification", f"{rules_mod._taint_classification_mode()} ({len(rules_mod._tool_overrides())} tool override(s))"],
         ["LLM context", f"user-prompt {'on' if rules_mod._llm_user_context_enabled() else 'off'}, cron {'on' if rules_mod._llm_cron_context_enabled() else 'off'}"],
         ["Security rules", f"{len(rules_mod._SECURITY_RULE_IDS) - len(snapshot['disabled_security'])} enabled, {len(snapshot['disabled_security'])} disabled"],
         ["Language packs", enabled_packs],
@@ -1076,7 +1074,7 @@ def _guardian_sharing_overview(owner_hash: str) -> str:
 
 
 def _guardian_review_command(owner_hash: str, tokens: list[str]) -> str:
-    """REVIEW group: mode, contexts, verifier model, unknown-tools.
+    """REVIEW group: mode, contexts, verifier model.
 
     Maps the new review verbs onto the existing `privacy` handler's subcommands;
     the underlying setters/guards are unchanged.
@@ -1120,8 +1118,6 @@ def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
         return _guardian_tools_command()
     if sub == "source":
         return _guardian_source_command(owner_hash, tokens)
-    if sub in {"unknown-tools", "unknown_tools"}:
-        return _guardian_privacy_command(owner_hash, ["privacy", "unknown-tools", *tokens[2:]])
     if sub in {"taint-classification", "taint_classification"}:
         return _guardian_privacy_command(owner_hash, ["privacy", "taint-classification", *tokens[2:]])
     if sub in {"persist-prompts", "persist_prompts"}:
@@ -1140,7 +1136,7 @@ def _guardian_protection_command(owner_hash: str, tokens: list[str]) -> str:
         "Usage: `/guardian protection` | "
         "`/guardian protection security enable|disable <rule_id>` | "
         "`/guardian protection tool set|delete|enable|disable ...` | "
-        "`/guardian protection unknown-tools gate|allow` | "
+        "`/guardian protection taint-classification balanced|strict|relaxed` | "
         "`/guardian protection source suggest|set <server> reference|private` | "
         "`/guardian protection persist-prompts on|off` | "
         "`/guardian protection language-packs enable|disable <pack_id>`"
@@ -1279,7 +1275,6 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
     if len(tokens) == 1:
         return (
             f"Egress Safety: {core._egress_safety_policy()}\n"
-            f"Unknown-tools mode: {rules_mod._unknown_tools_mode()}\n"
             f"Taint Classification: {rules_mod._taint_classification_mode()}\n"
             f"LLM user-prompt context: {'on' if rules_mod._llm_user_context_enabled() else 'off'}\n"
             f"LLM cron context: {'on' if rules_mod._llm_cron_context_enabled() else 'off'}\n"
@@ -1289,11 +1284,6 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
         ok, message = rules_mod._set_egress_safety_mode(tokens[2])
-        return message
-    if len(tokens) == 3 and tokens[1].lower() in {"unknown-tools", "unknown_tools"}:
-        if not _slash_admin_allowed(owner_hash):
-            return _global_mutation_denied_message()
-        ok, message = rules_mod._set_unknown_tools_mode(tokens[2])
         return message
     if len(tokens) == 3 and tokens[1].lower() in {"taint-classification", "taint_classification"}:
         if not _slash_admin_allowed(owner_hash):
@@ -1326,8 +1316,7 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
         "/guardian review owner-context on|off | "
         "/guardian review cron-context on|off | "
         "`/guardian review verifier-model <model_id|default>` | "
-        "/guardian protection unknown-tools gate|allow | "
-        "/guardian protection taint-classification balanced|strict"
+        "/guardian protection taint-classification balanced|strict|relaxed"
     )
 
 
@@ -1335,7 +1324,6 @@ def _guardian_tools_command() -> str:
     overrides = rules_mod._tool_overrides_snapshot()
     lines = [
         "Hermes Guardian tool overrides",
-        f"Unknown-tools mode: {rules_mod._unknown_tools_mode()}",
         f"Taint Classification: {rules_mod._taint_classification_mode()}",
     ]
     if not overrides:
@@ -1356,7 +1344,7 @@ def _guardian_tools_command() -> str:
         lines.append(f"- {override.get('id', '')}: " + " ".join(bits) + suffix)
     lines.append(
         "Use /guardian protection tool set|delete|enable|disable and "
-        "/guardian protection unknown-tools gate|allow."
+        "/guardian protection taint-classification balanced|strict|relaxed."
     )
     return "\n".join(lines)
 
@@ -1852,8 +1840,7 @@ def _guardian_status(owner_hash: str) -> str:
     lines = [
         "Hermes Guardian status",
         f"Egress Safety: {core._egress_safety_policy()}",
-        f"Unknown tools: {rules_mod._unknown_tools_mode()} ({len(rules_mod._tool_overrides())} override(s))",
-        f"Taint Classification: {rules_mod._taint_classification_mode()}",
+        f"Taint Classification: {rules_mod._taint_classification_mode()} ({len(rules_mod._tool_overrides())} tool override(s))",
         f"LLM context: user-prompt {'on' if rules_mod._llm_user_context_enabled() else 'off'}, "
         f"cron {'on' if rules_mod._llm_cron_context_enabled() else 'off'}",
         f"Security rules: {len(rules_mod._SECURITY_RULE_IDS) - len(disabled_security)} enabled, {len(disabled_security)} disabled",

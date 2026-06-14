@@ -67,7 +67,6 @@ def _full_v4_document() -> dict:
         },
         "protection": {
             "security": {"sensitive_links": False},
-            "unknown_tools": "gate",
             "taint_classification": "strict",
             "tools": [
                 {"match": "crm_*", "direction": "read", "taints": ["contacts"],
@@ -108,7 +107,6 @@ def test_full_v4_file_parses_to_internal_structure():
     assert config["privacy"]["llm_user_context"] is True
     assert config["privacy"]["llm_cron_context"] is True
     assert config["privacy"]["llm_verifier_model"] == "gpt-5.4-mini"
-    assert config["privacy"]["unknown_tools"] == "gate"
     assert config["privacy"]["taint_classification"] == "strict"
 
     # protection.* -> internal security/tools/language_packs/retention/dashboard.
@@ -215,7 +213,6 @@ def test_partial_file_only_whats_yours_fills_defaults():
     assert config["privacy"]["egress_safety"] == "llm" == plugin._DEFAULT_EGRESS_SAFETY
     assert config["privacy"]["llm_user_context"] is True
     assert config["privacy"]["llm_cron_context"] is False
-    assert config["privacy"]["unknown_tools"] == "gate"
     assert config["privacy"]["taint_classification"] == "balanced"
     # sharing empty; outward builtin code-owned.
     assert config["privacy"]["rules"] == []
@@ -242,6 +239,16 @@ def test_invalid_taint_classification_normalizes_to_balanced():
 def test_obsolete_review_mode_fails_closed_to_strict():
     plugin = load_plugin()
     _write_file(plugin, {"version": 4, "review": {"mode": "llm"}})
+
+    config = plugin._load_privacy_config()
+
+    assert config["privacy"]["egress_safety"] == "strict"
+    assert plugin.state._PERSISTENT_RULES_ERROR is True
+
+
+def test_obsolete_unknown_tools_fails_closed_to_strict():
+    plugin = load_plugin()
+    _write_file(plugin, {"version": 4, "protection": {"unknown_tools": "allow"}})
 
     config = plugin._load_privacy_config()
 
@@ -313,8 +320,7 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     assert plugin._add_self_destination("destination", "store:crm")[0]
     assert plugin._add_trusted_recipient("ally@example.com", classes=["communications"], note="team")[0]
     assert plugin._set_security_rule("sensitive_links", False)[0]
-    assert plugin._set_unknown_tools_mode("allow")[0]
-    assert plugin._set_taint_classification_mode("strict")[0]
+    assert plugin._set_taint_classification_mode("relaxed")[0]
     assert plugin._add_outward_sharing_subtype("crosspost")[0]
 
     # The on-disk file is the v4 five-block schema, not the old keys.
@@ -323,8 +329,8 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     assert on_disk["review"]["egress_safety"] == "read-only"
     assert "store:crm" in on_disk["whats_yours"]["stores"]
     assert on_disk["protection"]["security"]["sensitive_links"] is False
-    assert on_disk["protection"]["unknown_tools"] == "allow"
-    assert on_disk["protection"]["taint_classification"] == "strict"
+    assert "unknown_tools" not in on_disk["protection"]
+    assert on_disk["protection"]["taint_classification"] == "relaxed"
     assert "crosspost" in on_disk["sharing"]["outward"]["extra"]
     # builtin subtypes are NOT serialized (code-owned, never written to config).
     assert "builtin" not in on_disk["sharing"]["outward"]
@@ -341,7 +347,7 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     assert "store:crm" in after["self"]["destinations"]
     assert [e["value"] for e in after["trusted_recipients"]["entries"]] == ["ally@example.com"]
     assert {r["id"]: r["enabled"] for r in after["security"]["rules"]}["sensitive_links"] is False
-    assert after["privacy"]["unknown_tools"] == "allow"
-    assert after["privacy"]["taint_classification"] == "strict"
+    assert "unknown_tools" not in after["privacy"]
+    assert after["privacy"]["taint_classification"] == "relaxed"
     assert "crosspost" in after["outward_sharing"]["extra"]
     assert plugin.state._PERSISTENT_RULES_ERROR is False

@@ -1731,10 +1731,10 @@ def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> To
         if matches:
             return build_action()
     # Secure-by-default: an unrecognized non-MCP tool is gated like mcp_unknown when
-    # the session is tainted, unless the operator reverted to legacy permissive mode.
+    # the session is tainted, unless Taint Classification is explicitly relaxed.
     if _recognized_builtin_tool(lower, args):
         return None
-    if rules_mod._unknown_tools_mode() == "gate" and _session_taint(session_id):
+    if rules_mod._taint_classification_mode() != "relaxed" and _session_taint(session_id):
         return ToolAction("tool_unknown", _safe_tool_destination(lower))
     return None
 

@@ -186,11 +186,6 @@ def _dashboard_language_pack_action(pack_id: str, enabled: Any) -> tuple[dict[st
     return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
-def _dashboard_unknown_tools_mode_action(mode: str) -> tuple[dict[str, Any], int]:
-    ok, message = rules_mod._set_unknown_tools_mode(mode)
-    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
-
-
 def _dashboard_taint_classification_action(mode: str) -> tuple[dict[str, Any], int]:
     ok, message = rules_mod._set_taint_classification_mode(mode)
     return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400

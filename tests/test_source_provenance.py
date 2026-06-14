@@ -113,6 +113,18 @@ def test_balanced_unknown_non_mcp_read_of_signalless_prose_stays_untainted():
     assert plugin._session_taint("balanced") == set()
 
 
+def test_relaxed_unknown_non_mcp_read_of_signalless_prose_stays_untainted():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    assert plugin._set_taint_classification_mode("relaxed")[0]
+
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note", result=_SIGNALLESS_PROSE, session_id="relaxed"
+    )
+
+    assert plugin._session_taint("relaxed") == set()
+
+
 def test_strict_unknown_non_mcp_read_of_signalless_prose_taints_documents():
     plugin = load_plugin()
     bind_owner(plugin)

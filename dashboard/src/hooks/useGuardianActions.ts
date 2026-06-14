@@ -20,8 +20,6 @@ export interface GuardianActionDeps {
   load: () => Promise<void>;
   egressSafety: string;
   setEgressSafety: (mode: string) => void;
-  unknownTools: string;
-  setUnknownTools: (mode: string) => void;
   taintClassification: string;
   setTaintClassification: (mode: string) => void;
   llmUserContext: boolean;
@@ -56,8 +54,6 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     load,
     egressSafety,
     setEgressSafety,
-    unknownTools,
-    setUnknownTools,
     taintClassification,
     setTaintClassification,
     llmUserContext,
@@ -74,7 +70,6 @@ export function useGuardianActions(deps: GuardianActionDeps) {
 
   const [modeSaving, setModeSaving] = useState(false);
   const [languagePacksSaving, setLanguagePacksSaving] = useState(false);
-  const [unknownToolsSaving, setUnknownToolsSaving] = useState(false);
   const [taintClassificationSaving, setTaintClassificationSaving] = useState(false);
   const [userContextSaving, setUserContextSaving] = useState(false);
   const [cronContextSaving, setCronContextSaving] = useState(false);
@@ -119,42 +114,24 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       .finally(() => setModeSaving(false));
   }
 
-  function saveUnknownTools(nextMode: string) {
-    const mode = text(nextMode, unknownTools);
-    if (mode === unknownTools) return;
-    const previousMode = unknownTools;
-    const body: { mode: string; confirm?: string } = { mode };
-    if (mode === "allow") {
-      if (
-        !window.confirm(
-          "Allow unrecognized tools to run untracked under taint? This restores the legacy fail-open behavior and reduces protection.",
-        )
-      ) {
-        return;
-      }
-      body.confirm = "unknown-tools-allow";
-    }
-    setUnknownTools(mode);
-    setUnknownToolsSaving(true);
-    api("/privacy/unknown-tools", { method: "POST", body: JSON.stringify(body) })
-      .then((payload) => {
-        showToast(payload.message || "Saved.");
-        return load();
-      })
-      .catch((err) => {
-        setUnknownTools(previousMode);
-        showToast(errText(err), "error");
-      })
-      .finally(() => setUnknownToolsSaving(false));
-  }
-
   function saveTaintClassification(nextMode: string) {
     const mode = text(nextMode, taintClassification);
     if (mode === taintClassification) return;
     const previousMode = taintClassification;
+    const body: { mode: string; confirm?: string } = { mode };
+    if (mode === "relaxed") {
+      if (
+        !window.confirm(
+          "Relax Taint Classification? Unrecognized tools will not be gated under taint.",
+        )
+      ) {
+        return;
+      }
+      body.confirm = "taint-classification-relaxed";
+    }
     setTaintClassification(mode);
     setTaintClassificationSaving(true);
-    api("/privacy/taint-classification", { method: "POST", body: JSON.stringify({ mode }) })
+    api("/privacy/taint-classification", { method: "POST", body: JSON.stringify(body) })
       .then((payload) => {
         showToast(payload.message || "Saved.");
         return load();
@@ -607,7 +584,6 @@ export function useGuardianActions(deps: GuardianActionDeps) {
   return {
     // saving flags
     modeSaving,
-    unknownToolsSaving,
     taintClassificationSaving,
     userContextSaving,
     cronContextSaving,
@@ -628,7 +604,6 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     overrideFormError,
     // settings / tools
     saveMode,
-    saveUnknownTools,
     saveTaintClassification,
     saveUserContext,
     saveCronContext,

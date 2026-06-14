@@ -152,9 +152,9 @@ def _require_dashboard_confirmation(action: str, body: dict[str, Any]) -> None:
     if action in {"create_rule", "update_rule"} and "move" not in body:
         if _requires_wildcard_allow_confirmation(body) and _confirmation_value(body) != "wildcard-allow":
             raise HTTPException(status_code=400, detail="wildcard allow rule requires confirmation")
-    if action == "unknown_tools" and str(body.get("mode") or "").strip().lower() == "allow":
-        if _confirmation_value(body) != "unknown-tools-allow":
-            raise HTTPException(status_code=400, detail="unknown-tools allow mode requires confirmation")
+    if action == "taint_classification" and str(body.get("mode") or "").strip().lower() == "relaxed":
+        if _confirmation_value(body) != "taint-classification-relaxed":
+            raise HTTPException(status_code=400, detail="Taint Classification relaxed requires confirmation")
     if action == "tool_override" and str(body.get("egress") or "").strip().lower() == "ignore":
         if _confirmation_value(body) != "tool-ignore":
             raise HTTPException(status_code=400, detail="ignore tool override requires confirmation")
@@ -375,18 +375,10 @@ async def clear_taint(request: Request) -> JSONResponse:
     return _json_mutation_result(_guardian()._dashboard_clear_taint_action())
 
 
-@router.post("/privacy/unknown-tools")
-async def set_unknown_tools(request: Request, body: dict[str, Any]) -> JSONResponse:
-    _require_dashboard_admin(request)
-    _require_dashboard_confirmation("unknown_tools", body)
-    return _json_mutation_result(
-        _guardian()._dashboard_unknown_tools_mode_action(str(body.get("mode") or "")),
-    )
-
-
 @router.post("/privacy/taint-classification")
 async def set_taint_classification(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
+    _require_dashboard_confirmation("taint_classification", body)
     return _json_mutation_result(
         _guardian()._dashboard_taint_classification_action(str(body.get("mode") or "")),
     )

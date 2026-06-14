@@ -155,9 +155,9 @@ the tests/docs are updated accordingly:
 - Security-sensitive content is non-approvable. Privacy allow rules, approval
   commands, and `privacy.tools` overrides must not bypass Security Module
   blocks/suppression or intrinsic same-call hard blocks.
-- Unrecognized non-MCP tools fail closed under taint by default (`unknown_tools`
-  = `gate`, classified `tool_unknown`). Do not regress this to an allow fallback;
-  the only opt-out is the explicit `allow` mode, which raises a risk banner.
+- Unrecognized non-MCP tools fail closed under taint by default (`tool_unknown`).
+  Do not regress this to an allow fallback; the only opt-out is Taint
+  Classification `relaxed`, which raises a risk banner.
 - Hook failures that could leak private or sensitive data fail closed:
   `pre_tool_call` blocks, `transform_tool_result` suppresses, and tainted final
   output errors suppress when appropriate.
@@ -268,7 +268,6 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
       "intrinsic_exfiltration": true,
       "private_network_reads": true
     },
-    "unknown_tools": "gate",
     "taint_classification": "balanced",
     "tools": [
       {
@@ -289,7 +288,7 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
 ```
 
 Internally, `privacy/rules.py` consumes a normalized in-memory structure
-(`privacy.{egress_safety,unknown_tools,taint_classification,llm_user_context,
+(`privacy.{egress_safety,taint_classification,llm_user_context,
 llm_cron_context,llm_verifier_model,rules,tools}`, `self`, `trusted_recipients`,
 `outward_sharing`, `security.rules`, `language_packs.enabled`, `retention`,
 `dashboard`); these internal keys are what the engine and mutators use.
@@ -304,21 +303,19 @@ The file→internal map (doc 04 §3): `whats_yours.stores/.identities/.hosts`
 never read from / written to config); `review.egress_safety/.owner_context/.cron_context/
 .verifier_model` → `privacy.egress_safety/.llm_user_context/.llm_cron_context/
 .llm_verifier_model`; `protection.security` (a `{id: bool}` toggle map)
-→ `security.rules`; `protection.unknown_tools/.taint_classification` →
-`privacy.unknown_tools/.taint_classification`;
+→ `security.rules`; `protection.taint_classification` →
+`privacy.taint_classification`;
 `protection.tools` → `privacy.tools`; `protection.language_packs`
 (a `{id: bool}` toggle map) → `language_packs.enabled`; `protection.retention` →
 `retention`; `protection.runtime` → `dashboard`.
 
-`protection.unknown_tools` is `gate` (default) or `allow`. In `gate`, an unrecognized
-tool (not a known built-in, not covered by a `privacy.tools` override) is classified
-as `tool_unknown` and gated under taint, mirroring `mcp_unknown`. `allow` leaves
-unrecognized non-MCP tools ungated and raises a runtime risk banner.
-
-`protection.taint_classification` is `balanced` (default) or `strict`. In `balanced`,
-arbitrary unknown non-MCP read results use recognized source names, tool overrides,
-and content signals. In `strict`, an otherwise-unknown non-MCP read result that
-carries no stronger classification taints as `documents`.
+`protection.taint_classification` is `balanced` (default), `strict`, or `relaxed`.
+In `balanced`, arbitrary unknown non-MCP read results use recognized source names,
+tool overrides, and content signals; unrecognized non-MCP tools are gated under
+taint. In `strict`, an otherwise-unknown non-MCP read result that carries no
+stronger classification taints as `documents`. In `relaxed`, read behavior matches
+balanced and unrecognized non-MCP tools are not gated under taint; relaxed raises
+a runtime risk banner.
 
 `privacy.tools` is the user-managed tool override registry. Each entry has a `match`
 (exact tool name or a single trailing-`*` prefix), optional `taints` (source classes
@@ -347,8 +344,8 @@ Guardian also keeps a short-TTL, deny-only verdict cache (`_LLM_DENY_VERDICT_CAC
 keyed by session+owner+fingerprint; only denials are cached, so a stale hit can
 never become a false allow.
 
-Rule mutation helpers must preserve privacy rules, security rule settings, the
-`unknown_tools` mode, the `llm_user_context` / `llm_cron_context` flags,
+Rule mutation helpers must preserve privacy rules, security rule settings,
+`taint_classification`, the `llm_user_context` / `llm_cron_context` flags,
 `llm_verifier_model`, and `tools` overrides. This is covered by
 `tests/test_security_rules_config.py`, `tests/test_tool_overrides.py`,
 `tests/test_llm_context_settings.py`, and `tests/test_verifier_model.py`.
@@ -381,7 +378,7 @@ Important classifier families include:
   `homeassistant_write`, `tool_write`, `computer_use`
 - `web_read`, `web_api`, `model_api`, `delegate_task`
 - `tool_unknown` (secure-by-default fallback for unrecognized non-MCP tools under
-  taint; see `_recognized_builtin_tool` and `_unknown_tools_mode`)
+  taint; see `_recognized_builtin_tool` and `_taint_classification_mode`)
 
 `_recognized_builtin_tool` separates a known built-in whose specific call is a
 read/no-op (which stays allowed) from a genuinely unknown tool (gated under taint).
@@ -420,10 +417,11 @@ Keep `dashboard/plugin_api.py` as a thin adapter:
   `x-hermes-guardian-token`.
 - It should require explicit confirmation for the weakening actions: Egress Safety
   `off` (`egress-safety-off`), global wildcard allow rules (`wildcard-allow`),
-  `unknown_tools=allow` (`unknown-tools-allow`), `egress:ignore` tool overrides
-  (`tool-ignore`), and enabling cron context (`cron-context-on`).
-- Tool override, unknown-tools, and LLM-context routes (`POST /tools`,
-  `PATCH /tools/{id}`, `DELETE /tools/{id}`, `POST /privacy/unknown-tools`,
+  Taint Classification `relaxed` (`taint-classification-relaxed`),
+  `egress:ignore` tool overrides (`tool-ignore`), and enabling cron context
+  (`cron-context-on`).
+- Tool override, Taint Classification, and LLM-context routes (`POST /tools`,
+  `PATCH /tools/{id}`, `DELETE /tools/{id}`, `POST /privacy/taint-classification`,
   `POST /privacy/user-context`, `POST /privacy/cron-context`,
   `POST /privacy/verifier-model`) are thin adapters over the `privacy/rules.py`
   mutators, like the other `_dashboard_*` actions.

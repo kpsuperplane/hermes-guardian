@@ -36,7 +36,7 @@ def test_verifier_model_default_empty_and_set_clear(tmp_path):
     assert plugin._set_llm_verifier_model("gpt-5.4-mini")[0]
     assert plugin._llm_verifier_model() == "gpt-5.4-mini"
     # Survives an unrelated mutation.
-    assert plugin._set_unknown_tools_mode("allow")[0]
+    assert plugin._set_taint_classification_mode("relaxed")[0]
     assert plugin._llm_verifier_model() == "gpt-5.4-mini"
 
     assert plugin._set_llm_verifier_model("none")[0]

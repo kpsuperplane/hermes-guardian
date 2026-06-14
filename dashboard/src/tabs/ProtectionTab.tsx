@@ -12,8 +12,7 @@ import type {
   ToolOverride,
 } from "@/types";
 
-const UNKNOWN_TOOL_MODES = ["gate", "allow"];
-const TAINT_CLASSIFICATION_MODES = ["balanced", "strict"];
+const TAINT_CLASSIFICATION_MODES = ["balanced", "strict", "relaxed"];
 
 export interface ProtectionTabProps {
   policy: Policy | null;
@@ -23,10 +22,6 @@ export interface ProtectionTabProps {
   onEditOverride: (override: ToolOverride) => void;
   onToggleOverride: (override: ToolOverride) => void;
   onDeleteOverride: (override: ToolOverride) => void;
-  // Unknown-tools mode (sits at the bottom of the tool-classification list)
-  unknownTools: string;
-  unknownToolsSaving: boolean;
-  onChangeUnknownTools: (mode: string) => void;
   taintClassification: string;
   taintClassificationSaving: boolean;
   onChangeTaintClassification: (mode: string) => void;
@@ -111,9 +106,6 @@ function ToolClassification(props: {
   onEditOverride: (override: ToolOverride) => void;
   onToggleOverride: (override: ToolOverride) => void;
   onDeleteOverride: (override: ToolOverride) => void;
-  unknownTools: string;
-  unknownToolsSaving: boolean;
-  onChangeUnknownTools: (mode: string) => void;
   taintClassification: string;
   taintClassificationSaving: boolean;
   onChangeTaintClassification: (mode: string) => void;
@@ -193,39 +185,19 @@ function ToolClassification(props: {
         </div>
       ) : (
         <div className="hermes-guardian-muted">
-          No tool overrides. Unrecognized tools follow the unknown-tools mode in Protection.
+          No tool overrides. Unrecognized tools follow Taint Classification in Protection.
         </div>
       )}
       <div className="hermes-guardian-tools-override-actions">
         <Button onClick={props.onNewOverride}>New override</Button>
       </div>
-      <div className="hermes-guardian-unknown-tools-row">
-        <div className="hermes-guardian-unknown-tools-label">
-          <span>Unknown tools</span>
-          <span className="hermes-guardian-muted">
-            What happens to a tool Guardian doesn't recognize. Gated under taint by default;
-            'allow' restores the legacy permissive behavior and is not recommended.
-          </span>
-        </div>
-        <select
-          className="hermes-guardian-select"
-          value={props.unknownTools}
-          disabled={props.unknownToolsSaving}
-          onChange={(event) => props.onChangeUnknownTools(event.target.value)}
-        >
-          {UNKNOWN_TOOL_MODES.map((mode) => (
-            <option key={mode} value={mode}>
-              {mode}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="hermes-guardian-unknown-tools-row">
-        <div className="hermes-guardian-unknown-tools-label">
+      <div className="hermes-guardian-taint-classification-row">
+        <div className="hermes-guardian-taint-classification-label">
           <span>Taint Classification</span>
           <span className="hermes-guardian-muted">
-            Balanced uses recognized sources, declarations, and content signals. Strict treats
-            otherwise-unknown read results as documents.
+            Balanced uses recognized sources, declarations, and content signals. Strict also
+            treats otherwise-unknown read results as documents. Relaxed allows unrecognized
+            tools under taint.
           </span>
         </div>
         <select
@@ -478,9 +450,6 @@ export function ProtectionTab(props: ProtectionTabProps) {
         onEditOverride={props.onEditOverride}
         onToggleOverride={props.onToggleOverride}
         onDeleteOverride={props.onDeleteOverride}
-        unknownTools={props.unknownTools}
-        unknownToolsSaving={props.unknownToolsSaving}
-        onChangeUnknownTools={props.onChangeUnknownTools}
         taintClassification={props.taintClassification}
         taintClassificationSaving={props.taintClassificationSaving}
         onChangeTaintClassification={props.onChangeTaintClassification}

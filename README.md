@@ -228,7 +228,6 @@ decision:
       "intrinsic_exfiltration": true,
       "private_network_reads": true
     },
-    "unknown_tools": "gate",
     "taint_classification": "balanced",
     "tools": [],
     "language_packs": { "en": true },
@@ -598,16 +597,20 @@ server once.
 For arbitrary unknown non-MCP reads, **Taint Classification** controls the fallback:
 
 - `balanced` (default): use recognized source names, tool overrides, and content
-  signals. Mundane private prose from an unknown tool can remain untainted.
+  signals. Mundane private prose from an unknown tool can remain untainted;
+  unrecognized tools are still gated under taint.
 - `strict`: if an otherwise-unknown non-MCP read returns content with no stronger
-  classification, taint it as `documents`.
+  classification, taint it as `documents`. Unrecognized tools are gated under taint.
+- `relaxed`: use balanced read inference, but do not gate unrecognized non-MCP
+  tools under taint. This surfaces a runtime risk banner.
 
 ```text
-/guardian protection taint-classification balanced|strict
+/guardian protection taint-classification balanced|strict|relaxed
 ```
 
 Unknown MCP document source → private until declared; strict extends that
-conservative posture to otherwise-unknown non-MCP reads.
+conservative posture to otherwise-unknown non-MCP reads. Relaxed keeps the
+balanced read behavior and loosens only unknown non-MCP sink handling.
 
 Egress decisions reason over the **ambient session taint**: the union of the data
 classes the session has read so far and any private-looking classes intrinsic to
@@ -657,21 +660,13 @@ reads).
 
 ## Tool Classification And Overrides
 
-Guardian recognizes Hermes built-in tools and classifies their calls. Any tool it
-does **not** recognize — a third-party MCP tool, a custom integration, or a tool
-Guardian simply has no rule for — is treated as a potential sink and gated under
-taint, exactly like unknown MCP tools. This is the `unknown_tools` mode:
+Guardian recognizes Hermes built-in tools and classifies their calls. In
+`balanced` and `strict` Taint Classification, any non-MCP tool it does **not**
+recognize — a custom integration or a tool Guardian simply has no rule for — is
+treated as a potential sink and gated under taint, exactly like unknown MCP
+tools. In `relaxed`, unrecognized non-MCP tools are not gated under taint.
 
-- `gate` (default): unrecognized tools require approval once private data is in
-  scope. Untainted sessions are unaffected.
-- `allow`: unrecognized non-MCP tools are not gated. This is a footgun and
-  surfaces a risk banner in `/guardian status` and the dashboard.
-
-```text
-/guardian protection unknown-tools gate|allow
-```
-
-When the default is too strict for a tool you trust, declare it with a **tool
+When the default gating is too strict for a tool you trust, declare it with a **tool
 override** instead of weakening the global mode. Overrides let you tell Guardian
 what a tool actually does, and Guardian trusts your declaration:
 
@@ -688,7 +683,7 @@ what a tool actually does, and Guardian trusts your declaration:
 # Force an unrecognized tool to require approval under taint:
 /guardian protection tool set risky_tool egress=gate
 
-/guardian protection tools            # list overrides + current unknown-tools mode
+/guardian protection tools            # list overrides + current Taint Classification
 /guardian protection tool enable|disable <id>
 /guardian protection tool delete <match_or_id>
 ```
@@ -712,7 +707,7 @@ Overrides are a privacy-layer convenience. They never bypass the Security Module
 (credentials, OTPs, sensitive links) or the intrinsic same-call exfiltration hard
 blocks, which always run first. Editing overrides requires CLI or configured-owner
 privileges, and the dashboard requires explicit confirmation for the weakening
-`egress=ignore`, `source=reference`, and `unknown-tools=allow` actions.
+`egress=ignore`, `source=reference`, and `taint-classification=relaxed` actions.
 
 ## Browser And Terminal Behavior
 
@@ -791,8 +786,7 @@ sit on top as the everyday commands.
 /guardian protection tool delete <match_or_id>
 /guardian protection tool enable|disable <id_or_match>
 /guardian protection source suggest|set <server> reference|private
-/guardian protection unknown-tools gate|allow
-/guardian protection taint-classification balanced|strict
+/guardian protection taint-classification balanced|strict|relaxed
 /guardian protection persist-prompts on|off
 /guardian protection language-packs enable|disable <pack_id>
 ```
@@ -843,12 +837,12 @@ mine → is it covered by a grant → who judges the rest → the floor):
   a *Preview a send* widget, and an *Impact preview* that replays a candidate rule
   against recent activity before you commit it. Trust/sharing edits are admin-token +
   confirmation gated.
-- **Review**: case-by-case judgment — the privacy **mode** (each option written as a
+- **Review**: case-by-case judgment — **Egress Safety** (each option written as a
   who-reviews sentence), the owner/cron authorization context toggles, the verifier
   model, and a verifier **scoreboard** (consulted checks + median latency).
 - **Protection**: the floor + machinery + diagnostics — Security Module hard-block
-  rules, tool classification overrides (with the unknown-tools mode as a line item at
-  the bottom of that list), language packs, retention, a **Debugging** card with the
+  rules, tool classification overrides, Taint Classification, language packs,
+  retention, a **Debugging** card with the
   opt-in *Persist prompts* toggle (default off, confirmation-gated — writes the
   sanitized user/cron prompt onto activity rows so turn headers show what was asked),
   and the per-check timing / diagnostics table.
@@ -870,7 +864,6 @@ GET /api/plugins/hermes-guardian/sharing/preview
 POST /api/plugins/hermes-guardian/sharing/impact
 POST /api/plugins/hermes-guardian/privacy/egress-safety
 POST /api/plugins/hermes-guardian/privacy/clear-taint
-POST /api/plugins/hermes-guardian/privacy/unknown-tools
 POST /api/plugins/hermes-guardian/privacy/taint-classification
 POST /api/plugins/hermes-guardian/privacy/user-context
 POST /api/plugins/hermes-guardian/privacy/cron-context

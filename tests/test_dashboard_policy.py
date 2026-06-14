@@ -840,7 +840,6 @@ def _mutation_route_invokers(api):
         "approve": lambda: api.approve(req, "1234", {"method": "rule_5m"}),
         "dismiss": lambda: api.dismiss(req, "1234"),
         "clear_taint": lambda: api.clear_taint(req),
-        "set_unknown_tools": lambda: api.set_unknown_tools(req, {"mode": "gate"}),
         "set_taint_classification": lambda: api.set_taint_classification(req, {"mode": "strict"}),
         "set_user_context": lambda: api.set_user_context(req, {"enabled": True}),
         "set_cron_context": lambda: api.set_cron_context(req, {"enabled": False}),
@@ -890,7 +889,7 @@ def _confirmation_gate_invokers(api):
                 },
             },
         ),
-        "unknown-tools-allow": lambda: api.set_unknown_tools(req, {"mode": "allow"}),
+        "taint-classification-relaxed": lambda: api.set_taint_classification(req, {"mode": "relaxed"}),
         "tool-ignore": lambda: api.create_tool_override(req, {"match": "acme_*", "egress": "ignore"}),
         "source-reference": lambda: api.classify_source(req, {"tool_name": "acme_read", "source": "reference"}),
     }

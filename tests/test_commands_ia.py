@@ -118,14 +118,12 @@ def test_review_maps_privacy_setters_and_old_privacy_name_is_gone():
     plugin._remember_command_owner("review cron-context on", plugin._CLI_OWNER_HASH)
     plugin._handle_guardian_command("review cron-context on")
     assert plugin._llm_cron_context_enabled() is True
-    # unknown-tools now lives under PROTECTION (with tool classification), not REVIEW.
-    plugin._remember_command_owner("protection unknown-tools allow", plugin._CLI_OWNER_HASH)
-    plugin._handle_guardian_command("protection unknown-tools allow")
-    assert plugin._unknown_tools_mode() == "allow"
-    # The old REVIEW placement is gone: it neither sets the mode nor is advertised.
+    plugin._remember_command_owner("protection taint-classification relaxed", plugin._CLI_OWNER_HASH)
+    plugin._handle_guardian_command("protection taint-classification relaxed")
+    assert plugin._taint_classification_mode() == "relaxed"
     review_out = plugin._handle_guardian_command("review unknown-tools gate")
-    assert plugin._unknown_tools_mode() == "allow"
-    assert "unknown-tools" not in review_out or "protection unknown-tools" in review_out
+    assert plugin._taint_classification_mode() == "relaxed"
+    assert "unknown-tools" not in review_out
 
 
 def test_status_and_why_remain_top_level():
