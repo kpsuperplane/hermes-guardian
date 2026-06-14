@@ -382,9 +382,14 @@ def _llm_policy_tool_call_result(
         # call that DOES arrive with owner-authorization context gets a fresh verifier
         # consult instead of a stale gate.
         llm._store_deny_verdict(shape, verdict)
-    if verdict.get("outcome") == "allow" and llm._llm_allow_lacks_owner_corroboration(
-        shape, verdict, llm._owner_context_present(shape)
-    ):
+    safe_remote_read = tool_policy._tool_call_is_safe_remote_read(tool_name, args)
+    corroboration_reason = llm._llm_corroboration_downgrade_reason(
+        shape,
+        verdict,
+        llm._owner_context_present(shape),
+        safe_remote_read=safe_remote_read,
+    )
+    if verdict.get("outcome") == "allow" and corroboration_reason:
         # Deterministic corroboration gate (charter §2.1-§2.2). An ``allow`` of a private
         # export to an external/unknown destination is the softest model-trust point: the
         # prompt waves through low/medium risk, and both risk_level and authorization_level
@@ -399,7 +404,7 @@ def _llm_policy_tool_call_result(
             **verdict,
             "outcome": "deny",
             "rationale": (
-                "external private export lacks owner-authorization corroboration "
+                f"{corroboration_reason} "
                 f"({verdict.get('rationale', '')})"
             ),
         }

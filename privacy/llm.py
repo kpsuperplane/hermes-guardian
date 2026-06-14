@@ -369,9 +369,28 @@ def _is_external_private_export(shape: dict[str, Any]) -> bool:
 
 
 def _llm_allow_lacks_owner_corroboration(
-    shape: dict[str, Any], verdict: dict[str, str], owner_context_present: bool
+    shape: dict[str, Any],
+    verdict: dict[str, str],
+    owner_context_present: bool,
+    *,
+    safe_remote_read: bool = False,
 ) -> bool:
-    """True iff an ``allow`` verdict for a private external export must be downgraded.
+    return bool(_llm_corroboration_downgrade_reason(
+        shape,
+        verdict,
+        owner_context_present,
+        safe_remote_read=safe_remote_read,
+    ))
+
+
+def _llm_corroboration_downgrade_reason(
+    shape: dict[str, Any],
+    verdict: dict[str, str],
+    owner_context_present: bool,
+    *,
+    safe_remote_read: bool = False,
+) -> str:
+    """Reason iff an ``allow`` verdict for a private external export must be downgraded.
 
     Deterministic corroboration applied UNIFORMLY across risk bands (doc 02 §3): the
     softest model-trust point is an ``allow`` of a private export to an external/unknown
@@ -385,15 +404,25 @@ def _llm_allow_lacks_owner_corroboration(
     If either is missing, the allow is downgraded to a manual gate. This is purely
     ADDITIVE: it can only turn an allow into a gate, never the reverse, and it never
     touches intra-boundary allows or reads (``_is_external_private_export`` excludes them).
+    A low-risk verifier allow for a structurally safe public remote read is not a private
+    export for corroboration purposes; the conservative safe-remote-read helper remains
+    the eligibility boundary.
     """
     if verdict.get("outcome") != "allow":
-        return False
+        return ""
     if not _is_external_private_export(shape):
-        return False
+        return ""
+    if str(verdict.get("risk_level") or "").strip().lower() == "low" and safe_remote_read:
+        return ""
     authorization_level = str(verdict.get("authorization_level") or "").strip().lower()
+    missing: list[str] = []
     if authorization_level not in {"explicit", "substantive"}:
-        return True
-    return not owner_context_present
+        missing.append(f"verifier authorization was {authorization_level or 'unknown'}")
+    if not owner_context_present:
+        missing.append("owner/cron authorization context was absent")
+    if not missing:
+        return ""
+    return "external private export lacks corroboration: " + "; ".join(missing)
 
 
 def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:

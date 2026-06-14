@@ -276,8 +276,10 @@ This channel is deliberately narrow and fail-closed:
   (a fresh `user_request_context`, or a `cron_context` for a cron run). If that context
   is absent, the allow is downgraded to manual approval regardless of risk band — so a
   "medium-risk" self-report cannot wave a tainted export through on the model's word
-  alone. Intra-boundary flows (self / local system / model provider) never reach the
-  verifier and are unaffected.
+  alone. Low-risk verifier-approved public remote reads that Guardian's structural
+  safe-remote-read detector proves cannot carry local/private data are not treated as
+  private exports for this gate. Intra-boundary flows (self / local system / model
+  provider) never reach the verifier and are unaffected.
 - Authorization is scoped to the data actually being sent, not just the action.
   The verifier reads the real `action_arguments` (below) alongside the ambient
   classes the session has read, and judges the payload's content against the
