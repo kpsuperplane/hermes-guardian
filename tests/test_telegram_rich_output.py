@@ -97,7 +97,9 @@ def test_telegram_activity_and_why_use_rich_shapes_without_raw_payload(monkeypat
     why = _dispatch_command(plugin, f"why {approval_id}", platform="telegram")
 
     assert activity.startswith("## Guardian Activity")
-    assert "- [ ] **send_message**" in activity
+    assert "- **send_message** · Decision: `blocked`" in activity
+    assert "- [ ]" not in activity
+    assert "- [x]" not in activity
     assert "raw private sentence" not in activity
     assert why.startswith(f"## Guardian Decision {approval_id}")
     assert "| Field | Value |" in why

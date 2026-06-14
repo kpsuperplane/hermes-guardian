@@ -700,12 +700,6 @@ def _guardian_activity_command_telegram(owner_hash: str, tokens: list[str]) -> s
     )
 
 
-def _task_marker_for_decision(decision: str) -> str:
-    if decision in {"allowed", "auto_approved", "manual_approved", "mode_off_allowed", "privacy_off_allowed", "read"}:
-        return "[x]"
-    return "[ ]"
-
-
 def _guardian_history_command_telegram(
     tokens: list[str],
     *,
@@ -761,7 +755,10 @@ def _guardian_history_command_telegram(
             reason_text = _compact_activity_reason_line(check)
             llm_mark = " · llm" if decision == "auto_approved" or "llm" in str(check.get("reason") or "").lower() else ""
             suffix = f" · {latency_label}" if latency_label else ""
-            lines.append(f"- {_task_marker_for_decision(decision)} **{_md_inline(tool)}** · `{_md_inline(decision or 'unknown')}` · `{_md_inline(classes)}`{llm_mark}{suffix}")
+            lines.append(
+                f"- **{_md_inline(tool)}** · Decision: `{_md_inline(decision or 'unknown')}` "
+                f"· Classes: `{_md_inline(classes)}`{llm_mark}{suffix}"
+            )
             if reason_text:
                 lines.append(f"  - {_md_inline(reason_text)}")
         if len(turn_rows) > max_checks:
