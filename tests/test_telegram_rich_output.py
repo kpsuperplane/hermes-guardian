@@ -101,7 +101,7 @@ def test_telegram_activity_and_why_use_rich_shapes_without_raw_payload(monkeypat
     assert "Decision: `blocked` · Classes: `communications`" in activity
     assert "Reason: blocked · requires approval" in activity
     assert "<details>" in activity
-    assert "<summary>User turn</summary>" in activity
+    assert "<summary>❌ · User turn</summary>" in activity
     assert "<summary>Reason</summary>" not in activity
     assert "| Tool | Decision | Classes | LLM | Time |" not in activity
     assert "- [ ]" not in activity

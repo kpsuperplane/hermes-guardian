@@ -700,6 +700,13 @@ def _guardian_activity_command_telegram(owner_hash: str, tokens: list[str]) -> s
     )
 
 
+def _telegram_turn_summary_icon(turn_rows: list[dict[str, Any]]) -> str:
+    decisions = {str(row.get("decision") or "").strip() for row in turn_rows}
+    if decisions & {"blocked", "denied", "security_blocked", "security_suppressed"}:
+        return "❌"
+    return "✅"
+
+
 def _guardian_history_command_telegram(
     tokens: list[str],
     *,
@@ -741,7 +748,11 @@ def _guardian_history_command_telegram(
                 prompt = dashboard_mod._clip_text(text_value, 120, ellipsis="...", fallback="")
                 break
         is_cron = any(str(r.get("session_label") or "").startswith("cron_") for r in turn_rows)
-        heading = "Cron turn" if is_cron else "User turn"
+        summary_parts = [
+            _telegram_turn_summary_icon(turn_rows),
+            "Cron turn" if is_cron else "User turn",
+        ]
+        heading = " · ".join(part for part in summary_parts if part)
         if prompt:
             heading += f": {prompt}"
         if len(turn_rows) > 1:
