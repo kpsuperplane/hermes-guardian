@@ -2,14 +2,14 @@ import { React, useEffect } from "@/sdk";
 import { Button } from "@/components/Button";
 import { IconButton } from "@/components/IconButton";
 import { Mono } from "@/components/Mono";
-import { text } from "@/lib/format";
-import type { Policy, ReadingTool, SourceSuggestion } from "@/types";
+import { text, timeText } from "@/lib/format";
+import type { Policy, ReadingTool, SourceSuggestion, ToolInventoryRow } from "@/types";
 
 const TAINT_CLASSIFICATION_MODES = ["balanced", "strict", "relaxed"];
 
 export interface ReadingTabProps {
   policy: Policy | null;
-  onNewOverride: () => void;
+  onNewOverride: (match?: string) => void;
   onEditOverride: (override: ReadingTool) => void;
   onToggleOverride: (override: ReadingTool) => void;
   onDeleteOverride: (override: ReadingTool) => void;
@@ -26,7 +26,7 @@ export interface ReadingTabProps {
 
 function ToolClassification(props: {
   policy: Policy | null;
-  onNewOverride: () => void;
+  onNewOverride: (match?: string) => void;
   onEditOverride: (override: ReadingTool) => void;
   onToggleOverride: (override: ReadingTool) => void;
   onDeleteOverride: (override: ReadingTool) => void;
@@ -37,7 +37,20 @@ function ToolClassification(props: {
   llmSourceClassificationSaving: boolean;
   onChangeLlmSourceClassification: (enabled: boolean) => void;
 }) {
-  const toolOverrides = (props.policy && props.policy.reading_tools) || [];
+  const rows = (props.policy && props.policy.reading_tool_inventory) || [];
+  function rowPolicy(row: ToolInventoryRow): ReadingTool | null {
+    return row.policy ? (row.policy as ReadingTool) : null;
+  }
+  function policyLabel(row: ToolInventoryRow): string {
+    const state = text(row.policy_state, "none");
+    if (state === "exact") return "Exact";
+    if (state === "inherited") return "Inherited";
+    if (state === "policy_only") return "Policy only";
+    return "No policy";
+  }
+  function rowMatch(row: ToolInventoryRow): string {
+    return text(row.match || row.tool_name || row.group);
+  }
   return (
     <div className="hermes-guardian-card">
       <div className="hermes-guardian-card-head">
@@ -51,65 +64,100 @@ function ToolClassification(props: {
         </div>
       </div>
       <div className="hermes-guardian-tools-override-actions">
-        <Button onClick={props.onNewOverride}>New source classification</Button>
+        <Button onClick={() => props.onNewOverride()}>New source classification</Button>
       </div>
-      {toolOverrides.length ? (
-        <div className="hermes-guardian-grid">
-          {toolOverrides.map((override) => {
-            const disabled = override.enabled === false;
-            const cardClasses = ["hermes-guardian-card"];
-            if (disabled) cardClasses.push("hermes-guardian-rule-disabled");
-            return (
-              <div key={override.id} className={cardClasses.join(" ")}>
-                <div className="hermes-guardian-rule-head">
-                  <div className="hermes-guardian-rule-main">
-                    <div className="hermes-guardian-rule-title">{text(override.match)}</div>
-                    <div className="hermes-guardian-rule-subline">
-                      <span className="hermes-guardian-rule-id">{text(override.id)}</span>
-                      {override.source ? (
-                        <span className="hermes-guardian-pill">{"source " + override.source}</span>
+      {rows.length ? (
+        <div className="hermes-guardian-tool-table-wrap">
+          <table className="hermes-guardian-tool-table">
+            <thead>
+              <tr>
+                <th>Tool</th>
+                <th>Seen</th>
+                <th>Last seen</th>
+                <th>Source</th>
+                <th>Taints</th>
+                <th>Policy</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const policy = rowPolicy(row);
+                const source = text(policy && policy.source, "default");
+                const taints = policy && policy.taints && policy.taints.length
+                  ? policy.taints.join(", ")
+                  : "none";
+                const isGroup = row.row_type === "group";
+                const rowClasses = [
+                  isGroup ? "hermes-guardian-tool-row-group" : "",
+                  policy && policy.enabled === false ? "hermes-guardian-rule-disabled" : "",
+                ].filter(Boolean).join(" ");
+                const match = rowMatch(row);
+                const seen = Number(row.seen_count || 0);
+                const label = isGroup
+                  ? match + " (" + Number(row.child_count || 0) + ")"
+                  : match;
+                const observed = (row.observed_read_families || []).join(", ");
+                const createMatch = text(row.match || row.tool_name || row.group);
+                return (
+                  <tr key={text(row.key, match)} className={rowClasses}>
+                    <td>
+                      <div
+                        className="hermes-guardian-tool-tree-cell"
+                        style={{ paddingLeft: String(Math.max(0, Number(row.depth || 0)) * 1.1) + "rem" }}
+                      >
+                        <Mono>{label}</Mono>
+                        {observed ? <span className="hermes-guardian-muted">{observed}</span> : null}
+                      </div>
+                    </td>
+                    <td>{seen || "policy"}</td>
+                    <td>{timeText(row.last_seen)}</td>
+                    <td><span className="hermes-guardian-pill">{source}</span></td>
+                    <td>{taints}</td>
+                    <td>
+                      <span className="hermes-guardian-pill">{policyLabel(row)}</span>
+                      {policy && policy.match ? (
+                        <span className="hermes-guardian-muted"> {text(policy.match)}</span>
                       ) : null}
-                    </div>
-                  </div>
-                  <div className="hermes-guardian-actions">
-                    <IconButton
-                      icon="edit"
-                      label={"Edit source classification " + text(override.match)}
-                      onClick={() => props.onEditOverride(override)}
-                    />
-                    <Button variant="secondary" onClick={() => props.onToggleOverride(override)}>
-                      {disabled ? "Enable" : "Disable"}
-                    </Button>
-                    <IconButton
-                      icon="trash"
-                      variant="danger"
-                      label={"Delete source classification " + text(override.match)}
-                      onClick={() => props.onDeleteOverride(override)}
-                    />
-                  </div>
-                </div>
-                {override.taints && override.taints.length ? (
-                  <div className="hermes-guardian-chips">
-                    {override.taints.map((cls) => (
-                      <span key={cls} className="hermes-guardian-chip">
-                        {cls}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-                {override.note ? (
-                  <div className="hermes-guardian-muted">{text(override.note)}</div>
-                ) : null}
-              </div>
-            );
-          })}
+                    </td>
+                    <td>
+                      <div className="hermes-guardian-actions">
+                        {policy ? (
+                          <>
+                            <IconButton
+                              icon="edit"
+                              label={"Edit source classification " + text(policy.match)}
+                              onClick={() => props.onEditOverride(policy)}
+                            />
+                            <Button variant="secondary" onClick={() => props.onToggleOverride(policy)}>
+                              {policy.enabled === false ? "Enable" : "Disable"}
+                            </Button>
+                            <IconButton
+                              icon="trash"
+                              variant="danger"
+                              label={"Delete source classification " + text(policy.match)}
+                              onClick={() => props.onDeleteOverride(policy)}
+                            />
+                          </>
+                        ) : (
+                          <Button variant="secondary" onClick={() => props.onNewOverride(createMatch)}>
+                            Add policy
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       ) : (
         <div className="hermes-guardian-muted">
-          No Reading tool classifications yet.
+          No tools seen yet.
         </div>
       )}
-      <div className="hermes-guardian-card hermes-guardian-reading-fallthrough">
+      <div className="hermes-guardian-reading-fallthrough">
         <div className="hermes-guardian-rule-head">
           <div className="hermes-guardian-rule-main">
             <div className="hermes-guardian-rule-title">Default for unknown reads</div>

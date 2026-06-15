@@ -8,18 +8,19 @@ import { TrustPill } from "@/components/TrustPill";
 import { TrustedDestinationModal } from "@/components/TrustedDestinationModal";
 import { classesText, displayText, expiryPillText, ruleScopeText, text, timeText } from "@/lib/format";
 import type { DestinationsController } from "@/hooks/useDestinations";
-import type { ImpactPreview as ImpactPreviewData, Rule, SharingTool } from "@/types";
+import type { ImpactPreview as ImpactPreviewData, Rule, SharingTool, ToolInventoryRow } from "@/types";
 
 export interface SharingTabProps {
   controller: DestinationsController;
   rules: Rule[];
   sharingTools: SharingTool[];
+  toolInventory: ToolInventoryRow[];
   onNewRule: () => void;
   onEditRule: (rule: Rule) => void;
   onPatchRule: (ruleId: string, payload: Record<string, unknown>) => void;
   onDeleteRule: (ruleId: string) => void;
   onMoveRule: (rule: Rule, direction: "up" | "down") => void;
-  onNewTool: () => void;
+  onNewTool: (match?: string) => void;
   onEditTool: (tool: SharingTool) => void;
   onToggleTool: (tool: SharingTool) => void;
   onDeleteTool: (tool: SharingTool) => void;
@@ -96,11 +97,25 @@ function TrustedDestinations(props: { controller: DestinationsController }) {
 
 function EgressToolClassification(props: {
   tools: SharingTool[];
-  onNewTool: () => void;
+  inventory: ToolInventoryRow[];
+  onNewTool: (match?: string) => void;
   onEditTool: (tool: SharingTool) => void;
   onToggleTool: (tool: SharingTool) => void;
   onDeleteTool: (tool: SharingTool) => void;
 }) {
+  function rowPolicy(row: ToolInventoryRow): SharingTool | null {
+    return row.policy ? (row.policy as SharingTool) : null;
+  }
+  function policyLabel(row: ToolInventoryRow): string {
+    const state = text(row.policy_state, "none");
+    if (state === "exact") return "Exact";
+    if (state === "inherited") return "Inherited";
+    if (state === "policy_only") return "Policy only";
+    return "No policy";
+  }
+  function rowMatch(row: ToolInventoryRow): string {
+    return text(row.match || row.tool_name || row.group);
+  }
   return (
     <div className="hermes-guardian-card">
       <div className="hermes-guardian-card-head">
@@ -112,56 +127,98 @@ function EgressToolClassification(props: {
           </div>
         </div>
       </div>
-      {props.tools.length ? (
-        <div className="hermes-guardian-grid">
-          {props.tools.map((tool) => {
-            const disabled = tool.enabled === false;
-            const cardClasses = ["hermes-guardian-card"];
-            if (disabled) cardClasses.push("hermes-guardian-rule-disabled");
-            return (
-              <div key={tool.id} className={cardClasses.join(" ")}>
-                <div className="hermes-guardian-rule-head">
-                  <div className="hermes-guardian-rule-main">
-                    <div className="hermes-guardian-rule-title">{text(tool.match)}</div>
-                    <div className="hermes-guardian-rule-subline">
-                      <span className="hermes-guardian-rule-id">{text(tool.id)}</span>
-                      {tool.egress ? (
-                        <span className="hermes-guardian-pill">
-                          {"egress " + (tool.egress === "ignore" ? "none" : tool.egress)}
-                        </span>
+      {props.inventory.length ? (
+        <div className="hermes-guardian-tool-table-wrap">
+          <table className="hermes-guardian-tool-table">
+            <thead>
+              <tr>
+                <th>Tool</th>
+                <th>Seen</th>
+                <th>Last seen</th>
+                <th>Egress</th>
+                <th>Destination</th>
+                <th>Observed action</th>
+                <th>Policy</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {props.inventory.map((row) => {
+                const policy = rowPolicy(row);
+                const egress = text(policy && policy.egress, "default");
+                const destination = text(policy && policy.destination, "default");
+                const observed = (row.observed_egress_families || []).join(", ") || "none";
+                const match = rowMatch(row);
+                const label = row.row_type === "group"
+                  ? match + " (" + Number(row.child_count || 0) + ")"
+                  : match;
+                const rowClasses = [
+                  row.row_type === "group" ? "hermes-guardian-tool-row-group" : "",
+                  policy && policy.enabled === false ? "hermes-guardian-rule-disabled" : "",
+                ].filter(Boolean).join(" ");
+                const createMatch = text(row.match || row.tool_name || row.group);
+                return (
+                  <tr key={text(row.key, match)} className={rowClasses}>
+                    <td>
+                      <div
+                        className="hermes-guardian-tool-tree-cell"
+                        style={{ paddingLeft: String(Math.max(0, Number(row.depth || 0)) * 1.1) + "rem" }}
+                      >
+                        <Mono>{label}</Mono>
+                      </div>
+                    </td>
+                    <td>{Number(row.seen_count || 0) || "policy"}</td>
+                    <td>{timeText(row.last_seen)}</td>
+                    <td>
+                      <span className="hermes-guardian-pill">
+                        {egress === "ignore" ? "No egress" : egress}
+                      </span>
+                    </td>
+                    <td>{destination}</td>
+                    <td>{observed}</td>
+                    <td>
+                      <span className="hermes-guardian-pill">{policyLabel(row)}</span>
+                      {policy && policy.match ? (
+                        <span className="hermes-guardian-muted"> {text(policy.match)}</span>
                       ) : null}
-                      {tool.destination ? (
-                        <span className="hermes-guardian-pill">{"dest " + tool.destination}</span>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="hermes-guardian-actions">
-                    <IconButton
-                      icon="edit"
-                      label={"Edit egress classification " + text(tool.match)}
-                      onClick={() => props.onEditTool(tool)}
-                    />
-                    <Button variant="secondary" onClick={() => props.onToggleTool(tool)}>
-                      {disabled ? "Enable" : "Disable"}
-                    </Button>
-                    <IconButton
-                      icon="trash"
-                      variant="danger"
-                      label={"Delete egress classification " + text(tool.match)}
-                      onClick={() => props.onDeleteTool(tool)}
-                    />
-                  </div>
-                </div>
-                {tool.note ? <div className="hermes-guardian-muted">{text(tool.note)}</div> : null}
-              </div>
-            );
-          })}
+                    </td>
+                    <td>
+                      <div className="hermes-guardian-actions">
+                        {policy ? (
+                          <>
+                            <IconButton
+                              icon="edit"
+                              label={"Edit egress classification " + text(policy.match)}
+                              onClick={() => props.onEditTool(policy)}
+                            />
+                            <Button variant="secondary" onClick={() => props.onToggleTool(policy)}>
+                              {policy.enabled === false ? "Enable" : "Disable"}
+                            </Button>
+                            <IconButton
+                              icon="trash"
+                              variant="danger"
+                              label={"Delete egress classification " + text(policy.match)}
+                              onClick={() => props.onDeleteTool(policy)}
+                            />
+                          </>
+                        ) : (
+                          <Button variant="secondary" onClick={() => props.onNewTool(createMatch)}>
+                            Add policy
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       ) : (
-        <div className="hermes-guardian-muted">No Sharing tool classifications.</div>
+        <div className="hermes-guardian-muted">No tools seen yet.</div>
       )}
       <div className="hermes-guardian-tools-override-actions">
-        <Button onClick={props.onNewTool}>New egress classification</Button>
+        <Button onClick={() => props.onNewTool()}>New egress classification</Button>
       </div>
     </div>
   );
@@ -429,6 +486,7 @@ export function SharingTab(props: SharingTabProps) {
     controller,
     rules,
     sharingTools,
+    toolInventory,
     onNewRule,
     onEditRule,
     onPatchRule,
@@ -450,6 +508,7 @@ export function SharingTab(props: SharingTabProps) {
 
       <EgressToolClassification
         tools={sharingTools}
+        inventory={toolInventory}
         onNewTool={onNewTool}
         onEditTool={onEditTool}
         onToggleTool={onToggleTool}

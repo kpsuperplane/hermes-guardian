@@ -206,6 +206,7 @@ export function GuardianPage() {
           controller={destinations}
           rules={rules}
           sharingTools={(policy && policy.sharing_tools) || []}
+          toolInventory={(policy && policy.sharing_tool_inventory) || []}
           onNewRule={actions.openCreate}
           onEditRule={actions.openEdit}
           onPatchRule={actions.patchRule}

@@ -874,6 +874,7 @@ def _privacy_observe_tool_result(
     status: str = "",
 ) -> dict[str, Any] | None:
     if not isinstance(result, str) or not result:
+        activity_store._record_tool_inventory(tool_name, result=True)
         return None
 
     parsed: Any
@@ -900,6 +901,15 @@ def _privacy_observe_tool_result(
         tool_args=tool_args,
     )
     is_reference_read = tool_policy._is_reference_read(tool_name, tool_args)
+    read_activity = tool_policy._read_activity_for_tool(tool_name, tool_args, session_id)
+    activity_store._record_tool_inventory(
+        tool_name,
+        result=True,
+        read_family=read_activity[0] if read_activity else (
+            "mcp_read" if tool_policy._is_mcp_doc_read(tool_name) else ""
+        ),
+        destination=read_activity[1] if read_activity else "",
+    )
     source_default = tool_policy._is_source_default_read(tool_name, tool_args)
     strict_unknown_read = False
     taint_classes = tool_policy._taint_classes_for_tool_result(

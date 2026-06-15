@@ -1229,6 +1229,222 @@ def _destination_trust_summary() -> dict[str, Any]:
     }
 
 
+def _tool_group_for_name(tool_name: str, mcp_server_prefix: str = "") -> str:
+    name = re.sub(r"[^a-z0-9_.:-]+", "_", str(tool_name or "").strip().lower()).strip("_")
+    prefix = re.sub(r"[^a-z0-9_.:-]+", "_", str(mcp_server_prefix or "").strip().lower()).strip("_")
+    if prefix:
+        return f"{prefix}_*"
+    if name.startswith("mcp_"):
+        parts = name.split("_")
+        if len(parts) >= 2 and parts[1]:
+            return f"mcp_{parts[1]}_*"
+    if "_" in name:
+        return f"{name.split('_', 1)[0]}_*"
+    return name or "other"
+
+
+def _tool_group_for_match(match: str) -> str:
+    text = re.sub(r"[^a-z0-9_.:-]+", "_", str(match or "").strip().lower()).strip("_")
+    if not text:
+        return "other"
+    if text.endswith("*"):
+        return text
+    return _tool_group_for_name(text)
+
+
+def _policy_snapshot_for_inventory(policy: dict[str, Any] | None, kind: str) -> dict[str, Any] | None:
+    if not policy:
+        return None
+    base = {
+        "id": str(policy.get("id") or ""),
+        "match": str(policy.get("match") or ""),
+        "enabled": bool(policy.get("enabled", True)),
+        "note": str(policy.get("note") or ""),
+    }
+    if kind == "reading":
+        base["source"] = str(policy.get("source") or "")
+        base["taints"] = list(policy.get("taints") or [])
+    else:
+        base["egress"] = str(policy.get("egress") or "")
+        base["destination"] = str(policy.get("destination") or "")
+    return base
+
+
+def _policy_for_tool_inventory(tool_name: str, policies: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, str]:
+    name = str(tool_name or "").strip().lower()
+    exact = next((policy for policy in policies if policy.get("match") == name), None)
+    if exact:
+        return exact, "exact"
+    prefix_matches = [
+        policy
+        for policy in policies
+        if str(policy.get("match") or "").endswith("*")
+        and name.startswith(str(policy.get("match") or "")[:-1])
+    ]
+    if prefix_matches:
+        prefix_matches.sort(key=lambda policy: len(str(policy.get("match") or "")), reverse=True)
+        return prefix_matches[0], "inherited"
+    return None, "none"
+
+
+def _merge_inventory_tokens(rows: list[dict[str, Any]], key: str) -> list[str]:
+    out: list[str] = []
+    for row in rows:
+        for value in row.get(key) or []:
+            text = str(value or "")
+            if text and text not in out:
+                out.append(text)
+    return out[:20]
+
+
+def _tool_inventory_tree(kind: str) -> list[dict[str, Any]]:
+    policies = (
+        rules_mod._reading_tools_snapshot()
+        if kind == "reading"
+        else rules_mod._sharing_tools_snapshot()
+    )
+    inventory = activity_store._tool_inventory_rows()
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in inventory:
+        group = _tool_group_for_name(row.get("tool_name", ""), row.get("mcp_server_prefix", ""))
+        groups.setdefault(group, []).append(row)
+    for policy in policies:
+        match = str(policy.get("match") or "")
+        if match.endswith("*"):
+            groups.setdefault(match, [])
+        else:
+            groups.setdefault(_tool_group_for_match(match), [])
+
+    rows: list[dict[str, Any]] = []
+    used_policy_ids: set[str] = set()
+    group_order = sorted(
+        groups,
+        key=lambda group: (
+            -max((int(row.get("last_seen") or 0) for row in groups[group]), default=0),
+            group,
+        ),
+    )
+    for group in group_order:
+        children = sorted(
+            groups[group],
+            key=lambda row: (-int(row.get("last_seen") or 0), str(row.get("tool_name") or "")),
+        )
+        group_policy = next((policy for policy in policies if policy.get("match") == group), None)
+        if group_policy:
+            used_policy_ids.add(str(group_policy.get("id") or ""))
+        group_policy_state = "exact" if group_policy and children else "policy_only" if group_policy else "none"
+        group_call_count = sum(int(row.get("call_count") or 0) for row in children)
+        group_result_count = sum(int(row.get("result_count") or 0) for row in children)
+        rows.append({
+            "key": f"group:{kind}:{group}",
+            "row_type": "group",
+            "depth": 0,
+            "tool_name": "",
+            "match": group,
+            "group": group,
+            "child_count": len(children),
+            "call_count": group_call_count,
+            "result_count": group_result_count,
+            "seen_count": group_call_count + group_result_count,
+            "first_seen": min((int(row.get("first_seen") or 0) for row in children), default=0),
+            "last_seen": max((int(row.get("last_seen") or 0) for row in children), default=0),
+            "observed_read_families": _merge_inventory_tokens(children, "observed_read_families"),
+            "observed_egress_families": _merge_inventory_tokens(children, "observed_egress_families"),
+            "observed_destinations": _merge_inventory_tokens(children, "observed_destinations"),
+            "mcp_server_prefix": group[:-2] if group.endswith("_*") else "",
+            "policy": _policy_snapshot_for_inventory(group_policy, kind),
+            "policy_state": group_policy_state,
+            "policy_match": str((group_policy or {}).get("match") or ""),
+        })
+        child_names = {str(row.get("tool_name") or "") for row in children}
+        exact_policies = [
+            policy
+            for policy in policies
+            if str(policy.get("match") or "")
+            and not str(policy.get("match") or "").endswith("*")
+            and _tool_group_for_match(str(policy.get("match") or "")) == group
+            and str(policy.get("match") or "") not in child_names
+        ]
+        for row in children:
+            tool_name = str(row.get("tool_name") or "")
+            policy, policy_state = _policy_for_tool_inventory(tool_name, policies)
+            if policy:
+                used_policy_ids.add(str(policy.get("id") or ""))
+            rows.append({
+                "key": f"tool:{kind}:{tool_name}",
+                "row_type": "tool",
+                "depth": 1,
+                "tool_name": tool_name,
+                "match": tool_name,
+                "group": group,
+                "child_count": 0,
+                "call_count": int(row.get("call_count") or 0),
+                "result_count": int(row.get("result_count") or 0),
+                "seen_count": int(row.get("call_count") or 0) + int(row.get("result_count") or 0),
+                "first_seen": int(row.get("first_seen") or 0),
+                "last_seen": int(row.get("last_seen") or 0),
+                "observed_read_families": list(row.get("observed_read_families") or []),
+                "observed_egress_families": list(row.get("observed_egress_families") or []),
+                "observed_destinations": list(row.get("observed_destinations") or []),
+                "mcp_server_prefix": str(row.get("mcp_server_prefix") or ""),
+                "policy": _policy_snapshot_for_inventory(policy, kind),
+                "policy_state": policy_state,
+                "policy_match": str((policy or {}).get("match") or ""),
+            })
+        for policy in exact_policies:
+            used_policy_ids.add(str(policy.get("id") or ""))
+            match = str(policy.get("match") or "")
+            rows.append({
+                "key": f"policy:{kind}:{match}",
+                "row_type": "policy",
+                "depth": 1,
+                "tool_name": "",
+                "match": match,
+                "group": group,
+                "child_count": 0,
+                "call_count": 0,
+                "result_count": 0,
+                "seen_count": 0,
+                "first_seen": 0,
+                "last_seen": 0,
+                "observed_read_families": [],
+                "observed_egress_families": [],
+                "observed_destinations": [],
+                "mcp_server_prefix": "",
+                "policy": _policy_snapshot_for_inventory(policy, kind),
+                "policy_state": "policy_only",
+                "policy_match": match,
+            })
+    # Defensive: if any policy escaped grouping due to a malformed match, show it.
+    for policy in policies:
+        policy_id = str(policy.get("id") or "")
+        if policy_id in used_policy_ids:
+            continue
+        match = str(policy.get("match") or "")
+        rows.append({
+            "key": f"policy:{kind}:{match or policy_id}",
+            "row_type": "policy",
+            "depth": 0,
+            "tool_name": "",
+            "match": match,
+            "group": _tool_group_for_match(match),
+            "child_count": 0,
+            "call_count": 0,
+            "result_count": 0,
+            "seen_count": 0,
+            "first_seen": 0,
+            "last_seen": 0,
+            "observed_read_families": [],
+            "observed_egress_families": [],
+            "observed_destinations": [],
+            "mcp_server_prefix": "",
+            "policy": _policy_snapshot_for_inventory(policy, kind),
+            "policy_state": "policy_only",
+            "policy_match": match,
+        })
+    return rows[:1200]
+
+
 def _policy_snapshot() -> dict[str, Any]:
     with state._LOCK:
         llm._prune_expired()
@@ -1297,6 +1513,8 @@ def _policy_snapshot() -> dict[str, Any]:
         "llm_verifier_model_options": rules_mod._verifier_model_options(),
         "reading_tools": rules_mod._reading_tools_snapshot(),
         "sharing_tools": rules_mod._sharing_tools_snapshot(),
+        "reading_tool_inventory": _tool_inventory_tree("reading"),
+        "sharing_tool_inventory": _tool_inventory_tree("sharing"),
         "sharing_tool_egress_options": sorted(rules_mod._SHARING_TOOL_EGRESS_VALUES),
         "all_privacy_classes": sorted(core._ALL_PRIVACY_CLASSES),
         "destination_trust": _destination_trust_summary(),

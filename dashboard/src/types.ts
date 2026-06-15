@@ -92,6 +92,28 @@ export interface SharingTool {
   enabled?: boolean;
 }
 
+export interface ToolInventoryRow {
+  key?: string;
+  row_type?: string;
+  depth?: number;
+  tool_name?: string;
+  match?: string;
+  group?: string;
+  child_count?: number;
+  call_count?: number;
+  result_count?: number;
+  seen_count?: number;
+  first_seen?: number;
+  last_seen?: number;
+  observed_read_families?: string[];
+  observed_egress_families?: string[];
+  observed_destinations?: string[];
+  mcp_server_prefix?: string;
+  policy?: ReadingTool | SharingTool | null;
+  policy_state?: string;
+  policy_match?: string;
+}
+
 export interface SourceSuggestion {
   server: string;
   hits?: number;
@@ -192,6 +214,8 @@ export interface Policy {
   risk_banners?: RiskBanner[];
   reading_tools?: ReadingTool[];
   sharing_tools?: SharingTool[];
+  reading_tool_inventory?: ToolInventoryRow[];
+  sharing_tool_inventory?: ToolInventoryRow[];
   security_rules?: SecurityRule[];
   language_packs?: LanguagePack[];
   all_privacy_classes?: string[];

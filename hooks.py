@@ -126,6 +126,13 @@ def _on_pre_tool_call_impl(
     # against them — e.g. a doc read's target path. Single-slot per session; harmless if
     # the call is later blocked (the result hook only fires for calls that ran).
     tool_policy._stash_pending_tool_args(session_id, tool_name, args)
+    action = tool_policy._egress_action_context_for_tool(tool_name, args, session_id)
+    activity_store._record_tool_inventory(
+        tool_name,
+        call=True,
+        egress_family=action.action_family if action else "",
+        destination=action.destination if action else "",
+    )
     security_block = security_module._security_pre_tool_call(tool_name, args, session_id)
     if security_block:
         return security_block

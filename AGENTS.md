@@ -353,6 +353,12 @@ entry has a `match`, optional `egress`: `ignore` (treat as a safe non-sink),
 are privacy-layer only: they never bypass the Security Module or intrinsic
 same-call hard blocks.
 
+The dashboard renders Reading and Sharing tool classification through persistent
+metadata-only inventory tables. The inventory records tool names, first/last seen
+timestamps, call/result counts, observed read/egress family labels, observed
+destination labels, and MCP server prefixes. It never stores raw arguments, result
+content, prompts, URL paths/query strings, or payloads.
+
 `privacy.llm_user_context` (default `true`) and `privacy.llm_cron_context`
 (default `false`) are booleans gating the two `llm`-mode authorization-evidence
 channels. They are normalized by `_config_bool` and exposed through
@@ -389,6 +395,8 @@ Rule mutation helpers must preserve privacy rules, security rule settings,
   wrappers in `hooks.py`, aggregated by `_performance_summary` for the dashboard
   Performance tab. Timing is best-effort and must never alter a check's result.
   Pruned with the same retention/row caps as `activity`.
+- `tool_inventory`: sanitized, unique-tool metadata for Reading/Sharing inventory
+  tables. It is not pruned with activity retention.
 
 Schema changes should be backward-compatible through `ALTER TABLE` checks in
 `runtime/activity_store.py`; add migration tests when adding columns.

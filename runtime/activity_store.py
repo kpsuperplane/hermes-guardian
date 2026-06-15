@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from typing import Any
@@ -221,11 +222,47 @@ def _ensure_activity_db() -> None:
                 )
                 conn.execute("CREATE INDEX IF NOT EXISTS check_timings_ts_idx ON check_timings(ts)")
                 conn.execute("CREATE INDEX IF NOT EXISTS check_timings_hook_idx ON check_timings(hook)")
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS tool_inventory (
+                        tool_name TEXT PRIMARY KEY,
+                        first_seen INTEGER NOT NULL,
+                        last_seen INTEGER NOT NULL,
+                        call_count INTEGER NOT NULL DEFAULT 0,
+                        result_count INTEGER NOT NULL DEFAULT 0,
+                        observed_read_families TEXT NOT NULL DEFAULT '[]',
+                        observed_egress_families TEXT NOT NULL DEFAULT '[]',
+                        observed_destinations TEXT NOT NULL DEFAULT '[]',
+                        mcp_server_prefix TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+                )
+                inventory_columns = {
+                    str(row["name"])
+                    for row in conn.execute("PRAGMA table_info(tool_inventory)").fetchall()
+                }
+                if "first_seen" not in inventory_columns:
+                    conn.execute("ALTER TABLE tool_inventory ADD COLUMN first_seen INTEGER NOT NULL DEFAULT 0")
+                if "last_seen" not in inventory_columns:
+                    conn.execute("ALTER TABLE tool_inventory ADD COLUMN last_seen INTEGER NOT NULL DEFAULT 0")
+                if "call_count" not in inventory_columns:
+                    conn.execute("ALTER TABLE tool_inventory ADD COLUMN call_count INTEGER NOT NULL DEFAULT 0")
+                if "result_count" not in inventory_columns:
+                    conn.execute("ALTER TABLE tool_inventory ADD COLUMN result_count INTEGER NOT NULL DEFAULT 0")
+                if "observed_read_families" not in inventory_columns:
+                    conn.execute("ALTER TABLE tool_inventory ADD COLUMN observed_read_families TEXT NOT NULL DEFAULT '[]'")
+                if "observed_egress_families" not in inventory_columns:
+                    conn.execute("ALTER TABLE tool_inventory ADD COLUMN observed_egress_families TEXT NOT NULL DEFAULT '[]'")
+                if "observed_destinations" not in inventory_columns:
+                    conn.execute("ALTER TABLE tool_inventory ADD COLUMN observed_destinations TEXT NOT NULL DEFAULT '[]'")
+                if "mcp_server_prefix" not in inventory_columns:
+                    conn.execute("ALTER TABLE tool_inventory ADD COLUMN mcp_server_prefix TEXT NOT NULL DEFAULT ''")
+                conn.execute("CREATE INDEX IF NOT EXISTS tool_inventory_last_seen_idx ON tool_inventory(last_seen)")
                 # Classification-picker candidates, by kind (doc: source provenance §3):
                 #   kind="command" → safe terminal command prefixes that gated (Trusted-
                 #     destinations picker; program + script/subcommand only, never flag values).
                 #   kind="source"  → MCP server prefixes whose doc-reads hit the conservative
-                #     source-default (Protection "Sources seen" picker; server prefix only,
+                #     source-default (Reading "Sources seen" picker; server prefix only,
                 #     never content).
                 # Shared across the gateway/dashboard processes via this DB.
                 conn.execute(
@@ -258,6 +295,170 @@ _DESTINATION_TRUST_LABELS = {
     "public",
     "unknown",
 }
+
+_PSEUDO_TOOL_NAMES = {"", "*", "llm_output", "gateway_message"}
+
+
+def _safe_tool_inventory_name(value: Any) -> str:
+    text = re.sub(r"[^A-Za-z0-9_.:-]+", "_", str(value or "").strip().lower())
+    text = text.strip("_")[:120]
+    return "" if text in _PSEUDO_TOOL_NAMES else text
+
+
+def _safe_inventory_token(value: Any, *, limit: int = 80) -> str:
+    text = re.sub(r"[^A-Za-z0-9_.:@-]+", "_", str(value or "").strip().lower())
+    return text.strip("_")[:limit]
+
+
+def _inventory_json_array(value: Any) -> list[str]:
+    try:
+        parsed = json.loads(str(value or "[]"))
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [
+        token
+        for token in (_safe_inventory_token(item) for item in parsed)
+        if token
+    ][:20]
+
+
+def _inventory_array_with(values: Any, additions: list[str]) -> str:
+    current = _inventory_json_array(values)
+    for item in additions:
+        token = _safe_inventory_token(item)
+        if token and token not in current:
+            current.append(token)
+    return json.dumps(current[:20], separators=(",", ":"))
+
+
+def _tool_inventory_mcp_prefix(tool_name: str) -> str:
+    lower = _safe_tool_inventory_name(tool_name)
+    if not lower:
+        return ""
+    try:
+        server = tool_policy._mcp_server_prefix(lower)
+    except Exception:
+        server = ""
+    if server:
+        return server[:80]
+    if lower.startswith("mcp_"):
+        parts = lower.split("_")
+        if len(parts) >= 2 and parts[1]:
+            return f"mcp_{parts[1]}"[:80]
+    return ""
+
+
+def _record_tool_inventory(
+    tool_name: str,
+    *,
+    call: bool = False,
+    result: bool = False,
+    read_family: str = "",
+    egress_family: str = "",
+    destination: str = "",
+) -> None:
+    safe_name = _safe_tool_inventory_name(tool_name)
+    if not safe_name:
+        return
+    read_values = [_safe_inventory_token(read_family)]
+    egress_values = [_safe_inventory_token(egress_family)]
+    destination_values = [_safe_inventory_token(destination, limit=120)]
+    now = int(state._now())
+    mcp_prefix = _tool_inventory_mcp_prefix(safe_name)
+    try:
+        _ensure_activity_db()
+        with _activity_connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM tool_inventory WHERE tool_name=?",
+                (safe_name,),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO tool_inventory (
+                        tool_name, first_seen, last_seen, call_count, result_count,
+                        observed_read_families, observed_egress_families,
+                        observed_destinations, mcp_server_prefix
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        safe_name,
+                        now,
+                        now,
+                        1 if call else 0,
+                        1 if result else 0,
+                        _inventory_array_with("[]", read_values),
+                        _inventory_array_with("[]", egress_values),
+                        _inventory_array_with("[]", destination_values),
+                        mcp_prefix,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE tool_inventory
+                    SET last_seen=?,
+                        call_count=call_count+?,
+                        result_count=result_count+?,
+                        observed_read_families=?,
+                        observed_egress_families=?,
+                        observed_destinations=?,
+                        mcp_server_prefix=CASE
+                            WHEN mcp_server_prefix='' THEN ?
+                            ELSE mcp_server_prefix
+                        END
+                    WHERE tool_name=?
+                    """,
+                    (
+                        now,
+                        1 if call else 0,
+                        1 if result else 0,
+                        _inventory_array_with(row["observed_read_families"], read_values),
+                        _inventory_array_with(row["observed_egress_families"], egress_values),
+                        _inventory_array_with(row["observed_destinations"], destination_values),
+                        mcp_prefix,
+                        safe_name,
+                    ),
+                )
+    except Exception as exc:
+        core.logger.debug("%s: failed to record tool inventory: %s", core._PLUGIN_NAME, exc)
+
+
+def _tool_inventory_rows(limit: int = 1000) -> list[dict[str, Any]]:
+    _ensure_activity_db()
+    try:
+        with _activity_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT tool_name, first_seen, last_seen, call_count, result_count,
+                       observed_read_families, observed_egress_families,
+                       observed_destinations, mcp_server_prefix
+                FROM tool_inventory
+                ORDER BY last_seen DESC, tool_name ASC
+                LIMIT ?
+                """,
+                (max(1, min(int(limit or 1000), 5000)),),
+            ).fetchall()
+    except Exception as exc:
+        core.logger.debug("%s: failed to read tool inventory: %s", core._PLUGIN_NAME, exc)
+        return []
+    return [
+        {
+            "tool_name": str(row["tool_name"] or ""),
+            "first_seen": int(row["first_seen"] or 0),
+            "last_seen": int(row["last_seen"] or 0),
+            "call_count": int(row["call_count"] or 0),
+            "result_count": int(row["result_count"] or 0),
+            "observed_read_families": _inventory_json_array(row["observed_read_families"]),
+            "observed_egress_families": _inventory_json_array(row["observed_egress_families"]),
+            "observed_destinations": _inventory_json_array(row["observed_destinations"]),
+            "mcp_server_prefix": str(row["mcp_server_prefix"] or "")[:80],
+        }
+        for row in rows
+    ]
 
 
 def _normalize_destination_trust_label(value: Any) -> str:

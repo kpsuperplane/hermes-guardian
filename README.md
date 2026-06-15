@@ -687,6 +687,12 @@ Tool classifications are split by what they control:
 - **Sharing tool classifications** say whether a tool sends data: `egress=ignore`,
   `egress=gate`, or a concrete action family and optional destination.
 
+The dashboard shows Reading and Sharing as inventory tables: every tool Guardian
+has ever observed in local metadata appears with call/result counts, last-seen
+time, observed source or egress facts, and the exact or inherited policy currently
+attached to it. Policy-only matchers are shown too, so a classification remains
+visible before any matching child tool has appeared.
+
 When the default behavior is too strict for a tool you trust, classify that tool
 instead of weakening the global mode:
 
@@ -869,16 +875,18 @@ mine → what was read → is it covered by a grant → who judges the rest → 
   identities / hosts), a grant banner when identities/hosts are set, and a *Check a
   destination* widget (resolves a hypothetical destination/recipient to its trust,
   read-only).
-- **Reading**: source provenance and read-taint classification — Taint
-  Classification, tool classification overrides, and *Sources seen* for undeclared
-  MCP document-read servers.
+- **Reading**: source provenance and read-taint classification — an inventory
+  table showing observed tools plus exact/inherited source policy, Taint
+  Classification, the LLM source classifier, and *Sources seen* for undeclared MCP
+  document-read servers.
 - **Sharing**: the standing authorization you've granted — trusted recipients, the
-  ordered allow/deny rules (add/edit/delete/enable/disable/**reorder**), the
-  outward-sharing action names (verbs such as share/invite/publish that are always
-  external even on your own stores, with builtin read-only names plus editable extras),
-  a *Preview a send* widget, and an *Impact preview* that replays a candidate rule
-  against recent activity before you commit it. Trust/sharing edits are admin-token +
-  confirmation gated.
+  egress tool inventory table, ordered allow/deny rules
+  (add/edit/delete/enable/disable/**reorder**), the outward-sharing action names
+  (verbs such as share/invite/publish that are always external even on your own
+  stores, with builtin read-only names plus editable extras), a *Preview a send*
+  widget, and an *Impact preview* that replays a candidate rule against recent
+  activity before you commit it. Trust/sharing edits are admin-token + confirmation
+  gated.
 - **Review**: case-by-case judgment — **Egress Safety** (each option written as a
   who-reviews sentence), the owner/cron authorization context toggles, the verifier
   model, and a verifier **scoreboard** (consulted checks + median latency).
@@ -1000,7 +1008,7 @@ Persistent files live in the plugin directory (override the location with
 | File | Purpose |
 | --- | --- |
 | `guardian-rules.json` | Egress Safety, privacy allow/deny rules, security-rule toggles, and language-pack selection. |
-| `activity.sqlite3` | Sanitized activity history and pending approvals. Pending approval rows may temporarily hold bounded `permit_recipient`, `permit_host`, and `permit_command` values for precise `mine`/`trust` approvals; they expire with the approval and are removed on approve, dismiss, or expiry pruning. |
+| `activity.sqlite3` | Sanitized activity history, pending approvals, timing samples, and the metadata-only tool inventory. Pending approval rows may temporarily hold bounded `permit_recipient`, `permit_host`, and `permit_command` values for precise `mine`/`trust` approvals; they expire with the approval and are removed on approve, dismiss, or expiry pruning. |
 | `.guardian-hmac-key` | Local key for exact-argument one-time approval binding. |
 | `.unsafe-diagnostics` | Opt-in unsafe diagnostics flag for development only. |
 

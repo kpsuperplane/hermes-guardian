@@ -6,11 +6,62 @@
 
 .hermes-guardian-reading-fallthrough {
   margin-top: 1rem;
+  padding-top: 1rem;
   border-top: 1px solid var(--color-border);
-  background: color-mix(in srgb, var(--color-surface-muted) 55%, transparent);
 }
 
 .hermes-guardian-reading-fallthrough .hermes-guardian-select {
   width: auto;
   min-width: 9rem;
+}
+
+.hermes-guardian-tool-table-wrap {
+  margin-top: 0.85rem;
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.hermes-guardian-tool-table {
+  width: 100%;
+  min-width: 54rem;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.78rem;
+}
+
+.hermes-guardian-tool-table th,
+.hermes-guardian-tool-table td {
+  padding: 0.48rem 0.55rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 78%, transparent);
+  text-align: left;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+
+.hermes-guardian-tool-table th {
+  background: color-mix(in srgb, var(--color-surface-muted) 72%, transparent);
+  color: var(--color-muted-foreground);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.hermes-guardian-tool-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.hermes-guardian-tool-row-group td {
+  background: color-mix(in srgb, var(--color-surface-muted) 42%, transparent);
+  font-weight: 650;
+}
+
+.hermes-guardian-tool-tree-cell {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.hermes-guardian-tool-table .hermes-guardian-actions {
+  gap: 0.25rem;
+  flex-wrap: nowrap;
 }

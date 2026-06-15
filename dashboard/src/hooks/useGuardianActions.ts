@@ -261,9 +261,9 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       .finally(() => setVerifierModelSaving(false));
   }
 
-  function openCreateReadingTool() {
+  function openCreateReadingTool(match?: string) {
     setToolFormKind("reading");
-    setOverrideForm(Object.assign({}, DEFAULT_OVERRIDE_FORM));
+    setOverrideForm(Object.assign({}, DEFAULT_OVERRIDE_FORM, { match: text(match) }));
     setOverrideFormError("");
     setShowOverrideModal(true);
   }
@@ -285,9 +285,9 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     setShowOverrideModal(true);
   }
 
-  function openCreateSharingTool() {
+  function openCreateSharingTool(match?: string) {
     setToolFormKind("sharing");
-    setOverrideForm(Object.assign({}, DEFAULT_OVERRIDE_FORM));
+    setOverrideForm(Object.assign({}, DEFAULT_OVERRIDE_FORM, { match: text(match) }));
     setOverrideFormError("");
     setShowOverrideModal(true);
   }
