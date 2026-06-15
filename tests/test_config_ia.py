@@ -265,6 +265,46 @@ def test_invalid_llm_source_classification_normalizes_to_default_enabled():
     assert plugin.state._PERSISTENT_RULES_ERROR is False
 
 
+def test_public_source_classification_round_trips_from_v4():
+    plugin = load_plugin()
+    _write_file(
+        plugin,
+        {
+            "version": 4,
+            "reading": {
+                "tools": [
+                    {"match": "clock_*", "source": "public", "taints": []},
+                ]
+            },
+        },
+    )
+
+    config = plugin._load_privacy_config()
+
+    assert config["privacy"]["reading_tools"][0]["source"] == "public"
+    assert config["privacy"]["reading_tools"][0]["taints"] == []
+
+
+def test_public_source_with_taints_is_dropped_from_v4():
+    plugin = load_plugin()
+    _write_file(
+        plugin,
+        {
+            "version": 4,
+            "reading": {
+                "tools": [
+                    {"match": "clock_*", "source": "public", "taints": ["contacts"]},
+                ]
+            },
+        },
+    )
+
+    config = plugin._load_privacy_config()
+
+    assert config["privacy"]["reading_tools"] == []
+    assert plugin.state._PERSISTENT_RULES_ERROR is False
+
+
 def test_obsolete_review_mode_fails_closed_to_strict():
     plugin = load_plugin()
     _write_file(plugin, {"version": 4, "review": {"mode": "llm"}})

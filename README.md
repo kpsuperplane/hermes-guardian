@@ -592,9 +592,10 @@ operator-installed reference material is not silently extended to arbitrary sour
 A read of provably-reference material (the `skill_view` builtin, or any read whose
 target path resolves under the skills tree) is scanned leniently, tolerating the
 placeholder contacts that fill skill docs. A read from an MCP server you have
-declared (`source = reference`, `source = private`, or `source = unknown` on a
-Reading tool classification) follows that declaration. `unknown` is a remembered
-undecided state: it suppresses repeated review but does not relax taint behavior.
+declared (`source = reference`, `source = private`, `source = public`, or
+`source = unknown` on a Reading tool classification) follows that declaration.
+`public` never privacy-taints from that read; `unknown` is a remembered undecided
+state: it suppresses repeated review but does not relax taint behavior.
 An undeclared MCP document read (`…_read_resource`,
 `…_read_document`, `…_get_resource`) of unknown provenance fails closed: it taints
 `documents` conservatively — even with no detectable signal — and Guardian surfaces
@@ -616,15 +617,18 @@ For arbitrary unknown non-MCP reads, **Taint Classification** controls the fallb
 /guardian reading llm-source-classification on|off
 ```
 
-Unknown MCP document sources are treated as private unless declared reference;
-strict extends that conservative posture to otherwise-unknown non-MCP reads.
+Unknown MCP document sources are treated as private until declared reference,
+private, public, or unknown; strict extends that conservative posture to
+otherwise-unknown non-MCP reads.
 Relaxed keeps the balanced read behavior and loosens only unknown non-MCP sink handling.
 When LLM source classification is on, Guardian may ask the configured LLM to
 classify otherwise-unknown, signalless reads using metadata only: tool name,
 matcher shape, argument keys/types, status, result type/size, and JSON keys. It
 never sends result content or raw argument values. The classifier persists an
-ordinary Reading tool rule as `reference`, `private`, or `unknown`, so the same
-tool matcher is not reviewed again.
+ordinary Reading tool rule as `reference`, `private`, `public`, or `unknown`, so
+the same tool matcher is not reviewed again. `public` requires high confidence
+from tool metadata that the tool cannot return private user/workspace data, such
+as a current-time or static-version read.
 
 Egress decisions reason over the **ambient session taint**: the union of the data
 classes the session has read so far and any private-looking classes intrinsic to
@@ -683,7 +687,7 @@ tools. In `relaxed`, unrecognized non-MCP tools are not gated under taint.
 Tool classifications are split by what they control:
 
 - **Reading tool classifications** say what a tool reads: source taints and
-  `source=reference|private|unknown`.
+  `source=reference|private|public|unknown`.
 - **Sharing tool classifications** say whether a tool sends data: `egress=ignore`,
   `egress=gate`, or a concrete action family and optional destination.
 
@@ -729,10 +733,11 @@ Reading fields:
 - `taints`: data classes additively applied when the tool's result is observed (the
   "this tool reads my email" case).
 - `source`: the document-read classification *mode* — `reference` (scan the read
-  leniently, like a skill doc), `private` (always taint as personal data), or
-  `unknown` (remember that provenance is unresolved while keeping fallback taint
-  behavior). Empty uses the tiered default. Because MCP tools are server-prefixed,
-  a prefix match (`match = "crm_*"`) declares a whole server at once.
+  leniently, like a skill doc), `private` (always taint as personal data),
+  `public` (never privacy-taint from this read), or `unknown` (remember that
+  provenance is unresolved while keeping fallback taint behavior). Empty uses the
+  tiered default. Because MCP tools are server-prefixed, a prefix match
+  (`match = "crm_*"`) declares a whole server at once.
 
 Sharing fields:
 
@@ -802,10 +807,10 @@ sit on top as the everyday commands.
 /guardian reading
 /guardian reading taint-classification balanced|strict|relaxed
 /guardian reading llm-source-classification on|off
-/guardian reading tool set <match> [taints=class+class] [source=reference|private|unknown] [note=<text>]
+/guardian reading tool set <match> [taints=class+class] [source=reference|private|public|unknown] [note=<text>]
 /guardian reading tool delete <match_or_id>
 /guardian reading tool enable|disable <id_or_match>
-/guardian reading source suggest|set <server> reference|private|unknown
+/guardian reading source suggest|set <server> reference|private|public|unknown
 
 # SHARING — what you've authorized to leave you
 /guardian sharing

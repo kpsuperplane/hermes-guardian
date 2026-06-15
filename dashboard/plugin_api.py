@@ -163,6 +163,9 @@ def _require_dashboard_confirmation(action: str, body: dict[str, Any]) -> None:
         # weakening direction (private only tightens and needs no token).
         if _confirmation_value(body) != "source-reference":
             raise HTTPException(status_code=400, detail="declaring a source as reference requires confirmation")
+    if action == "source_classify" and str(body.get("source") or "").strip().lower() == "public":
+        if _confirmation_value(body) != "source-public":
+            raise HTTPException(status_code=400, detail="declaring a source as public requires confirmation")
     if action == "llm_cron_context" and _body_bool(body, "enabled"):
         if _confirmation_value(body) != "cron-context-on":
             raise HTTPException(status_code=400, detail="enabling cron context requires confirmation")
@@ -421,6 +424,7 @@ async def set_persist_prompts(request: Request, body: dict[str, Any]) -> JSONRes
 @router.post("/reading/tools")
 async def create_reading_tool(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
+    _require_dashboard_confirmation("source_classify", body)
     return _json_mutation_result(
         _guardian()._dashboard_reading_tool_create_action(body),
     )
@@ -429,6 +433,7 @@ async def create_reading_tool(request: Request, body: dict[str, Any]) -> JSONRes
 @router.patch("/reading/tools/{override_id}")
 async def update_reading_tool(request: Request, override_id: str, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
+    _require_dashboard_confirmation("source_classify", body)
     return _json_mutation_result(
         _guardian()._dashboard_reading_tool_update_action(override_id, body),
     )

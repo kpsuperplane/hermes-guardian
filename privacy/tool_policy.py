@@ -1091,6 +1091,7 @@ def _taint_classes_for_tool_result(
     if str(status or "").lower() == "error":
         return set()
     override_taints = _reading_tool_taint_classes(tool_name)
+    known_private_classes = _known_private_source_classes(tool_name)
     if _is_local_system_tool(tool_name):
         classes = _classes_from_content(result_value)
         policy = local_system_policy if local_system_policy is not None else _consume_local_system_result_policy(session_id, tool_name)
@@ -1102,9 +1103,13 @@ def _taint_classes_for_tool_result(
         # Placeholder-tolerant relaxed scan, so sample contacts in skill docs don't
         # false-positive (the 0818f09 fix).
         return _doc_content_taint_classes(result_value) | override_taints
+    if known_private_classes:
+        return known_private_classes | override_taints
     # An MCP doc-read (by name shape) follows its declaration if any, else fails closed.
     if _is_mcp_doc_read(tool_name):
         source = _reading_tool_source(tool_name)
+        if source == "public":
+            return set()
         if source == "reference":
             return _doc_content_taint_classes(result_value) | override_taints
         if source == "private":
@@ -1114,12 +1119,11 @@ def _taint_classes_for_tool_result(
         # flags these rows (source_default reason → Reading picker / deep-link); the operator
         # declares the server source to change the classification.
         return {"documents"} | override_taints
-    classes = _classes_from_tool_name(tool_name)
-    if classes:
-        return classes | override_taints
     if _is_web_sourced_tool(tool_name):
         return _web_content_taint_classes(result_value, session_id) | override_taints
     source = _reading_tool_source(tool_name)
+    if source == "public":
+        return set()
     if source == "private":
         return _source_private_taint_classes(tool_name) | override_taints
     if source == "reference":
@@ -1502,10 +1506,29 @@ def _reading_tool_taint_classes(tool_name: str) -> set[str]:
 
 
 def _reading_tool_source(tool_name: str) -> str:
-    """Declared source-classification mode ('reference' | 'private') for a doc-read tool,
+    """Declared source-classification mode ('reference' | 'private' | 'public' | 'unknown') for a doc-read tool,
     or '' if undeclared. `source` is the classification *mode*; `taints` stays additive."""
     override = rules_mod._reading_tool_for(tool_name)
     return str(override.get("source") or "") if override else ""
+
+
+def _known_private_source_classes(tool_name: str) -> set[str]:
+    """Name-derived private source classes that user source labels must not relax."""
+    lower = str(tool_name or "").lower()
+    classes: set[str] = set()
+    if re.search(r"(^|_)(gmail|email|mail|inbox|message)(_|$)", lower):
+        classes.add("communications")
+    if re.search(r"(^|_)(dex|contact|contacts|people|person)(_|$)", lower):
+        classes.add("contacts")
+    if re.search(r"(^|_)(memory|mnemosyne|session_search|search_sessions)(_|$)", lower):
+        classes.add("memory")
+    if re.search(r"(^|_)(notion|drive|docs|file|files|read_file|search_files)(_|$)", lower):
+        classes.add("documents")
+    if re.search(r"(^|_)(calendar|event|meeting)(_|$)", lower):
+        classes.add("calendar")
+    if re.search(r"(^|_)(terminal|execute_code|code_execution|shell|computer_use)(_|$)", lower):
+        classes.add("local_system")
+    return classes
 
 
 def _source_private_taint_classes(tool_name: str) -> set[str]:
@@ -1633,7 +1656,7 @@ def _maybe_classify_unknown_read_source(
     if not verdict:
         return None
     source = str(verdict.get("source") or "unknown").strip().lower()
-    if source not in {"reference", "private", "unknown"}:
+    if source not in {"reference", "private", "public", "unknown"}:
         source = "unknown"
     if source != "unknown" and verdict.get("confidence") != "high":
         source = "unknown"

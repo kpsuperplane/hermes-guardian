@@ -235,6 +235,63 @@ def test_declared_unknown_source_keeps_balanced_fallback_and_suppresses_suggesti
     assert plugin._source_classification_suggestions() == []
 
 
+def test_declared_public_source_never_privacy_taints():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    assert plugin._set_reading_tool("clock_*", source="public")[0]
+
+    plugin._on_transform_tool_result(
+        tool_name="clock_now",
+        result="client jane.doe@gmail.com and SSN 123-45-6789",
+        session_id="public",
+    )
+
+    assert plugin._session_taint("public") == set()
+
+
+def test_declared_public_source_ignores_strict_unknown_read_default():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    assert plugin._set_taint_classification_mode("strict")[0]
+    assert plugin._set_reading_tool("clock_*", source="public")[0]
+
+    plugin._on_transform_tool_result(
+        tool_name="clock_now",
+        result=_SIGNALLESS_PROSE,
+        session_id="public-strict",
+    )
+
+    assert plugin._session_taint("public-strict") == set()
+
+
+def test_public_source_classification_suppresses_suggestions():
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    assert plugin._set_source_classification("time", "public")[0]
+
+    assert plugin._source_classification_suggestions() == []
+    assert plugin._reading_tool_for("time_read_resource")["source"] == "public"
+
+
+def test_public_source_does_not_bypass_security_suppression():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    assert plugin._set_reading_tool("clock_*", source="public")[0]
+
+    transformed = plugin._on_transform_tool_result(
+        tool_name="clock_now",
+        result="Your password reset code is 123456",
+        session_id="public-security",
+    )
+
+    assert transformed is not None
+    parsed = parse_json(transformed)
+    assert parsed["hermes_guardian"]["suppressed"] is True
+    assert parsed["security_sensitive_filter"]["reason"] == "password reset"
+    assert plugin._session_taint("public-security") == set()
+
+
 def test_llm_source_classifier_private_saves_rule_taints_and_does_not_repeat():
     plugin = load_plugin()
     bind_owner(plugin)
@@ -299,6 +356,63 @@ def test_llm_source_classifier_reference_saves_rule_and_relaxes_mcp_read():
     assert tools[0]["source"] == "reference"
     assert tools[0]["taints"] == []
     assert len(plugin.state._PLUGIN_LLM.calls) == 1
+
+
+def test_llm_source_classifier_public_saves_rule_and_does_not_taint():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin.state._PLUGIN_LLM = SourceFakeLLM(
+        {
+            "source": "public",
+            "taints": ["documents"],
+            "confidence": "high",
+            "rationale": "tool metadata implies current time",
+        }
+    )
+
+    plugin._on_transform_tool_result(
+        tool_name="mcp_google_workspace_time_getcurrenttime",
+        result="2026-06-15T12:00:00Z",
+        session_id="llm-public",
+    )
+    plugin._on_transform_tool_result(
+        tool_name="mcp_google_workspace_time_getcurrenttime",
+        result="client jane.doe@gmail.com",
+        session_id="llm-public-again",
+    )
+
+    assert plugin._session_taint("llm-public") == set()
+    assert plugin._session_taint("llm-public-again") == set()
+    tools = plugin._reading_tools()
+    assert len(tools) == 1
+    assert tools[0]["match"] == "mcp_google_workspace_time_getcurrenttime"
+    assert tools[0]["source"] == "public"
+    assert tools[0]["taints"] == []
+    assert len(plugin.state._PLUGIN_LLM.calls) == 1
+
+
+def test_llm_source_classifier_public_requires_high_confidence():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin.state._PLUGIN_LLM = SourceFakeLLM(
+        {
+            "source": "public",
+            "taints": [],
+            "confidence": "medium",
+            "rationale": "tool metadata weakly implies current time",
+        }
+    )
+
+    plugin._on_transform_tool_result(
+        tool_name="mcp_google_workspace_time_getcurrenttime",
+        result="2026-06-15T12:00:00Z",
+        session_id="llm-public-medium",
+    )
+
+    tools = plugin._reading_tools()
+    assert len(tools) == 1
+    assert tools[0]["source"] == "unknown"
+    assert plugin._session_taint("llm-public-medium") == set()
 
 
 def test_llm_source_classifier_unknown_saves_rule_and_preserves_fallback():
@@ -393,6 +507,20 @@ def test_source_reference_does_not_override_known_private_source_names():
     )
 
     assert plugin._session_taint("gmail") == {"communications"}
+
+
+def test_source_public_does_not_override_known_private_source_names():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    assert plugin._set_reading_tool("mcp_gmail_*", source="public")[0]
+
+    plugin._on_transform_tool_result(
+        tool_name="mcp_gmail_read_resource",
+        result="2026-06-15T12:00:00Z",
+        session_id="gmail-public",
+    )
+
+    assert plugin._session_taint("gmail-public") == {"communications"}
 
 
 def test_declared_reference_relaxes_to_placeholder_tolerant_scan():

@@ -142,6 +142,8 @@ def test_set_override_rejects_invalid_egress_and_classes():
     assert not ok and "egress must be one of" in message
     ok, message = plugin._set_reading_tool("x", taints=["notaclass"])
     assert not ok and "Unknown data class" in message
+    ok, message = plugin._set_reading_tool("clock_*", source="public", taints=["contacts"])
+    assert not ok and "source=public cannot be combined with taints" in message
 
 
 def test_set_taint_classification_mode_rejects_invalid():

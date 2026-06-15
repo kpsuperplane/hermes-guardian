@@ -337,12 +337,14 @@ signalless reads may be classified by the configured LLM using metadata only (to
 name, matcher shape, argument keys/types, status, result type/size, and JSON keys).
 The result is persisted as an ordinary Reading tool classification so the same
 tool matcher is not reviewed again. The classifier never receives result content
-or raw argument values.
+or raw argument values. `public` requires high confidence from metadata that the
+tool cannot return private user/workspace data.
 
 `privacy.reading_tools` is the user-managed source-classification registry. Each
 entry has a `match` (exact tool name or a single trailing-`*` prefix), optional
 `taints` (source classes applied when the tool's result is observed), and optional
-`source` (`reference`, `private`, or `unknown`). `unknown` is a remembered
+`source` (`reference`, `private`, `public`, or `unknown`). `public` never
+privacy-taints from that read and must not carry taints. `unknown` is a remembered
 unresolved state; it suppresses repeated review but does not relax fallback taint
 behavior.
 
@@ -455,8 +457,9 @@ Keep `dashboard/plugin_api.py` as a thin adapter:
 - It should require explicit confirmation for the weakening actions: Egress Safety
   `off` (`egress-safety-off`), global wildcard allow rules (`wildcard-allow`),
   Taint Classification `relaxed` (`taint-classification-relaxed`),
-  Sharing `egress:ignore` tool classifications (`tool-ignore`), and enabling cron context
-  (`cron-context-on`).
+  Sharing `egress:ignore` tool classifications (`tool-ignore`), Reading
+  `source:reference` / `source:public` classifications (`source-reference` /
+  `source-public`), and enabling cron context (`cron-context-on`).
 - Reading/Sharing tool-classification, Taint Classification, and LLM-context routes
   (`POST /reading/tools`, `PATCH /reading/tools/{id}`, `DELETE /reading/tools/{id}`,
   `POST /sharing/tools`, `PATCH /sharing/tools/{id}`, `DELETE /sharing/tools/{id}`,

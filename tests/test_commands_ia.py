@@ -111,6 +111,10 @@ def test_reading_source_command_replaces_protection_source():
     out = plugin._handle_guardian_command("reading source set crm reference")
     assert "crm" in out
     assert plugin._reading_tool_for("crm_read_resource").get("source") == "reference"
+    plugin._remember_command_owner("reading source set time public", plugin._CLI_OWNER_HASH)
+    out = plugin._handle_guardian_command("reading source set time public")
+    assert "time" in out
+    assert plugin._reading_tool_for("time_read_resource").get("source") == "public"
 
 
 def test_protection_language_packs_replaces_language_packs_and_reuses_handler():
@@ -152,6 +156,9 @@ def test_review_maps_privacy_setters_and_old_privacy_name_is_gone():
     plugin._remember_command_owner("reading tool set crm_* source=unknown", plugin._CLI_OWNER_HASH)
     assert "Saved Reading tool" in plugin._handle_guardian_command("reading tool set crm_* source=unknown")
     assert plugin._reading_tools()[0]["source"] == "unknown"
+    plugin._remember_command_owner("reading tool set clock_* source=public", plugin._CLI_OWNER_HASH)
+    assert "Saved Reading tool" in plugin._handle_guardian_command("reading tool set clock_* source=public")
+    assert plugin._reading_tool_for("clock_now")["source"] == "public"
     review_out = plugin._handle_guardian_command("review unknown-tools gate")
     assert plugin._taint_classification_mode() == "relaxed"
     assert "unknown-tools" not in review_out

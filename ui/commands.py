@@ -52,7 +52,7 @@ _GUARDIAN_HELP_LINES = [
     "- `/guardian reading llm-source-classification on|off`",
     "- `/guardian reading tool set|delete|enable|disable <match> ...`",
     "- `/guardian reading tools`",
-    "- `/guardian reading source suggest|set <server> reference|private|unknown`",
+    "- `/guardian reading source suggest|set <server> reference|private|public|unknown`",
     "",
     "SHARING — what you've authorized to leave you",
     "- `/guardian sharing` — show trusted destinations + rules + outward-sharing",
@@ -1193,7 +1193,7 @@ def _guardian_reading_command(owner_hash: str, tokens: list[str]) -> str:
         "`/guardian reading llm-source-classification on|off` | "
         "`/guardian reading tool set|delete|enable|disable ...` | "
         "`/guardian reading tools` | "
-        "`/guardian reading source suggest|set <server> reference|private|unknown`"
+        "`/guardian reading source suggest|set <server> reference|private|public|unknown`"
     )
 
 
@@ -1235,13 +1235,13 @@ def _guardian_source_command(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[2].lower() if len(tokens) > 2 else ""
     usage = (
         "Usage: `/guardian reading source suggest` | "
-        "`/guardian reading source set <server> reference|private|unknown`"
+        "`/guardian reading source set <server> reference|private|public|unknown`"
     )
     if sub == "suggest":
         suggestions = rules_mod._source_classification_suggestions()
         if not suggestions:
             return "No undeclared MCP doc-read sources seen yet."
-        lines = ["🛡️ **Sources seen** · `/guardian reading source set <server> reference|private|unknown`"]
+        lines = ["🛡️ **Sources seen** · `/guardian reading source set <server> reference|private|public|unknown`"]
         for item in suggestions:
             lines.append(f"- `{item['server']}` ({item['hits']}×)")
         return "\n".join(lines)
@@ -1275,7 +1275,7 @@ def _guardian_reading_overview() -> str:
         lines.append(
             "Sources seen:\n"
             + "\n".join(f"- {item['server']} ({item['hits']} read(s) seen)" for item in suggestions)
-            + "\nUse /guardian reading source set <server> reference|private|unknown."
+            + "\nUse /guardian reading source set <server> reference|private|public|unknown."
         )
     else:
         lines.append("Sources seen: none awaiting classification.")
@@ -1446,7 +1446,7 @@ def _guardian_tool_command(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     usage = (
         "Usage: `/guardian reading tool set <match> [taints=a+b] "
-        "[source=reference|private|unknown] [note=<text>]` | "
+        "[source=reference|private|public|unknown] [note=<text>]` | "
         "`/guardian reading tool delete <match_or_id>` | "
         "`/guardian reading tool enable|disable <id_or_match>`"
     )

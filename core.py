@@ -530,7 +530,7 @@ _LLM_SOURCE_CLASSIFICATION_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "source": {"type": "string", "enum": ["reference", "private", "unknown"]},
+        "source": {"type": "string", "enum": ["reference", "private", "public", "unknown"]},
         "taints": {
             "type": "array",
             "items": {"type": "string", "enum": sorted(_ALL_PRIVACY_CLASSES)},
@@ -553,14 +553,17 @@ Return a Reading source classification:
 - private: high confidence the tool reads personal/private user data such as mail,
   messages, contacts, calendar, memory, notes, documents, files, workspace records,
   account data, or local/private system state.
+- public: high confidence from tool name and metadata shape that the tool cannot return
+  private user/workspace data. Use this only for narrow metadata/fact tools such as
+  current time, static version checks, or similarly public/non-user reads.
 - unknown: anything uncertain, ambiguous, generic, or only weakly implied.
 
 Use taints only for private when the metadata strongly indicates specific classes.
-If private but the class is unclear, use ["documents"]. For reference or unknown,
-return an empty taints list.
+If private but the class is unclear, use ["documents"]. For reference, public, or
+unknown, return an empty taints list.
 
-Prefer unknown over guessing. Never classify reference merely because the result
-had no detectable private structure; you cannot see the result content.
+Prefer unknown over guessing. Never classify reference or public merely because the
+result had no detectable private structure; you cannot see the result content.
 
 Keep the rationale short, sanitized, and metadata-only. Do not invent content.
 Return only the requested JSON classification."""

@@ -316,7 +316,14 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       setOverrideFormError("Provide a tool name or prefix (e.g. mcp_acme_*).");
       return;
     }
-    const readingPayload = {
+    const readingPayload: {
+      match: string;
+      source: string;
+      taints: string[];
+      note: string;
+      enabled: boolean;
+      confirm?: string;
+    } = {
       match: current.match,
       source: current.source || "",
       taints: current.taints || [],
@@ -348,6 +355,30 @@ export function useGuardianActions(deps: GuardianActionDeps) {
         return;
       }
       sharingPayload.confirm = "tool-ignore";
+    }
+    if (toolFormKind === "reading" && current.source === "reference") {
+      if (
+        !window.confirm(
+          "Treat reads from '" +
+            current.match +
+            "' as reference material? Their content will be scanned leniently (placeholder-tolerant).",
+        )
+      ) {
+        return;
+      }
+      readingPayload.confirm = "source-reference";
+    }
+    if (toolFormKind === "reading" && current.source === "public") {
+      if (
+        !window.confirm(
+          "Treat reads from '" +
+            current.match +
+            "' as public? Guardian will not privacy-taint from this tool's results.",
+        )
+      ) {
+        return;
+      }
+      readingPayload.confirm = "source-public";
     }
     setOverrideFormError("");
     api(toolFormKind === "reading" ? "/reading/tools" : "/sharing/tools", {
@@ -428,7 +459,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       });
   }
 
-  function classifySource(server: string, mode: "reference" | "private" | "unknown") {
+  function classifySource(server: string, mode: "reference" | "private" | "public" | "unknown") {
     const body: { server: string; source: string; confirm?: string } = { server, source: mode };
     if (mode === "reference") {
       if (
@@ -441,6 +472,18 @@ export function useGuardianActions(deps: GuardianActionDeps) {
         return;
       }
       body.confirm = "source-reference";
+    }
+    if (mode === "public") {
+      if (
+        !window.confirm(
+          "Treat reads from '" +
+            server +
+            "' as public? Guardian will not privacy-taint from this source's results.",
+        )
+      ) {
+        return;
+      }
+      body.confirm = "source-public";
     }
     api("/reading/source-classification", { method: "POST", body: JSON.stringify(body) })
       .then((result) => {

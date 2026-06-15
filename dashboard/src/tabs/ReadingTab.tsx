@@ -21,7 +21,7 @@ export interface ReadingTabProps {
   onChangeLlmSourceClassification: (enabled: boolean) => void;
   sourceSuggestions: SourceSuggestion[];
   onLoadSourceSuggestions: () => void;
-  onClassifySource: (server: string, mode: "reference" | "private" | "unknown") => void;
+  onClassifySource: (server: string, mode: "reference" | "private" | "public" | "unknown") => void;
 }
 
 function ToolClassification(props: {
@@ -209,7 +209,7 @@ function ToolClassification(props: {
 function SourcesSeen(props: {
   suggestions: SourceSuggestion[];
   onLoad: () => void;
-  onClassify: (server: string, mode: "reference" | "private" | "unknown") => void;
+  onClassify: (server: string, mode: "reference" | "private" | "public" | "unknown") => void;
 }) {
   useEffect(() => {
     props.onLoad();
@@ -222,8 +222,8 @@ function SourcesSeen(props: {
       <div className="hermes-guardian-muted hermes-guardian-section-description">
         Guardian saw document reads from these MCP servers and tainted them conservatively
         because their provenance is undeclared. Classify each: reference material is scanned
-        leniently (placeholder-tolerant); personal data always taints; unknown remembers that
-        provenance is unresolved.
+        leniently (placeholder-tolerant); personal data always taints; public never privacy-taints;
+        unknown remembers that provenance is unresolved.
       </div>
       <div className="hermes-guardian-grid">
         {props.suggestions.map((item) => (
@@ -240,6 +240,9 @@ function SourcesSeen(props: {
               </Button>
               <Button variant="secondary" onClick={() => props.onClassify(item.server, "private")}>
                 Personal data
+              </Button>
+              <Button variant="secondary" onClick={() => props.onClassify(item.server, "public")}>
+                Public
               </Button>
               <Button variant="secondary" onClick={() => props.onClassify(item.server, "unknown")}>
                 Unknown

@@ -60,10 +60,11 @@ _SHARING_TOOL_EGRESS_FAMILIES = {
 _SHARING_TOOL_EGRESS_VALUES = {"ignore", "gate"} | _SHARING_TOOL_EGRESS_FAMILIES
 # Source-provenance classification mode for a doc-read tool. `reference` routes reads
 # through the placeholder-tolerant relaxed scan (operator-installed reference material);
-# `private` always taints the read as personal data. Empty means "use the tiered default"
-# (provenance for reference reads, conservative for undeclared MCP doc-reads). For an MCP
-# server, declare the whole server at once with a prefix match (e.g. match = "crm_*").
-_READING_TOOL_SOURCES = {"reference", "private", "unknown"}
+# `private` always taints the read as personal data; `public` never privacy-taints from
+# the read. Empty means "use the tiered default" (provenance for reference reads,
+# conservative for undeclared MCP doc-reads). For an MCP server, declare the whole server
+# at once with a prefix match (e.g. match = "crm_*").
+_READING_TOOL_SOURCES = {"reference", "private", "public", "unknown"}
 # Env vars that override the named `retention` / `dashboard` config blocks (doc 03
 # §1.2). The document is the source of truth; these env vars remain readable as ops
 # overrides and are surfaced in `/guardian status` so they are never invisible.
@@ -338,6 +339,12 @@ def _normalize_reading_tool(entry: Any) -> dict[str, Any] | None:
             "%s: ignoring unknown reading tool source %r (expected one of: %s).",
             core._PLUGIN_NAME, source_raw, ", ".join(sorted(_READING_TOOL_SOURCES)),
         )
+    if source == "public" and taints:
+        core.logger.warning(
+            "%s: ignoring public reading tool %r with taints; public sources cannot apply privacy classes.",
+            core._PLUGIN_NAME, match,
+        )
+        return None
     note = re.sub(r"\s+", " ", str(entry.get("note") or "")).strip()[:200]
     override_id = str(entry.get("id") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", override_id):
@@ -1530,7 +1537,7 @@ def _set_reading_tool(
     if source is not None:
         source_text = str(source).strip().lower()
         if source_text and source_text not in _READING_TOOL_SOURCES:
-            return False, "source must be one of: reference, private, unknown."
+            return False, "source must be one of: reference, private, public, unknown."
     if taints is not None:
         requested = taints if isinstance(taints, list) else [taints]
         invalid = [
@@ -1543,6 +1550,12 @@ def _set_reading_tool(
     overrides = _reading_tools()
     existing = next((o for o in overrides if o.get("match") == normalized_match), None)
     payload = dict(existing) if existing else {"match": normalized_match}
+    candidate_source = str(source if source is not None else payload.get("source") or "").strip().lower()
+    candidate_taints = taints if taints is not None else payload.get("taints", [])
+    if candidate_source == "public":
+        requested_taints = candidate_taints if isinstance(candidate_taints, list) else [candidate_taints]
+        if any(str(cls).strip() for cls in requested_taints):
+            return False, "source=public cannot be combined with taints."
     payload["match"] = normalized_match
     if taints is not None:
         payload["taints"] = taints
@@ -1935,7 +1948,7 @@ def _set_source_classification(server: str, mode: str) -> tuple[bool, str]:
     if not name:
         return False, "Provide an MCP server prefix (e.g. crm)."
     if str(mode or "").strip().lower() not in _READING_TOOL_SOURCES:
-        return False, "Mode must be one of: reference, private, unknown."
+        return False, "Mode must be one of: reference, private, public, unknown."
     return _set_reading_tool(f"{name}_*", source=str(mode).strip().lower())
 
 

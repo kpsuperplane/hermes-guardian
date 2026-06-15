@@ -919,6 +919,7 @@ def _confirmation_gate_invokers(api):
         "taint-classification-relaxed": lambda: api.set_taint_classification(req, {"mode": "relaxed"}),
         "tool-ignore": lambda: api.create_sharing_tool(req, {"match": "acme_*", "egress": "ignore"}),
         "source-reference": lambda: api.classify_source(req, {"tool_name": "acme_read", "source": "reference"}),
+        "source-public": lambda: api.create_reading_tool(req, {"match": "clock_*", "source": "public"}),
     }
 
 
@@ -931,3 +932,20 @@ def test_weakening_action_requires_confirmation(monkeypatch, action):
     with pytest.raises(api.HTTPException) as exc:
         asyncio.run(invoke())
     assert exc.value.status_code == 400
+
+
+def test_dashboard_can_create_public_reading_tool_with_confirmation(monkeypatch):
+    api = _load_plugin_api()
+    monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_ADMIN_TOKEN", raising=False)
+    monkeypatch.delenv("HERMES_GUARDIAN_DASHBOARD_MUTATIONS", raising=False)
+
+    response = asyncio.run(
+        api.create_reading_tool(
+            _request({}),
+            {"match": "clock_*", "source": "public", "confirm": "source-public"},
+        )
+    )
+
+    assert response.status_code == 200
+    tools = response.content["policy"]["reading_tools"]
+    assert any(tool["match"] == "clock_*" and tool["source"] == "public" for tool in tools)

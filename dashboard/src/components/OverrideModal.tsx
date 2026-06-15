@@ -34,9 +34,14 @@ export function OverrideModal({
     policy.tool_name_suggestions || (policy.suggestions && policy.suggestions.tool_names) || [];
   const taintSet = new Set(form.taints || []);
   const concreteEgress = form.egress && form.egress !== "ignore" && form.egress !== "gate";
+  const publicSource = isReading && form.source === "public";
 
   function update<K extends keyof OverrideForm>(key: K, value: OverrideForm[K]) {
-    setForm(Object.assign({}, form, { [key]: value }));
+    const next = Object.assign({}, form, { [key]: value });
+    if (key === "source" && value === "public") {
+      next.taints = [];
+    }
+    setForm(next);
   }
 
   function toggleTaint(cls: string) {
@@ -136,6 +141,7 @@ export function OverrideModal({
                   <option value="">Default</option>
                   <option value="reference">Reference material</option>
                   <option value="private">Personal data</option>
+                  <option value="public">Public</option>
                   <option value="unknown">Unknown</option>
                 </select>
               </Field>
@@ -144,12 +150,18 @@ export function OverrideModal({
           {isReading ? (
             <div className="hermes-guardian-field">
               Taints applied when this tool's results are read
+              {publicSource ? (
+                <div className="hermes-guardian-muted">
+                  Public sources do not apply privacy taints.
+                </div>
+              ) : null}
               <div className="hermes-guardian-check-grid">
                 {allClasses.map((cls) => (
                   <label key={cls} className="hermes-guardian-check">
                     <input
                       type="checkbox"
                       checked={taintSet.has(cls)}
+                      disabled={publicSource}
                       onChange={() => toggleTaint(cls)}
                     />
                     {cls}
