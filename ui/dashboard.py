@@ -201,6 +201,11 @@ def _dashboard_llm_source_classification_action(enabled: Any) -> tuple[dict[str,
     return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
+def _dashboard_llm_source_classifier_model_action(model: Any) -> tuple[dict[str, Any], int]:
+    ok, message = rules_mod._set_llm_source_classifier_model(str(model or ""))
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
+
+
 def _dashboard_llm_user_context_action(enabled: Any) -> tuple[dict[str, Any], int]:
     ok, message = rules_mod._set_llm_user_context(rules_mod._config_bool(enabled, default=rules_mod._DEFAULT_LLM_USER_CONTEXT))
     return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400

@@ -156,6 +156,9 @@ def test_sharing_maps_egress_setters_and_old_privacy_review_names_are_gone():
     plugin._remember_command_owner("reading llm-source-classification off", plugin._CLI_OWNER_HASH)
     plugin._handle_guardian_command("reading llm-source-classification off")
     assert plugin._llm_source_classification_enabled() is False
+    plugin._remember_command_owner("reading source-model gpt-5.4-flash", plugin._CLI_OWNER_HASH)
+    plugin._handle_guardian_command("reading source-model gpt-5.4-flash")
+    assert plugin._llm_source_classifier_model() == "gpt-5.4-flash"
     plugin._remember_command_owner("reading tool set crm_* source=unknown", plugin._CLI_OWNER_HASH)
     assert "Saved Reading tool" in plugin._handle_guardian_command("reading tool set crm_* source=unknown")
     assert plugin._reading_tools()[0]["source"] == "unknown"

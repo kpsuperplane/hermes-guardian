@@ -41,6 +41,8 @@ export function GuardianPage() {
     setTaintClassification,
     llmSourceClassification,
     setLlmSourceClassification,
+    llmSourceClassifierModel,
+    setLlmSourceClassifierModel,
     llmUserContext,
     setLlmUserContext,
     llmCronContext,
@@ -65,6 +67,8 @@ export function GuardianPage() {
     setTaintClassification,
     llmSourceClassification,
     setLlmSourceClassification,
+    llmSourceClassifierModel,
+    setLlmSourceClassifierModel,
     llmUserContext,
     setLlmUserContext,
     llmCronContext,
@@ -193,6 +197,9 @@ export function GuardianPage() {
           llmSourceClassification={llmSourceClassification}
           llmSourceClassificationSaving={actions.llmSourceClassificationSaving}
           onChangeLlmSourceClassification={actions.saveLlmSourceClassification}
+          llmSourceClassifierModel={llmSourceClassifierModel}
+          sourceClassifierModelSaving={actions.sourceClassifierModelSaving}
+          onChangeSourceClassifierModel={actions.saveSourceClassifierModel}
           sourceSuggestions={actions.sourceSuggestions}
           onLoadSourceSuggestions={actions.loadSourceSuggestions}
           onClassifySource={actions.classifySource}

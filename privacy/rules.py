@@ -31,6 +31,7 @@ _DEFAULT_LLM_SOURCE_CLASSIFICATION = True
 # manual approval in the verifier path.
 _DEFAULT_LLM_USER_CONTEXT = True
 _DEFAULT_LLM_CRON_CONTEXT = True
+_DEFAULT_LLM_SOURCE_CLASSIFIER_MODEL = ""
 # Opt-in debugging: persist the (already-sanitized) user/cron prompt onto activity rows
 # so dashboard history groups can show what was asked. Default OFF — it relaxes the
 # "prompt is never persisted" invariant, so it is confirmation-gated on every surface.
@@ -170,6 +171,7 @@ def _default_privacy_config() -> dict[str, Any]:
             "egress_safety": _DEFAULT_EGRESS_SAFETY,
             "taint_classification": _DEFAULT_TAINT_CLASSIFICATION,
             "llm_source_classification": _DEFAULT_LLM_SOURCE_CLASSIFICATION,
+            "llm_source_classifier_model": _DEFAULT_LLM_SOURCE_CLASSIFIER_MODEL,
             "llm_user_context": _DEFAULT_LLM_USER_CONTEXT,
             "llm_cron_context": _DEFAULT_LLM_CRON_CONTEXT,
             "llm_verifier_model": _DEFAULT_LLM_VERIFIER_MODEL,
@@ -893,6 +895,9 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
                 reading.get("llm_source_classification"),
                 default=_DEFAULT_LLM_SOURCE_CLASSIFICATION,
             ),
+            "llm_source_classifier_model": _normalize_verifier_model(
+                reading.get("source_model")
+            ),
             "llm_user_context": _config_bool(
                 sharing.get("owner_context"), default=_DEFAULT_LLM_USER_CONTEXT
             ),
@@ -954,6 +959,8 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
             reading.get("llm_source_classification"), (bool, int, str)
         ):
             raise ValueError("privacy rule file has invalid reading.llm_source_classification")
+        if "source_model" in reading and not isinstance(reading.get("source_model"), str):
+            raise ValueError("privacy rule file has invalid reading.source_model")
         for index, entry in enumerate(reading.get("tools") or []):
             if isinstance(entry, dict):
                 for mixed_key in ("egress", "destination", "direction"):
@@ -1046,6 +1053,9 @@ def _normalize_internal_config(data: Any) -> dict[str, Any]:
                 privacy.get("llm_source_classification"),
                 default=_DEFAULT_LLM_SOURCE_CLASSIFICATION,
             ),
+            "llm_source_classifier_model": _normalize_verifier_model(
+                privacy.get("llm_source_classifier_model")
+            ),
             "llm_user_context": _config_bool(
                 privacy.get("llm_user_context"), default=_DEFAULT_LLM_USER_CONTEXT
             ),
@@ -1105,6 +1115,9 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
             "llm_source_classification": _config_bool(
                 privacy.get("llm_source_classification"),
                 default=_DEFAULT_LLM_SOURCE_CLASSIFICATION,
+            ),
+            "source_model": _normalize_verifier_model(
+                privacy.get("llm_source_classifier_model")
             ),
             "tools": list(privacy.get("reading_tools") or []),
         },
@@ -1327,6 +1340,28 @@ def _set_llm_source_classification(enabled: bool) -> tuple[bool, str]:
     return True, f"LLM source classification {'enabled' if enabled else 'disabled'}."
 
 
+def _llm_source_classifier_model() -> str:
+    return _normalize_verifier_model(
+        _load_privacy_config().get("privacy", {}).get("llm_source_classifier_model")
+    )
+
+
+def _set_llm_source_classifier_model(model: str) -> tuple[bool, str]:
+    normalized = _normalize_verifier_model(model)
+    data = _load_privacy_config()
+    privacy = dict(data.get("privacy") or {})
+    privacy["llm_source_classifier_model"] = normalized
+    if not _save_privacy_config(_config_for_save(data, privacy=privacy)):
+        return False, "Failed to save source classifier model; Guardian remains unchanged."
+    if normalized:
+        return True, (
+            f"LLM source classifier model set to {normalized}. Requires "
+            "plugins.entries.hermes-guardian.llm.allow_model_override in config; "
+            "Guardian falls back to the default model if the override is rejected."
+        )
+    return True, "LLM source classifier model cleared (using the Hermes default model)."
+
+
 def _llm_user_context_enabled() -> bool:
     return _config_bool(
         _load_privacy_config().get("privacy", {}).get("llm_user_context"),
@@ -1472,6 +1507,14 @@ def _discover_verifier_model_options() -> list[str]:
 def _verifier_model_options() -> list[str]:
     options = _discover_verifier_model_options()
     current = _llm_verifier_model()
+    if current and current not in options:
+        options.append(current)
+    return options
+
+
+def _source_classifier_model_options() -> list[str]:
+    options = _discover_verifier_model_options()
+    current = _llm_source_classifier_model()
     if current and current not in options:
         options.append(current)
     return options

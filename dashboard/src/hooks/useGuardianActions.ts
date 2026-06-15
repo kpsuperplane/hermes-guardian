@@ -25,6 +25,8 @@ export interface GuardianActionDeps {
   setTaintClassification: (mode: string) => void;
   llmSourceClassification: boolean;
   setLlmSourceClassification: (enabled: boolean) => void;
+  llmSourceClassifierModel: string;
+  setLlmSourceClassifierModel: (model: string) => void;
   llmUserContext: boolean;
   setLlmUserContext: (enabled: boolean) => void;
   llmCronContext: boolean;
@@ -61,6 +63,8 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     setTaintClassification,
     llmSourceClassification,
     setLlmSourceClassification,
+    llmSourceClassifierModel,
+    setLlmSourceClassifierModel,
     llmUserContext,
     setLlmUserContext,
     llmCronContext,
@@ -77,6 +81,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
   const [languagePacksSaving, setLanguagePacksSaving] = useState(false);
   const [taintClassificationSaving, setTaintClassificationSaving] = useState(false);
   const [llmSourceClassificationSaving, setLlmSourceClassificationSaving] = useState(false);
+  const [sourceClassifierModelSaving, setSourceClassifierModelSaving] = useState(false);
   const [userContextSaving, setUserContextSaving] = useState(false);
   const [cronContextSaving, setCronContextSaving] = useState(false);
   const [persistPromptsSaving, setPersistPromptsSaving] = useState(false);
@@ -168,6 +173,24 @@ export function useGuardianActions(deps: GuardianActionDeps) {
         showToast(errText(err), "error");
       })
       .finally(() => setLlmSourceClassificationSaving(false));
+  }
+
+  function saveSourceClassifierModel(nextModel: string) {
+    const model = text(nextModel).trim();
+    if (model === (llmSourceClassifierModel || "")) return;
+    const previous = llmSourceClassifierModel;
+    setLlmSourceClassifierModel(model);
+    setSourceClassifierModelSaving(true);
+    api("/reading/source-model", { method: "POST", body: JSON.stringify({ model }) })
+      .then((payload) => {
+        showToast(payload.message || "Saved.");
+        return load();
+      })
+      .catch((err) => {
+        setLlmSourceClassifierModel(previous);
+        showToast(errText(err), "error");
+      })
+      .finally(() => setSourceClassifierModelSaving(false));
   }
 
   function saveUserContext(enabled: boolean) {
@@ -715,6 +738,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     modeSaving,
     taintClassificationSaving,
     llmSourceClassificationSaving,
+    sourceClassifierModelSaving,
     userContextSaving,
     cronContextSaving,
     verifierModelSaving,
@@ -737,6 +761,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     saveMode,
     saveTaintClassification,
     saveLlmSourceClassification,
+    saveSourceClassifierModel,
     saveUserContext,
     saveCronContext,
     savePersistPrompts,

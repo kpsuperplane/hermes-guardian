@@ -32,22 +32,31 @@ def test_verifier_model_default_empty_and_set_clear(tmp_path):
     plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin.state._PERSISTENT_RULES_CACHE = None
     assert plugin._llm_verifier_model() == ""
+    assert plugin._llm_source_classifier_model() == ""
 
     assert plugin._set_llm_verifier_model("gpt-5.4-mini")[0]
     assert plugin._llm_verifier_model() == "gpt-5.4-mini"
+    assert plugin._set_llm_source_classifier_model("gpt-5.4-flash")[0]
+    assert plugin._llm_source_classifier_model() == "gpt-5.4-flash"
     # Survives an unrelated mutation.
     assert plugin._set_taint_classification_mode("relaxed")[0]
     assert plugin._llm_verifier_model() == "gpt-5.4-mini"
+    assert plugin._llm_source_classifier_model() == "gpt-5.4-flash"
 
     assert plugin._set_llm_verifier_model("none")[0]
     assert plugin._llm_verifier_model() == ""
+    assert plugin._set_llm_source_classifier_model("default")[0]
+    assert plugin._llm_source_classifier_model() == ""
 
 
 def test_verifier_model_normalizes_and_snapshot_exposes_it():
     plugin = load_plugin()
     plugin._set_llm_verifier_model("  weird model!! ")
+    plugin._set_llm_source_classifier_model("  source model!! ")
     assert plugin._llm_verifier_model() == "weirdmodel"
+    assert plugin._llm_source_classifier_model() == "sourcemodel"
     assert plugin._policy_snapshot()["llm_verifier_model"] == "weirdmodel"
+    assert plugin._policy_snapshot()["llm_source_classifier_model"] == "sourcemodel"
 
 
 # --- passthrough + fail-safe ----------------------------------------------
@@ -178,7 +187,9 @@ def test_options_come_from_allowed_models(tmp_path, monkeypatch):
     )
     plugin = load_plugin()
     assert plugin._verifier_model_options() == ["gpt-5.4-mini", "gpt-5.5"]
+    assert plugin._source_classifier_model_options() == ["gpt-5.4-mini", "gpt-5.5"]
     assert plugin._policy_snapshot()["llm_verifier_model_options"] == ["gpt-5.4-mini", "gpt-5.5"]
+    assert plugin._policy_snapshot()["llm_source_classifier_model_options"] == ["gpt-5.4-mini", "gpt-5.5"]
 
 
 def test_wildcard_grant_suggests_known_install_models(tmp_path, monkeypatch):
@@ -201,7 +212,9 @@ def test_current_model_always_in_options(tmp_path, monkeypatch):
     _write_config(tmp_path, "plugins:\n  enabled: [hermes-guardian]\n")  # no grant -> base options []
     plugin = load_plugin()
     plugin._set_llm_verifier_model("gpt-5.4-mini")
+    plugin._set_llm_source_classifier_model("gpt-5.4-flash")
     assert "gpt-5.4-mini" in plugin._verifier_model_options()
+    assert "gpt-5.4-flash" in plugin._source_classifier_model_options()
 
 
 def test_missing_or_unreadable_config_yields_no_options(tmp_path, monkeypatch):

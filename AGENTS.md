@@ -251,6 +251,7 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
   "reading": {
     "taint_classification": "balanced",
     "llm_source_classification": true,
+    "source_model": "",
     "tools": [
       {
         "id": "source_tool_ab12cd34",
@@ -299,8 +300,9 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
 ```
 
 Internally, `privacy/rules.py` consumes a normalized in-memory structure
-(`privacy.{egress_safety,taint_classification,llm_source_classification,llm_user_context,
-llm_cron_context,llm_verifier_model,rules,reading_tools,sharing_tools}`, `self`, `trusted_recipients`,
+(`privacy.{egress_safety,taint_classification,llm_source_classification,
+llm_source_classifier_model,llm_user_context,llm_cron_context,llm_verifier_model,
+rules,reading_tools,sharing_tools}`, `self`, `trusted_recipients`,
 `outward_sharing`, `security.rules`, `language_packs.enabled`, `retention`,
 `dashboard`); these internal keys are what the engine and mutators use.
 `_normalize_privacy_config` parses the v4 file into that structure,
@@ -310,7 +312,8 @@ only ever see the internal structure.
 The file→internal map (doc 04 §3): `whats_yours.stores/.identities/.hosts`
 → `self.destinations/.identities/.hosts`; `reading.taint_classification` →
 `privacy.taint_classification`; `reading.llm_source_classification` →
-`privacy.llm_source_classification`; `reading.tools` → `privacy.reading_tools`;
+`privacy.llm_source_classification`; `reading.source_model` →
+`privacy.llm_source_classifier_model`; `reading.tools` → `privacy.reading_tools`;
 `sharing.trusted_recipients` →
 `trusted_recipients.entries`; `sharing.rules` → `privacy.rules`;
 `sharing.tools` → `privacy.sharing_tools`;
@@ -365,23 +368,28 @@ channels. They are normalized by `_config_bool` and exposed through
 `_llm_user_context_enabled` / `_llm_cron_context_enabled` and the
 `_set_llm_user_context` / `_set_llm_cron_context` setters.
 
-`privacy.llm_verifier_model` (default `""`) optionally pins the llm-mode verifier
-to a faster model than the agent's, passed to `complete_structured(model=...)`.
-Hermes gates per-plugin model selection, so it only takes effect when the operator
-sets `plugins.entries.hermes-guardian.llm.allow_model_override: true` in
-`config.yaml`. `_llm_security_verdict` is fail-safe: if the override is rejected or
-the model errors, it retries once on the default model rather than failing closed.
-The dashboard renders this as a dropdown: `_verifier_model_options` best-effort
-reads the operator's `allowed_models` for this plugin from `$HERMES_HOME/config.yaml`
-(optional PyYAML, guarded; only model strings are extracted, nothing is stored) and
-the snapshot exposes them as `llm_verifier_model_options`. No grant -> no options.
+`privacy.llm_source_classifier_model` and `privacy.llm_verifier_model` (both
+default `""`) optionally pin the metadata-only source classifier and the llm-mode
+egress verifier to faster models than the agent's, passed to
+`complete_structured(model=...)`. Hermes gates per-plugin model selection, so an
+override only takes effect when the operator sets
+`plugins.entries.hermes-guardian.llm.allow_model_override: true` in
+`config.yaml`. `_llm_source_classification` and `_llm_security_verdict` are
+fail-safe: if the override is rejected or the model errors, each retries once on
+the default model rather than failing closed. The dashboard renders both as
+dropdowns: `_source_classifier_model_options` and `_verifier_model_options`
+best-effort read the operator's `allowed_models` for this plugin from
+`$HERMES_HOME/config.yaml` (optional PyYAML, guarded; only model strings are
+extracted, nothing is stored) and the snapshot exposes them as
+`llm_source_classifier_model_options` / `llm_verifier_model_options`. No grant ->
+no options.
 Guardian also keeps a short-TTL, deny-only verdict cache (`_LLM_DENY_VERDICT_CACHE`)
 keyed by session+owner+fingerprint; only denials are cached, so a stale hit can
 never become a false allow.
 
 Rule mutation helpers must preserve privacy rules, security rule settings,
 `taint_classification`, the `llm_user_context` / `llm_cron_context` flags,
-`llm_verifier_model`, and Reading/Sharing tool classifications. This is covered by
+`llm_source_classifier_model`, `llm_verifier_model`, and Reading/Sharing tool classifications. This is covered by
 `tests/test_security_rules_config.py`, `tests/test_tool_overrides.py`,
 `tests/test_llm_context_settings.py`, and `tests/test_verifier_model.py`.
 
@@ -463,6 +471,7 @@ Keep `dashboard/plugin_api.py` as a thin adapter:
   `POST /sharing/tools`, `PATCH /sharing/tools/{id}`, `DELETE /sharing/tools/{id}`,
   `POST /reading/taint-classification`,
   `GET /reading/source-suggestions`, `POST /reading/source-classification`,
+  `POST /reading/source-model`,
   `POST /sharing/egress-safety`, `POST /sharing/owner-context`,
   `POST /sharing/cron-context`, `POST /sharing/verifier-model`) are thin adapters over the `privacy/rules.py`
   mutators, like the other `_dashboard_*` actions.

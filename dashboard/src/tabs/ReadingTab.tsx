@@ -19,6 +19,9 @@ export interface ReadingTabProps {
   llmSourceClassification: boolean;
   llmSourceClassificationSaving: boolean;
   onChangeLlmSourceClassification: (enabled: boolean) => void;
+  llmSourceClassifierModel: string;
+  sourceClassifierModelSaving: boolean;
+  onChangeSourceClassifierModel: (model: string) => void;
   sourceSuggestions: SourceSuggestion[];
   onLoadSourceSuggestions: () => void;
   onClassifySource: (server: string, mode: "reference" | "private" | "public" | "unknown") => void;
@@ -36,8 +39,12 @@ function ToolClassification(props: {
   llmSourceClassification: boolean;
   llmSourceClassificationSaving: boolean;
   onChangeLlmSourceClassification: (enabled: boolean) => void;
+  llmSourceClassifierModel: string;
+  sourceClassifierModelSaving: boolean;
+  onChangeSourceClassifierModel: (model: string) => void;
 }) {
   const rows = (props.policy && props.policy.reading_tool_inventory) || [];
+  const sourceModelOptions = (props.policy && props.policy.llm_source_classifier_model_options) || [];
   function rowPolicy(row: ToolInventoryRow): ReadingTool | null {
     return row.policy ? (row.policy as ReadingTool) : null;
   }
@@ -178,7 +185,9 @@ function ToolClassification(props: {
           allows unrecognized non-MCP tools under taint.
         </div>
         <div className="hermes-guardian-field">
-          <div className="hermes-guardian-rule-title">LLM source classifier</div>
+          <div className="hermes-guardian-card-title hermes-guardian-source-classifier-title">
+            LLM source classifier
+          </div>
           <label className="hermes-guardian-checkbox">
             <input
               type="checkbox"
@@ -191,6 +200,27 @@ function ToolClassification(props: {
           <div className="hermes-guardian-muted">
             Uses metadata only to save reference, private, or unknown source rules for future
             reads. Result content and raw argument values are not sent.
+          </div>
+          <div className="hermes-guardian-sharing-egress-control">
+            <select
+              className="hermes-guardian-select"
+              value={props.llmSourceClassifierModel || ""}
+              disabled={props.sourceClassifierModelSaving}
+              aria-label="LLM source classifier model"
+              onChange={(event) => props.onChangeSourceClassifierModel(event.target.value)}
+            >
+              <option value="">Default (agent model)</option>
+              {sourceModelOptions.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="hermes-guardian-muted">
+            Options come from this plugin's <Mono>allowed_models</Mono>; grant{" "}
+            <Mono>plugins.entries.hermes-guardian.llm.allow_model_override</Mono> to populate
+            them. Guardian falls back to the default model if an override is rejected.
           </div>
         </div>
       </div>
@@ -262,6 +292,9 @@ export function ReadingTab(props: ReadingTabProps) {
         llmSourceClassification={props.llmSourceClassification}
         llmSourceClassificationSaving={props.llmSourceClassificationSaving}
         onChangeLlmSourceClassification={props.onChangeLlmSourceClassification}
+        llmSourceClassifierModel={props.llmSourceClassifierModel}
+        sourceClassifierModelSaving={props.sourceClassifierModelSaving}
+        onChangeSourceClassifierModel={props.onChangeSourceClassifierModel}
       />
       <SourcesSeen
         suggestions={props.sourceSuggestions}

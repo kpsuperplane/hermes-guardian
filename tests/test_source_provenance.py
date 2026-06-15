@@ -351,6 +351,64 @@ def test_llm_source_classifier_persists_long_rationale_in_tool_note():
     assert len(note) > 1000
 
 
+def test_llm_source_classifier_uses_own_model_override():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._set_llm_source_classifier_model("gpt-5.4-flash")
+    plugin._set_llm_verifier_model("gpt-5.4-mini")
+    plugin.state._PLUGIN_LLM = SourceFakeLLM(
+        {
+            "source": "private",
+            "taints": ["memory"],
+            "confidence": "high",
+            "rationale": "tool metadata implies personal notes",
+        }
+    )
+
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note",
+        result=_SIGNALLESS_PROSE,
+        session_id="llm-source-model",
+    )
+
+    assert plugin.state._PLUGIN_LLM.calls[0].get("model") == "gpt-5.4-flash"
+
+
+def test_llm_source_classifier_model_override_falls_back_to_default():
+    class FlakySourceLLM:
+        def __init__(self):
+            self.calls = []
+
+        def complete_structured(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("model"):
+                raise RuntimeError("model override not allowed")
+            return SimpleNamespace(
+                parsed={
+                    "source": "private",
+                    "taints": ["memory"],
+                    "confidence": "high",
+                    "rationale": "ok on default",
+                }
+            )
+
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._set_llm_source_classifier_model("gpt-5.4-flash")
+    plugin.state._PLUGIN_LLM = FlakySourceLLM()
+
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note",
+        result=_SIGNALLESS_PROSE,
+        session_id="llm-source-model-fallback",
+    )
+
+    assert len(plugin.state._PLUGIN_LLM.calls) == 2
+    assert plugin.state._PLUGIN_LLM.calls[0].get("model") == "gpt-5.4-flash"
+    assert "model" not in plugin.state._PLUGIN_LLM.calls[1]
+    assert plugin._session_taint("llm-source-model-fallback") == {"memory"}
+
+
 def test_llm_source_classifier_reference_saves_rule_and_relaxes_mcp_read():
     plugin = load_plugin()
     bind_owner(plugin)

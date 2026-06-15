@@ -549,7 +549,7 @@ def _llm_source_classification(metadata: dict[str, Any]) -> dict[str, Any] | Non
     if llm is None or not hasattr(llm, "complete_structured"):
         return None
     activity_store._perf_mark_llm_invoked()
-    verifier_model = rules._llm_verifier_model()
+    source_model = rules._llm_source_classifier_model()
     input_text = json.dumps(metadata, sort_keys=True)
 
     def _call(use_model: bool) -> Any:
@@ -563,17 +563,17 @@ def _llm_source_classification(metadata: dict[str, Any]) -> dict[str, Any] | Non
             "purpose": "hermes-guardian.source_llm",
             "schema_name": "hermes_guardian_source_classification",
         }
-        if use_model and verifier_model:
-            kwargs["model"] = verifier_model
+        if use_model and source_model:
+            kwargs["model"] = source_model
         return llm.complete_structured(**kwargs)
 
     try:
         result = _call(use_model=True)
     except Exception as exc:
-        if verifier_model:
+        if source_model:
             core.logger.warning(
                 "%s: source classifier model override %r failed (%s); retrying on default model",
-                core._PLUGIN_NAME, verifier_model, exc,
+                core._PLUGIN_NAME, source_model, exc,
             )
             try:
                 result = _call(use_model=False)

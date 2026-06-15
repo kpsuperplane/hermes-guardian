@@ -50,6 +50,7 @@ def _full_v4_document() -> dict:
         "reading": {
             "taint_classification": "strict",
             "llm_source_classification": False,
+            "source_model": "gpt-5.4-flash",
             "tools": [
                 {"match": "crm_*", "taints": ["contacts"], "source": "unknown"},
             ],
@@ -111,6 +112,7 @@ def test_full_v4_file_parses_to_internal_structure():
     # reading.* -> internal privacy.{taint_classification,reading_tools}.
     assert config["privacy"]["taint_classification"] == "strict"
     assert config["privacy"]["llm_source_classification"] is False
+    assert config["privacy"]["llm_source_classifier_model"] == "gpt-5.4-flash"
     assert [t["match"] for t in config["privacy"]["reading_tools"]] == ["crm_*"]
     assert config["privacy"]["reading_tools"][0]["source"] == "unknown"
 
@@ -227,6 +229,7 @@ def test_partial_file_only_whats_yours_fills_defaults():
     assert config["privacy"]["egress_safety"] == "llm" == plugin._DEFAULT_EGRESS_SAFETY
     assert config["privacy"]["llm_user_context"] is True
     assert config["privacy"]["llm_cron_context"] is True
+    assert config["privacy"]["llm_source_classifier_model"] == ""
     assert config["privacy"]["taint_classification"] == "balanced"
     assert config["privacy"]["llm_source_classification"] is True
     assert config["privacy"]["reading_tools"] == []
@@ -445,6 +448,7 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     assert plugin._set_security_rule("sensitive_links", False)[0]
     assert plugin._set_taint_classification_mode("relaxed")[0]
     assert plugin._set_llm_source_classification(False)[0]
+    assert plugin._set_llm_source_classifier_model("gpt-5.4-flash")[0]
     assert plugin._set_reading_tool("crm_*", source="unknown", taints=["contacts"])[0]
     assert plugin._set_sharing_tool("crm_*", egress="ignore", destination="store:crm")[0]
     assert plugin._add_outward_sharing_subtype("crosspost")[0]
@@ -463,6 +467,7 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     assert "tools" not in on_disk["protection"]
     assert on_disk["reading"]["taint_classification"] == "relaxed"
     assert on_disk["reading"]["llm_source_classification"] is False
+    assert on_disk["reading"]["source_model"] == "gpt-5.4-flash"
     assert on_disk["reading"]["tools"][0]["source"] == "unknown"
     assert on_disk["sharing"]["tools"][0]["egress"] == "ignore"
     assert "crosspost" in on_disk["sharing"]["outward"]["extra"]
@@ -484,6 +489,7 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     assert "unknown_tools" not in after["privacy"]
     assert after["privacy"]["taint_classification"] == "relaxed"
     assert after["privacy"]["llm_source_classification"] is False
+    assert after["privacy"]["llm_source_classifier_model"] == "gpt-5.4-flash"
     assert after["privacy"]["reading_tools"][0]["source"] == "unknown"
     assert after["privacy"]["sharing_tools"][0]["egress"] == "ignore"
     assert "crosspost" in after["outward_sharing"]["extra"]

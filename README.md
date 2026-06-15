@@ -212,6 +212,7 @@ the file is reading the decision:
   "reading": {
     "taint_classification": "balanced",
     "llm_source_classification": true,
+    "source_model": "",
     "tools": []
   },
   "sharing": {
@@ -302,10 +303,10 @@ you choose which LLMs Hermes connects to, that assumption is yours to own.
 The full trust-boundary rationale is in theory's
 [Coarse declassification context](./THEORY.md#coarse-declassification-context).
 
-**Verifier latency.** By default the verifier runs on the agent's own model. If
-that is a large or reasoning model, each gated egress can take several seconds. A
-classification verdict does not need a frontier model, so you can point the
-verifier at a faster one.
+**Verifier and classifier latency.** By default the egress verifier and the LLM
+source classifier run on the agent's own model. If that is a large or reasoning
+model, each judgment can take several seconds. These classification verdicts do
+not need a frontier model, so you can point either path at a faster one.
 
 Because Hermes gates per-plugin model selection, you first grant Guardian an
 allowlist in `~/.hermes/config.yaml` (one-time):
@@ -319,11 +320,13 @@ plugins:
         allowed_models: [gpt-5.4-mini, gpt-5.5]   # the models to offer
 ```
 
-Guardian reads that allowlist and offers exactly those models as a **dropdown** in
-the dashboard Settings tab (Verifier model) — no need to type model ids. You can
-also set it by slash command:
+Guardian reads that allowlist and offers exactly those models as **dropdowns** in
+the dashboard: Reading has **LLM source classifier**, and Sharing has **Verifier
+model**. You can also set them by slash command:
 
 ```text
+/guardian reading source-model gpt-5.4-mini
+/guardian reading source-model default           # back to the Hermes default
 /guardian sharing verifier-model gpt-5.4-mini
 /guardian sharing verifier-model default          # back to the Hermes default
 ```
@@ -626,7 +629,9 @@ never sends result content or raw argument values. The classifier persists an
 ordinary Reading tool rule as `reference`, `private`, `public`, or `unknown`, so
 the same tool matcher is not reviewed again. `public` requires high confidence
 from tool metadata that the tool cannot return private user/workspace data, such
-as a current-time or static-version read.
+as a current-time or static-version read. `reading.source_model` optionally pins
+this metadata-only classifier to a faster model; empty uses the agent's default
+model and rejected overrides retry once on the default model.
 
 Egress decisions reason over the **ambient session taint**: the union of the data
 classes the session has read so far and any private-looking classes intrinsic to
@@ -805,6 +810,7 @@ sit on top as the everyday commands.
 /guardian reading
 /guardian reading taint-classification balanced|strict|relaxed
 /guardian reading llm-source-classification on|off
+/guardian reading source-model <model_id|default>
 /guardian reading tool set <match> [taints=class+class] [source=reference|private|public|unknown] [note=<text>]
 /guardian reading tool delete <match_or_id>
 /guardian reading tool enable|disable <id_or_match>
@@ -877,8 +883,8 @@ mine → what was read → is it covered by a grant → the floor):
   read-only).
 - **Reading**: source provenance and read-taint classification — an inventory
   table showing observed tools plus exact/inherited source policy, Taint
-  Classification, the LLM source classifier, and *Sources seen* for undeclared MCP
-  document-read servers.
+  Classification, the LLM source classifier toggle/model selector, and *Sources
+  seen* for undeclared MCP document-read servers.
 - **Sharing**: outbound private-data behavior and the standing authorization
   you've granted — **Egress Safety** (each option written as a who-reviews
   sentence), the owner/cron authorization context toggles, the verifier model,
@@ -914,6 +920,7 @@ POST /api/plugins/hermes-guardian/sharing/impact
 POST /api/plugins/hermes-guardian/sharing/egress-safety
 POST /api/plugins/hermes-guardian/privacy/clear-taint
 POST /api/plugins/hermes-guardian/reading/taint-classification
+POST /api/plugins/hermes-guardian/reading/source-model
 POST /api/plugins/hermes-guardian/sharing/owner-context
 POST /api/plugins/hermes-guardian/sharing/cron-context
 POST /api/plugins/hermes-guardian/sharing/verifier-model

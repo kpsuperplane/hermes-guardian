@@ -229,6 +229,8 @@ export interface Policy {
   egress_safety?: string;
   taint_classification?: string;
   llm_source_classification?: boolean;
+  llm_source_classifier_model?: string;
+  llm_source_classifier_model_options?: string[];
   llm_user_context?: boolean;
   llm_cron_context?: boolean;
   persist_prompts?: boolean;

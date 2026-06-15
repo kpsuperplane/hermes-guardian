@@ -1506,6 +1506,8 @@ def _policy_snapshot() -> dict[str, Any]:
         "egress_safety": core._egress_safety_policy(),
         "taint_classification": rules_mod._taint_classification_mode(),
         "llm_source_classification": rules_mod._llm_source_classification_enabled(),
+        "llm_source_classifier_model": rules_mod._llm_source_classifier_model(),
+        "llm_source_classifier_model_options": rules_mod._source_classifier_model_options(),
         "llm_user_context": rules_mod._llm_user_context_enabled(),
         "llm_cron_context": rules_mod._llm_cron_context_enabled(),
         "persist_prompts": rules_mod._persist_prompts_enabled(),

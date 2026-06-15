@@ -455,6 +455,14 @@ async def set_llm_source_classification(request: Request, body: dict[str, Any]) 
     )
 
 
+@router.post("/reading/source-model")
+async def set_source_model(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    return _json_mutation_result(
+        _guardian()._dashboard_llm_source_classifier_model_action(str(body.get("model") or "")),
+    )
+
+
 @router.post("/sharing/tools")
 async def create_sharing_tool(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)

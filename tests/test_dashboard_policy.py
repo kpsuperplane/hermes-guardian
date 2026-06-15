@@ -873,6 +873,7 @@ def _mutation_route_invokers(api):
         "clear_taint": lambda: api.clear_taint(req),
         "set_taint_classification": lambda: api.set_taint_classification(req, {"mode": "strict"}),
         "set_llm_source_classification": lambda: api.set_llm_source_classification(req, {"enabled": False}),
+        "set_source_model": lambda: api.set_source_model(req, {"model": ""}),
         "set_user_context": lambda: api.set_user_context(req, {"enabled": True}),
         "set_cron_context": lambda: api.set_cron_context(req, {"enabled": False}),
         "set_verifier_model": lambda: api.set_verifier_model(req, {"model": ""}),
