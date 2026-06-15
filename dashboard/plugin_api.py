@@ -442,6 +442,14 @@ async def delete_reading_tool(request: Request, override_id: str) -> JSONRespons
     )
 
 
+@router.post("/reading/llm-source-classification")
+async def set_llm_source_classification(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    return _json_mutation_result(
+        _guardian()._dashboard_llm_source_classification_action(_body_bool(body, "enabled")),
+    )
+
+
 @router.post("/sharing/tools")
 async def create_sharing_tool(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)

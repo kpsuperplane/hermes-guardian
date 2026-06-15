@@ -41,6 +41,8 @@ export function GuardianPage() {
     setEgressSafety,
     taintClassification,
     setTaintClassification,
+    llmSourceClassification,
+    setLlmSourceClassification,
     llmUserContext,
     setLlmUserContext,
     llmCronContext,
@@ -63,6 +65,8 @@ export function GuardianPage() {
     setEgressSafety,
     taintClassification,
     setTaintClassification,
+    llmSourceClassification,
+    setLlmSourceClassification,
     llmUserContext,
     setLlmUserContext,
     llmCronContext,
@@ -188,6 +192,9 @@ export function GuardianPage() {
           taintClassification={taintClassification}
           taintClassificationSaving={actions.taintClassificationSaving}
           onChangeTaintClassification={actions.saveTaintClassification}
+          llmSourceClassification={llmSourceClassification}
+          llmSourceClassificationSaving={actions.llmSourceClassificationSaving}
+          onChangeLlmSourceClassification={actions.saveLlmSourceClassification}
           sourceSuggestions={actions.sourceSuggestions}
           onLoadSourceSuggestions={actions.loadSourceSuggestions}
           onClassifySource={actions.classifySource}

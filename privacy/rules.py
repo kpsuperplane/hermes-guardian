@@ -22,6 +22,9 @@ _DEFAULT_EGRESS_SAFETY = "llm"
 _EGRESS_SAFETY_MODES = {"strict", "read-only", "llm", "off"}
 _DEFAULT_TAINT_CLASSIFICATION = "balanced"
 _TAINT_CLASSIFICATION_MODES = {"balanced", "strict", "relaxed"}
+# Metadata-only LLM source classification for otherwise-unknown reads. Defaults on:
+# it writes ordinary Reading tool classifications so the same source is not re-judged.
+_DEFAULT_LLM_SOURCE_CLASSIFICATION = True
 # Whether the llm-mode verifier receives sanitized authorization-evidence context.
 # user context (authenticated owner's inbound request) defaults on; cron context
 # (a job's own stored instruction) defaults off because cron runs unattended.
@@ -60,7 +63,7 @@ _SHARING_TOOL_EGRESS_VALUES = {"ignore", "gate"} | _SHARING_TOOL_EGRESS_FAMILIES
 # `private` always taints the read as personal data. Empty means "use the tiered default"
 # (provenance for reference reads, conservative for undeclared MCP doc-reads). For an MCP
 # server, declare the whole server at once with a prefix match (e.g. match = "crm_*").
-_READING_TOOL_SOURCES = {"reference", "private"}
+_READING_TOOL_SOURCES = {"reference", "private", "unknown"}
 # Env vars that override the named `retention` / `dashboard` config blocks (doc 03
 # §1.2). The document is the source of truth; these env vars remain readable as ops
 # overrides and are surfaced in `/guardian status` so they are never invisible.
@@ -163,6 +166,7 @@ def _default_privacy_config() -> dict[str, Any]:
         "privacy": {
             "egress_safety": _DEFAULT_EGRESS_SAFETY,
             "taint_classification": _DEFAULT_TAINT_CLASSIFICATION,
+            "llm_source_classification": _DEFAULT_LLM_SOURCE_CLASSIFICATION,
             "llm_user_context": _DEFAULT_LLM_USER_CONTEXT,
             "llm_cron_context": _DEFAULT_LLM_CRON_CONTEXT,
             "llm_verifier_model": _DEFAULT_LLM_VERIFIER_MODEL,
@@ -870,6 +874,10 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
             "taint_classification": _normalize_taint_classification(
                 reading.get("taint_classification")
             ),
+            "llm_source_classification": _config_bool(
+                reading.get("llm_source_classification"),
+                default=_DEFAULT_LLM_SOURCE_CLASSIFICATION,
+            ),
             "llm_user_context": _config_bool(
                 review.get("owner_context"), default=_DEFAULT_LLM_USER_CONTEXT
             ),
@@ -938,6 +946,10 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
             raise ValueError(f"privacy rule file {block_name} must be an object")
     reading = parsed.get("reading")
     if isinstance(reading, dict):
+        if "llm_source_classification" in reading and not isinstance(
+            reading.get("llm_source_classification"), (bool, int, str)
+        ):
+            raise ValueError("privacy rule file has invalid reading.llm_source_classification")
         for index, entry in enumerate(reading.get("tools") or []):
             if isinstance(entry, dict):
                 for mixed_key in ("egress", "destination", "direction"):
@@ -1017,6 +1029,10 @@ def _normalize_internal_config(data: Any) -> dict[str, Any]:
             "taint_classification": _normalize_taint_classification(
                 privacy.get("taint_classification")
             ),
+            "llm_source_classification": _config_bool(
+                privacy.get("llm_source_classification"),
+                default=_DEFAULT_LLM_SOURCE_CLASSIFICATION,
+            ),
             "llm_user_context": _config_bool(
                 privacy.get("llm_user_context"), default=_DEFAULT_LLM_USER_CONTEXT
             ),
@@ -1072,6 +1088,10 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
         "reading": {
             "taint_classification": _normalize_taint_classification(
                 privacy.get("taint_classification")
+            ),
+            "llm_source_classification": _config_bool(
+                privacy.get("llm_source_classification"),
+                default=_DEFAULT_LLM_SOURCE_CLASSIFICATION,
             ),
             "tools": list(privacy.get("reading_tools") or []),
         },
@@ -1278,6 +1298,22 @@ def _set_taint_classification_mode(mode: str) -> tuple[bool, str]:
     if not _save_privacy_config(_config_for_save(data, privacy=privacy)):
         return False, "Failed to save Taint Classification; Guardian remains unchanged."
     return True, f"Taint Classification set to {normalized}."
+
+
+def _llm_source_classification_enabled() -> bool:
+    return _config_bool(
+        _load_privacy_config().get("privacy", {}).get("llm_source_classification"),
+        default=_DEFAULT_LLM_SOURCE_CLASSIFICATION,
+    )
+
+
+def _set_llm_source_classification(enabled: bool) -> tuple[bool, str]:
+    data = _load_privacy_config()
+    privacy = dict(data.get("privacy") or {})
+    privacy["llm_source_classification"] = bool(enabled)
+    if not _save_privacy_config(_config_for_save(data, privacy=privacy)):
+        return False, "Failed to save LLM source classification; Guardian remains unchanged."
+    return True, f"LLM source classification {'enabled' if enabled else 'disabled'}."
 
 
 def _llm_user_context_enabled() -> bool:
@@ -1494,7 +1530,7 @@ def _set_reading_tool(
     if source is not None:
         source_text = str(source).strip().lower()
         if source_text and source_text not in _READING_TOOL_SOURCES:
-            return False, "source must be one of: reference, private."
+            return False, "source must be one of: reference, private, unknown."
     if taints is not None:
         requested = taints if isinstance(taints, list) else [taints]
         invalid = [
@@ -1892,14 +1928,14 @@ def _source_classification_suggestions(limit: int = 40) -> list[dict[str, Any]]:
 
 
 def _set_source_classification(server: str, mode: str) -> tuple[bool, str]:
-    """Declare an MCP server's doc-reads as `reference` or `private` from the picker — a
+    """Declare an MCP server's doc-reads from the picker — a
     prefix-scoped Reading tool classification (``<server>_*``). Mirrors the
     trusted-destination picker flow."""
     name = re.sub(r"[^a-z0-9_]+", "_", str(server or "").strip().lower()).strip("_")
     if not name:
         return False, "Provide an MCP server prefix (e.g. crm)."
     if str(mode or "").strip().lower() not in _READING_TOOL_SOURCES:
-        return False, "Mode must be one of: reference, private."
+        return False, "Mode must be one of: reference, private, unknown."
     return _set_reading_tool(f"{name}_*", source=str(mode).strip().lower())
 
 

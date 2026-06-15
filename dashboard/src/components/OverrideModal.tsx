@@ -136,6 +136,7 @@ export function OverrideModal({
                   <option value="">Default</option>
                   <option value="reference">Reference material</option>
                   <option value="private">Personal data</option>
+                  <option value="unknown">Unknown</option>
                 </select>
               </Field>
             ) : null}

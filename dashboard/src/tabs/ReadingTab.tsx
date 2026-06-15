@@ -16,9 +16,12 @@ export interface ReadingTabProps {
   taintClassification: string;
   taintClassificationSaving: boolean;
   onChangeTaintClassification: (mode: string) => void;
+  llmSourceClassification: boolean;
+  llmSourceClassificationSaving: boolean;
+  onChangeLlmSourceClassification: (enabled: boolean) => void;
   sourceSuggestions: SourceSuggestion[];
   onLoadSourceSuggestions: () => void;
-  onClassifySource: (server: string, mode: "reference" | "private") => void;
+  onClassifySource: (server: string, mode: "reference" | "private" | "unknown") => void;
 }
 
 function ToolClassification(props: {
@@ -30,6 +33,9 @@ function ToolClassification(props: {
   taintClassification: string;
   taintClassificationSaving: boolean;
   onChangeTaintClassification: (mode: string) => void;
+  llmSourceClassification: boolean;
+  llmSourceClassificationSaving: boolean;
+  onChangeLlmSourceClassification: (enabled: boolean) => void;
 }) {
   const toolOverrides = (props.policy && props.policy.reading_tools) || [];
   return (
@@ -39,8 +45,8 @@ function ToolClassification(props: {
           <div className="hermes-guardian-card-title">Source tool classification</div>
           <div className="hermes-guardian-muted">
             Teach Guardian what a tool reads: which private classes its results apply and whether
-            its reads are reference material or personal data. Egress behavior lives in Sharing.
-            Classifications never bypass the Security Module.
+            its reads are reference material, personal data, or still unknown. Egress behavior
+            lives in Sharing. Classifications never bypass the Security Module.
           </div>
         </div>
       </div>
@@ -112,24 +118,36 @@ function ToolClassification(props: {
               <span className="hermes-guardian-pill">{props.taintClassification}</span>
             </div>
           </div>
-          <select
-            className="hermes-guardian-select"
-            value={props.taintClassification}
-            disabled={props.taintClassificationSaving}
-            aria-label="Default for unknown reads"
-            onChange={(event) => props.onChangeTaintClassification(event.target.value)}
-          >
-            {TAINT_CLASSIFICATION_MODES.map((mode) => (
-              <option key={mode} value={mode}>
-                {mode}
-              </option>
-            ))}
-          </select>
+          <div className="hermes-guardian-actions">
+            <label className="hermes-guardian-checkbox">
+              <input
+                type="checkbox"
+                checked={props.llmSourceClassification}
+                disabled={props.llmSourceClassificationSaving}
+                onChange={(event) => props.onChangeLlmSourceClassification(event.target.checked)}
+              />
+              LLM source classifier
+            </label>
+            <select
+              className="hermes-guardian-select"
+              value={props.taintClassification}
+              disabled={props.taintClassificationSaving}
+              aria-label="Default for unknown reads"
+              onChange={(event) => props.onChangeTaintClassification(event.target.value)}
+            >
+              {TAINT_CLASSIFICATION_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {mode}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
         <div className="hermes-guardian-muted">
           Balanced uses recognized sources, declarations, and content signals. Strict also treats
           otherwise-unknown read results as documents. Relaxed keeps balanced read inference and
-          allows unrecognized non-MCP tools under taint.
+          allows unrecognized non-MCP tools under taint. The LLM source classifier uses metadata
+          only and saves reference, private, or unknown source rules for future reads.
         </div>
       </div>
     </div>
@@ -139,7 +157,7 @@ function ToolClassification(props: {
 function SourcesSeen(props: {
   suggestions: SourceSuggestion[];
   onLoad: () => void;
-  onClassify: (server: string, mode: "reference" | "private") => void;
+  onClassify: (server: string, mode: "reference" | "private" | "unknown") => void;
 }) {
   useEffect(() => {
     props.onLoad();
@@ -152,7 +170,8 @@ function SourcesSeen(props: {
       <div className="hermes-guardian-muted hermes-guardian-section-description">
         Guardian saw document reads from these MCP servers and tainted them conservatively
         because their provenance is undeclared. Classify each: reference material is scanned
-        leniently (placeholder-tolerant); personal data always taints.
+        leniently (placeholder-tolerant); personal data always taints; unknown remembers that
+        provenance is unresolved.
       </div>
       <div className="hermes-guardian-grid">
         {props.suggestions.map((item) => (
@@ -169,6 +188,9 @@ function SourcesSeen(props: {
               </Button>
               <Button variant="secondary" onClick={() => props.onClassify(item.server, "private")}>
                 Personal data
+              </Button>
+              <Button variant="secondary" onClick={() => props.onClassify(item.server, "unknown")}>
+                Unknown
               </Button>
             </div>
           </div>
@@ -190,6 +212,9 @@ export function ReadingTab(props: ReadingTabProps) {
         taintClassification={props.taintClassification}
         taintClassificationSaving={props.taintClassificationSaving}
         onChangeTaintClassification={props.onChangeTaintClassification}
+        llmSourceClassification={props.llmSourceClassification}
+        llmSourceClassificationSaving={props.llmSourceClassificationSaving}
+        onChangeLlmSourceClassification={props.onChangeLlmSourceClassification}
       />
       <SourcesSeen
         suggestions={props.sourceSuggestions}

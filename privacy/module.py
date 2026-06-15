@@ -893,6 +893,12 @@ def _privacy_observe_tool_result(
     tool_args = tool_policy._consume_pending_tool_args(session_id, tool_name)
     # Provenance verdict, computed once here (the only place with the call's args) and reused
     # on the security inbound path so both sides agree on what "reference material" is.
+    tool_policy._maybe_classify_unknown_read_source(
+        tool_name,
+        parsed,
+        status=status,
+        tool_args=tool_args,
+    )
     is_reference_read = tool_policy._is_reference_read(tool_name, tool_args)
     source_default = tool_policy._is_source_default_read(tool_name, tool_args)
     strict_unknown_read = False
@@ -948,7 +954,7 @@ def _privacy_observe_tool_result(
 
     # First time this session sees an undeclared MCP doc-read from a server, surface a
     # one-click classification suggestion (server prefix only, never content). Declaring the
-    # server (reference|private) via the Reading picker silences it and sets the behavior.
+    # server via the Reading picker silences it and sets the behavior.
     if tool_policy._is_mcp_doc_read(tool_name) and not is_reference_read and not tool_policy._reading_tool_source(tool_name):
         server = tool_policy._mcp_server_prefix(tool_name)
         if server and tool_policy._mark_source_suggested(session_id, server):

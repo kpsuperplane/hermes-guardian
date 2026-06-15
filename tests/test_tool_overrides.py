@@ -159,6 +159,7 @@ def test_tool_classifications_survive_other_config_mutations():
     plugin._set_reading_tool("mcp_acme_*", taints=["communications"])
     plugin._set_sharing_tool("mcp_acme_*", egress="ignore")
     plugin._set_taint_classification_mode("relaxed")
+    plugin._set_llm_source_classification(False)
 
     plugin._set_egress_safety_mode("strict")
     plugin._set_security_rule("sensitive_links", False)
@@ -170,6 +171,7 @@ def test_tool_classifications_survive_other_config_mutations():
     assert len(plugin._reading_tools()) == 1
     assert len(plugin._sharing_tools()) == 1
     assert plugin._taint_classification_mode() == "relaxed"
+    assert plugin._llm_source_classification_enabled() is False
     assert plugin._reading_tools()[0]["match"] == "mcp_acme_*"
     assert plugin._sharing_tools()[0]["match"] == "mcp_acme_*"
     # other config preserved too

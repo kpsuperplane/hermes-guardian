@@ -23,6 +23,8 @@ export interface GuardianActionDeps {
   setEgressSafety: (mode: string) => void;
   taintClassification: string;
   setTaintClassification: (mode: string) => void;
+  llmSourceClassification: boolean;
+  setLlmSourceClassification: (enabled: boolean) => void;
   llmUserContext: boolean;
   setLlmUserContext: (enabled: boolean) => void;
   llmCronContext: boolean;
@@ -57,6 +59,8 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     setEgressSafety,
     taintClassification,
     setTaintClassification,
+    llmSourceClassification,
+    setLlmSourceClassification,
     llmUserContext,
     setLlmUserContext,
     llmCronContext,
@@ -72,6 +76,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
   const [modeSaving, setModeSaving] = useState(false);
   const [languagePacksSaving, setLanguagePacksSaving] = useState(false);
   const [taintClassificationSaving, setTaintClassificationSaving] = useState(false);
+  const [llmSourceClassificationSaving, setLlmSourceClassificationSaving] = useState(false);
   const [userContextSaving, setUserContextSaving] = useState(false);
   const [cronContextSaving, setCronContextSaving] = useState(false);
   const [persistPromptsSaving, setPersistPromptsSaving] = useState(false);
@@ -143,6 +148,26 @@ export function useGuardianActions(deps: GuardianActionDeps) {
         showToast(errText(err), "error");
       })
       .finally(() => setTaintClassificationSaving(false));
+  }
+
+  function saveLlmSourceClassification(enabled: boolean) {
+    if (enabled === llmSourceClassification) return;
+    const previous = llmSourceClassification;
+    setLlmSourceClassification(enabled);
+    setLlmSourceClassificationSaving(true);
+    api("/reading/llm-source-classification", {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    })
+      .then((payload) => {
+        showToast(payload.message || "Saved.");
+        return load();
+      })
+      .catch((err) => {
+        setLlmSourceClassification(previous);
+        showToast(errText(err), "error");
+      })
+      .finally(() => setLlmSourceClassificationSaving(false));
   }
 
   function saveUserContext(enabled: boolean) {
@@ -403,7 +428,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       });
   }
 
-  function classifySource(server: string, mode: "reference" | "private") {
+  function classifySource(server: string, mode: "reference" | "private" | "unknown") {
     const body: { server: string; source: string; confirm?: string } = { server, source: mode };
     if (mode === "reference") {
       if (
@@ -646,6 +671,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     // saving flags
     modeSaving,
     taintClassificationSaving,
+    llmSourceClassificationSaving,
     userContextSaving,
     cronContextSaving,
     verifierModelSaving,
@@ -667,6 +693,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     // settings / tools
     saveMode,
     saveTaintClassification,
+    saveLlmSourceClassification,
     saveUserContext,
     saveCronContext,
     savePersistPrompts,

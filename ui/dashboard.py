@@ -191,6 +191,16 @@ def _dashboard_taint_classification_action(mode: str) -> tuple[dict[str, Any], i
     return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
+def _dashboard_llm_source_classification_action(enabled: Any) -> tuple[dict[str, Any], int]:
+    ok, message = rules_mod._set_llm_source_classification(
+        rules_mod._config_bool(
+            enabled,
+            default=rules_mod._DEFAULT_LLM_SOURCE_CLASSIFICATION,
+        )
+    )
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
+
+
 def _dashboard_llm_user_context_action(enabled: Any) -> tuple[dict[str, Any], int]:
     ok, message = rules_mod._set_llm_user_context(rules_mod._config_bool(enabled, default=rules_mod._DEFAULT_LLM_USER_CONTEXT))
     return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400

@@ -12,6 +12,7 @@ and undeclared MCP doc-read (conservative-until-declared).
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 from support import *  # noqa: F403
 
@@ -101,9 +102,25 @@ def test_reference_by_path_skips_inbound_sensitive_link_suppression():
 _SIGNALLESS_PROSE = "The quarterly review went well and the client was pleased with progress."
 
 
+class SourceFakeLLM:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def complete_structured(self, **kwargs):
+        self.calls.append(kwargs)
+        if not self.responses:
+            raise RuntimeError("unexpected source classifier call")
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return SimpleNamespace(parsed=response)
+
+
 def test_balanced_unknown_non_mcp_read_of_signalless_prose_stays_untainted():
     plugin = load_plugin()
     bind_owner(plugin)
+    plugin._set_llm_source_classification(False)
 
     plugin._on_transform_tool_result(
         tool_name="fetch_personal_note", result=_SIGNALLESS_PROSE, session_id="balanced"
@@ -116,6 +133,7 @@ def test_balanced_unknown_non_mcp_read_of_signalless_prose_stays_untainted():
 def test_relaxed_unknown_non_mcp_read_of_signalless_prose_stays_untainted():
     plugin = load_plugin()
     bind_owner(plugin)
+    plugin._set_llm_source_classification(False)
     assert plugin._set_taint_classification_mode("relaxed")[0]
 
     plugin._on_transform_tool_result(
@@ -128,6 +146,7 @@ def test_relaxed_unknown_non_mcp_read_of_signalless_prose_stays_untainted():
 def test_strict_unknown_non_mcp_read_of_signalless_prose_taints_documents():
     plugin = load_plugin()
     bind_owner(plugin)
+    plugin._set_llm_source_classification(False)
     assert plugin._set_taint_classification_mode("strict")[0]
 
     plugin._on_transform_tool_result(
@@ -142,6 +161,7 @@ def test_strict_unknown_non_mcp_read_of_signalless_prose_taints_documents():
 def test_strict_unknown_non_mcp_read_preserves_specific_content_classes():
     plugin = load_plugin()
     bind_owner(plugin)
+    plugin._set_llm_source_classification(False)
     assert plugin._set_taint_classification_mode("strict")[0]
 
     plugin._on_transform_tool_result(
@@ -154,6 +174,7 @@ def test_strict_unknown_non_mcp_read_preserves_specific_content_classes():
 def test_strict_does_not_change_web_browser_or_error_result_taint():
     plugin = load_plugin()
     bind_owner(plugin)
+    plugin._set_llm_source_classification(False)
     assert plugin._set_taint_classification_mode("strict")[0]
 
     plugin._on_transform_tool_result(
@@ -199,6 +220,167 @@ def test_source_overrides_apply_to_arbitrary_unknown_reads():
         tool_name="fetch_reference_note", result=_PLACEHOLDER_DOC, session_id="reference"
     )
     assert plugin._session_taint("reference") == set()
+
+
+def test_declared_unknown_source_keeps_balanced_fallback_and_suppresses_suggestions():
+    plugin = load_plugin()
+    bind_owner(plugin)
+
+    assert plugin._set_source_classification("crm", "unknown")[0]
+    plugin._on_transform_tool_result(
+        tool_name="crm_read_resource", result=_SIGNALLESS_PROSE, session_id="unknown"
+    )
+
+    assert plugin._session_taint("unknown") == {"documents"}
+    assert plugin._source_classification_suggestions() == []
+
+
+def test_llm_source_classifier_private_saves_rule_taints_and_does_not_repeat():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin.state._PLUGIN_LLM = SourceFakeLLM(
+        {
+            "source": "private",
+            "taints": ["memory"],
+            "confidence": "high",
+            "rationale": "tool metadata implies personal notes",
+        }
+    )
+
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note",
+        result=_SIGNALLESS_PROSE,
+        session_id="llm-private",
+    )
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note",
+        result=_SIGNALLESS_PROSE,
+        session_id="llm-private-again",
+    )
+
+    assert plugin._session_taint("llm-private") == {"memory"}
+    assert plugin._session_taint("llm-private-again") == {"memory"}
+    tools = plugin._reading_tools()
+    assert len(tools) == 1
+    assert tools[0]["match"] == "fetch_personal_note"
+    assert tools[0]["source"] == "private"
+    assert tools[0]["taints"] == ["memory"]
+    assert len(plugin.state._PLUGIN_LLM.calls) == 1
+
+
+def test_llm_source_classifier_reference_saves_rule_and_relaxes_mcp_read():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin.state._PLUGIN_LLM = SourceFakeLLM(
+        {
+            "source": "reference",
+            "taints": ["documents"],
+            "confidence": "high",
+            "rationale": "tool metadata implies reference docs",
+        }
+    )
+
+    plugin._on_transform_tool_result(
+        tool_name="crm_read_resource",
+        result=_SIGNALLESS_PROSE,
+        session_id="llm-reference",
+    )
+    plugin._on_transform_tool_result(
+        tool_name="crm_read_resource",
+        result=_SIGNALLESS_PROSE,
+        session_id="llm-reference-again",
+    )
+
+    assert plugin._session_taint("llm-reference") == set()
+    assert plugin._session_taint("llm-reference-again") == set()
+    tools = plugin._reading_tools()
+    assert len(tools) == 1
+    assert tools[0]["match"] == "crm_*"
+    assert tools[0]["source"] == "reference"
+    assert tools[0]["taints"] == []
+    assert len(plugin.state._PLUGIN_LLM.calls) == 1
+
+
+def test_llm_source_classifier_unknown_saves_rule_and_preserves_fallback():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin.state._PLUGIN_LLM = SourceFakeLLM(
+        {
+            "source": "unknown",
+            "taints": ["documents"],
+            "confidence": "low",
+            "rationale": "metadata is ambiguous",
+        }
+    )
+
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note",
+        result=_SIGNALLESS_PROSE,
+        session_id="llm-unknown",
+    )
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note",
+        result=_SIGNALLESS_PROSE,
+        session_id="llm-unknown-again",
+    )
+
+    assert plugin._session_taint("llm-unknown") == set()
+    assert plugin._session_taint("llm-unknown-again") == set()
+    tools = plugin._reading_tools()
+    assert len(tools) == 1
+    assert tools[0]["source"] == "unknown"
+    assert tools[0]["taints"] == []
+    assert len(plugin.state._PLUGIN_LLM.calls) == 1
+
+
+def test_llm_source_classifier_sends_only_metadata_not_raw_values():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin.state._PLUGIN_LLM = SourceFakeLLM(
+        {
+            "source": "unknown",
+            "taints": [],
+            "confidence": "low",
+            "rationale": "metadata is ambiguous",
+        }
+    )
+
+    plugin._on_pre_tool_call(
+        "fetch_personal_note",
+        {
+            "query": "Jennifer dinner private thought",
+            "limit": 3,
+            "filters": {"person": "Jennifer"},
+        },
+        session_id="metadata",
+    )
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note",
+        result='{"Jennifer": "Felt weird after dinner yesterday."}',
+        session_id="metadata",
+    )
+
+    call_text = plugin.state._PLUGIN_LLM.calls[0]["input"][0]["text"]
+    assert "Jennifer dinner private thought" not in call_text
+    assert "Felt weird after dinner yesterday" not in call_text
+    assert '"query"' in call_text
+    assert '"filters"' in call_text
+    assert '"Jennifer"' in call_text  # JSON keys are allowed metadata.
+
+
+def test_llm_source_classifier_error_saves_no_rule_and_falls_back():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin.state._PLUGIN_LLM = SourceFakeLLM(RuntimeError("boom"))
+
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note",
+        result=_SIGNALLESS_PROSE,
+        session_id="llm-error",
+    )
+
+    assert plugin._session_taint("llm-error") == set()
+    assert plugin._reading_tools() == []
 
 
 def test_source_reference_does_not_override_known_private_source_names():
@@ -261,9 +443,12 @@ def test_declared_private_taints_signalless_prose():
 def test_unknown_source_value_is_conservative():
     plugin = load_plugin()
     bind_owner(plugin)
-    # The setter rejects an unknown mode outright...
+    ok, _ = plugin._set_reading_tool("crm_*", source="unknown")
+    assert ok
+    assert plugin._reading_tools()[0]["source"] == "unknown"
+    # Truly invalid modes are still rejected outright...
     ok, message = plugin._set_reading_tool("crm_*", source="trusted")
-    assert not ok and "reference" in message
+    assert not ok and "unknown" in message
     # ...and the config loader drops it (fails toward the conservative default, never reference).
     normalized = plugin._normalize_reading_tool({"match": "crm_*", "source": "trusted"})
     assert normalized is not None and normalized["source"] == ""

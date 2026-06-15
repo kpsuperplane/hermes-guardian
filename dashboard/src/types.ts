@@ -204,6 +204,7 @@ export interface Policy {
   sharing_tool_egress_options?: string[];
   egress_safety?: string;
   taint_classification?: string;
+  llm_source_classification?: boolean;
   llm_user_context?: boolean;
   llm_cron_context?: boolean;
   persist_prompts?: boolean;

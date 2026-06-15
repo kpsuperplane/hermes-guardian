@@ -49,9 +49,10 @@ _GUARDIAN_HELP_LINES = [
     "READING — what has entered context",
     "- `/guardian reading` — show source classification",
     "- `/guardian reading taint-classification balanced|strict|relaxed`",
+    "- `/guardian reading llm-source-classification on|off`",
     "- `/guardian reading tool set|delete|enable|disable <match> ...`",
     "- `/guardian reading tools`",
-    "- `/guardian reading source suggest|set <server> reference|private`",
+    "- `/guardian reading source suggest|set <server> reference|private|unknown`",
     "",
     "SHARING — what you've authorized to leave you",
     "- `/guardian sharing` — show trusted destinations + rules + outward-sharing",
@@ -580,6 +581,7 @@ def _guardian_status_telegram(owner_hash: str) -> str:
     rows = [
         ["Egress Safety", core._egress_safety_policy()],
         ["Taint Classification", f"{rules_mod._taint_classification_mode()} ({len(rules_mod._reading_tools())} reading tool(s))"],
+        ["LLM source classification", "on" if rules_mod._llm_source_classification_enabled() else "off"],
         ["LLM context", f"user-prompt {'on' if rules_mod._llm_user_context_enabled() else 'off'}, cron {'on' if rules_mod._llm_cron_context_enabled() else 'off'}"],
         ["Security rules", f"{len(rules_mod._SECURITY_RULE_IDS) - len(snapshot['disabled_security'])} enabled, {len(snapshot['disabled_security'])} disabled"],
         ["Language packs", enabled_packs],
@@ -941,6 +943,7 @@ def _guardian_reading_command_telegram(owner_hash: str, tokens: list[str]) -> st
     return "\n\n".join([
         "## Reading",
         f"Taint Classification: `{rules_mod._taint_classification_mode()}`",
+        f"LLM source classification: `{'on' if rules_mod._llm_source_classification_enabled() else 'off'}`",
         "### Source Tool Classification\n" + (_md_table(["ID", "Match", "State", "Source", "Taints"], override_rows) if override_rows else "No Reading tool classifications configured."),
     ])
 
@@ -1172,14 +1175,25 @@ def _guardian_reading_command(owner_hash: str, tokens: list[str]) -> str:
             return _global_mutation_denied_message()
         ok, message = rules_mod._set_taint_classification_mode(tokens[2])
         return message
+    if sub in {"llm-source-classification", "llm_source_classification", "source-llm"}:
+        if len(tokens) != 3:
+            return "Usage: `/guardian reading llm-source-classification on|off`"
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        enabled = _parse_on_off(tokens[2])
+        if enabled is None:
+            return "Usage: `/guardian reading llm-source-classification on|off`"
+        ok, message = rules_mod._set_llm_source_classification(enabled)
+        return message
     if not sub:
         return _guardian_reading_overview()
     return (
         "Usage: `/guardian reading` | "
         "`/guardian reading taint-classification balanced|strict|relaxed` | "
+        "`/guardian reading llm-source-classification on|off` | "
         "`/guardian reading tool set|delete|enable|disable ...` | "
         "`/guardian reading tools` | "
-        "`/guardian reading source suggest|set <server> reference|private`"
+        "`/guardian reading source suggest|set <server> reference|private|unknown`"
     )
 
 
@@ -1215,18 +1229,19 @@ def _guardian_source_command(owner_hash: str, tokens: list[str]) -> str:
     """SOURCE group: classify the doc-read provenance of an MCP server seen by Guardian.
 
     `suggest` lists servers whose undeclared doc-reads were tainted conservatively; `set`
-    declares one as reference material or personal data (a prefix-scoped Reading tool classification).
+    declares one as reference material, personal data, or still unknown (a prefix-scoped
+    Reading tool classification).
     """
     sub = tokens[2].lower() if len(tokens) > 2 else ""
     usage = (
         "Usage: `/guardian reading source suggest` | "
-        "`/guardian reading source set <server> reference|private`"
+        "`/guardian reading source set <server> reference|private|unknown`"
     )
     if sub == "suggest":
         suggestions = rules_mod._source_classification_suggestions()
         if not suggestions:
             return "No undeclared MCP doc-read sources seen yet."
-        lines = ["🛡️ **Sources seen** · `/guardian reading source set <server> reference|private`"]
+        lines = ["🛡️ **Sources seen** · `/guardian reading source set <server> reference|private|unknown`"]
         for item in suggestions:
             lines.append(f"- `{item['server']}` ({item['hits']}×)")
         return "\n".join(lines)
@@ -1260,7 +1275,7 @@ def _guardian_reading_overview() -> str:
         lines.append(
             "Sources seen:\n"
             + "\n".join(f"- {item['server']} ({item['hits']} read(s) seen)" for item in suggestions)
-            + "\nUse /guardian reading source set <server> reference|private."
+            + "\nUse /guardian reading source set <server> reference|private|unknown."
         )
     else:
         lines.append("Sources seen: none awaiting classification.")
@@ -1406,6 +1421,7 @@ def _guardian_tools_command() -> str:
     lines = [
         "Hermes Guardian Reading tool classifications",
         f"Taint Classification: {rules_mod._taint_classification_mode()}",
+        f"LLM source classification: {'on' if rules_mod._llm_source_classification_enabled() else 'off'}",
     ]
     if not overrides:
         lines.append("No Reading tool classifications configured.")
@@ -1430,7 +1446,7 @@ def _guardian_tool_command(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     usage = (
         "Usage: `/guardian reading tool set <match> [taints=a+b] "
-        "[source=reference|private] [note=<text>]` | "
+        "[source=reference|private|unknown] [note=<text>]` | "
         "`/guardian reading tool delete <match_or_id>` | "
         "`/guardian reading tool enable|disable <id_or_match>`"
     )
@@ -1970,6 +1986,7 @@ def _guardian_status(owner_hash: str) -> str:
         "Hermes Guardian status",
         f"Egress Safety: {core._egress_safety_policy()}",
         f"Taint Classification: {rules_mod._taint_classification_mode()} ({len(rules_mod._reading_tools())} reading tool(s))",
+        f"LLM source classification: {'on' if rules_mod._llm_source_classification_enabled() else 'off'}",
         f"LLM context: user-prompt {'on' if rules_mod._llm_user_context_enabled() else 'off'}, "
         f"cron {'on' if rules_mod._llm_cron_context_enabled() else 'off'}",
         f"Security rules: {len(rules_mod._SECURITY_RULE_IDS) - len(disabled_security)} enabled, {len(disabled_security)} disabled",

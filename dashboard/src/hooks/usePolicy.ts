@@ -10,6 +10,8 @@ export interface PolicyController {
   setEgressSafety: (mode: string) => void;
   taintClassification: string;
   setTaintClassification: (mode: string) => void;
+  llmSourceClassification: boolean;
+  setLlmSourceClassification: (enabled: boolean) => void;
   llmUserContext: boolean;
   setLlmUserContext: (enabled: boolean) => void;
   llmCronContext: boolean;
@@ -30,6 +32,7 @@ export function usePolicy(): PolicyController {
   const [error, setError] = useState("");
   const [egressSafety, setEgressSafety] = useState("llm");
   const [taintClassification, setTaintClassification] = useState("balanced");
+  const [llmSourceClassification, setLlmSourceClassification] = useState(true);
   const [llmUserContext, setLlmUserContext] = useState(true);
   const [llmCronContext, setLlmCronContext] = useState(false);
   const [persistPrompts, setPersistPrompts] = useState(false);
@@ -43,6 +46,7 @@ export function usePolicy(): PolicyController {
         setPolicy(value);
         setEgressSafety(value.egress_safety || "llm");
         setTaintClassification(value.taint_classification || "balanced");
+        setLlmSourceClassification(value.llm_source_classification !== false);
         setLlmUserContext(value.llm_user_context !== false);
         setLlmCronContext(value.llm_cron_context === true);
         setPersistPrompts(value.persist_prompts === true);
@@ -68,6 +72,8 @@ export function usePolicy(): PolicyController {
     setEgressSafety,
     taintClassification,
     setTaintClassification,
+    llmSourceClassification,
+    setLlmSourceClassification,
     llmUserContext,
     setLlmUserContext,
     llmCronContext,

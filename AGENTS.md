@@ -250,6 +250,7 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
   },
   "reading": {
     "taint_classification": "balanced",
+    "llm_source_classification": true,
     "tools": [
       {
         "id": "source_tool_ab12cd34",
@@ -300,7 +301,7 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
 ```
 
 Internally, `privacy/rules.py` consumes a normalized in-memory structure
-(`privacy.{egress_safety,taint_classification,llm_user_context,
+(`privacy.{egress_safety,taint_classification,llm_source_classification,llm_user_context,
 llm_cron_context,llm_verifier_model,rules,reading_tools,sharing_tools}`, `self`, `trusted_recipients`,
 `outward_sharing`, `security.rules`, `language_packs.enabled`, `retention`,
 `dashboard`); these internal keys are what the engine and mutators use.
@@ -310,7 +311,8 @@ re-normalizes it on save; `decide`, `classify`, and `resolve_destination_trust`
 only ever see the internal structure.
 The file→internal map (doc 04 §3): `whats_yours.stores/.identities/.hosts`
 → `self.destinations/.identities/.hosts`; `reading.taint_classification` →
-`privacy.taint_classification`; `reading.tools` → `privacy.reading_tools`;
+`privacy.taint_classification`; `reading.llm_source_classification` →
+`privacy.llm_source_classification`; `reading.tools` → `privacy.reading_tools`;
 `sharing.trusted_recipients` →
 `trusted_recipients.entries`; `sharing.rules` → `privacy.rules`;
 `sharing.tools` → `privacy.sharing_tools`;
@@ -330,10 +332,19 @@ stronger classification taints as `documents`. In `relaxed`, read behavior match
 balanced and unrecognized non-MCP tools are not gated under taint; relaxed raises
 a runtime risk banner.
 
+`reading.llm_source_classification` defaults to `true`. When enabled, otherwise-unknown
+signalless reads may be classified by the configured LLM using metadata only (tool
+name, matcher shape, argument keys/types, status, result type/size, and JSON keys).
+The result is persisted as an ordinary Reading tool classification so the same
+tool matcher is not reviewed again. The classifier never receives result content
+or raw argument values.
+
 `privacy.reading_tools` is the user-managed source-classification registry. Each
 entry has a `match` (exact tool name or a single trailing-`*` prefix), optional
 `taints` (source classes applied when the tool's result is observed), and optional
-`source` (`reference` or `private`).
+`source` (`reference`, `private`, or `unknown`). `unknown` is a remembered
+unresolved state; it suppresses repeated review but does not relax fallback taint
+behavior.
 
 `privacy.sharing_tools` is the user-managed egress-classification registry. Each
 entry has a `match`, optional `egress`: `ignore` (treat as a safe non-sink),

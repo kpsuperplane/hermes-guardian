@@ -594,7 +594,7 @@ def _is_mcp_doc_read(tool_name: str) -> bool:
 
 
 # Taint reason carried on the activity row for the conservative source-provenance default.
-# The ``source_default:`` prefix is what the activity deep-link maps to the Protection tab.
+# The ``source_default:`` prefix is what the activity deep-link maps to the Reading tab.
 _SOURCE_DEFAULT_REASON = "source_default:undeclared_mcp_read"
 _STRICT_UNKNOWN_READ_REASON = "source_default:unknown_read"
 
@@ -1112,7 +1112,7 @@ def _taint_classes_for_tool_result(
         # Undeclared, unknown provenance → conservative: always taint as personal documents,
         # even when the content trips no signal (closes the 0818f09 FN). _is_source_default_read
         # flags these rows (source_default reason → Reading picker / deep-link); the operator
-        # declares the server (source=reference|private) to change the classification.
+        # declares the server source to change the classification.
         return {"documents"} | override_taints
     classes = _classes_from_tool_name(tool_name)
     if classes:
@@ -1516,6 +1516,143 @@ def _source_private_taint_classes(tool_name: str) -> set[str]:
     return declared or {"documents"}
 
 
+def _metadata_shape(value: Any, *, depth: int = 0) -> Any:
+    if depth >= 3:
+        return {"type": type(value).__name__, "truncated": True}
+    if isinstance(value, dict):
+        items = []
+        for key, child in list(value.items())[:40]:
+            items.append({
+                "key": str(key)[:80],
+                "value": _metadata_shape(child, depth=depth + 1),
+            })
+        return {"type": "object", "keys": [item["key"] for item in items], "items": items}
+    if isinstance(value, (list, tuple)):
+        sample = [_metadata_shape(item, depth=depth + 1) for item in list(value)[:10]]
+        return {"type": "array", "length": len(value), "sample": sample}
+    if isinstance(value, str):
+        return {"type": "string", "length": len(value)}
+    if isinstance(value, bool):
+        return {"type": "boolean"}
+    if isinstance(value, int):
+        return {"type": "integer"}
+    if isinstance(value, float):
+        return {"type": "number"}
+    if value is None:
+        return {"type": "null"}
+    return {"type": type(value).__name__}
+
+
+def _result_metadata(result_value: Any) -> dict[str, Any]:
+    metadata = _metadata_shape(result_value)
+    if isinstance(result_value, str):
+        metadata["string_empty"] = not bool(result_value)
+    return metadata if isinstance(metadata, dict) else {"type": type(result_value).__name__}
+
+
+def _llm_source_match_for_tool(tool_name: str) -> str:
+    lower = re.sub(r"[^a-z0-9_.:-]+", "", str(tool_name or "").strip().lower())
+    if _is_mcp_doc_read(tool_name):
+        server = _mcp_server_prefix(tool_name)
+        if server:
+            return f"{server}_*"
+    return lower
+
+
+def _llm_unknown_read_source_metadata(
+    tool_name: str,
+    result_value: Any,
+    *,
+    status: str = "",
+    tool_args: Any = None,
+) -> dict[str, Any]:
+    return {
+        "tool_name": str(tool_name or "")[:160],
+        "match_candidate": _llm_source_match_for_tool(tool_name),
+        "is_mcp_doc_read": _is_mcp_doc_read(tool_name),
+        "mcp_server_prefix": _mcp_server_prefix(tool_name),
+        "status": str(status or "")[:40],
+        "argument_shape": _metadata_shape(tool_args),
+        "result_shape": _result_metadata(result_value),
+        "deterministic_facts": {
+            "reference_read": _is_reference_read(tool_name, tool_args),
+            "web_sourced_tool": _is_web_sourced_tool(tool_name),
+            "local_system_tool": _is_local_system_tool(tool_name),
+            "tool_name_classes": sorted(_classes_from_tool_name(tool_name)),
+            "content_classes": sorted(_classes_from_content(result_value)),
+            "existing_source": _reading_tool_source(tool_name),
+            "existing_taints": sorted(_reading_tool_taint_classes(tool_name)),
+            "taint_classification": rules_mod._taint_classification_mode(),
+        },
+    }
+
+
+def _llm_source_classification_eligible(
+    tool_name: str,
+    result_value: Any,
+    *,
+    status: str = "",
+    tool_args: Any = None,
+) -> bool:
+    if not rules_mod._llm_source_classification_enabled():
+        return False
+    if str(status or "").lower() == "error":
+        return False
+    if _is_local_system_tool(tool_name):
+        return False
+    if _is_reference_read(tool_name, tool_args) or _is_web_sourced_tool(tool_name):
+        return False
+    if _reading_tool_source(tool_name) or _reading_tool_taint_classes(tool_name):
+        return False
+    if _classes_from_tool_name(tool_name) or _classes_from_content(result_value):
+        return False
+    return _is_mcp_doc_read(tool_name) or bool(_llm_source_match_for_tool(tool_name))
+
+
+def _maybe_classify_unknown_read_source(
+    tool_name: str,
+    result_value: Any,
+    *,
+    status: str = "",
+    tool_args: Any = None,
+) -> dict[str, Any] | None:
+    if not _llm_source_classification_eligible(
+        tool_name, result_value, status=status, tool_args=tool_args
+    ):
+        return None
+    match = _llm_source_match_for_tool(tool_name)
+    if not match:
+        return None
+    from . import llm as llm_mod
+
+    verdict = llm_mod._llm_source_classification(
+        _llm_unknown_read_source_metadata(
+            tool_name, result_value, status=status, tool_args=tool_args
+        )
+    )
+    if not verdict:
+        return None
+    source = str(verdict.get("source") or "unknown").strip().lower()
+    if source not in {"reference", "private", "unknown"}:
+        source = "unknown"
+    if source != "unknown" and verdict.get("confidence") != "high":
+        source = "unknown"
+    taints = verdict.get("taints") if source == "private" else []
+    note_bits = ["LLM source classifier"]
+    rationale = str(verdict.get("rationale") or "").strip()
+    if rationale:
+        note_bits.append(rationale)
+    ok, _message = rules_mod._set_reading_tool(
+        match,
+        source=source,
+        taints=taints,
+        note=": ".join(note_bits),
+    )
+    if not ok:
+        return None
+    return {"match": match, "source": source, "taints": taints}
+
+
 def _is_source_default_read(tool_name: str, tool_args: Any = None) -> bool:
     """True iff a read hits the conservative source-provenance default: an MCP doc-read (by
     name shape) that is neither provably-reference nor declared. These are the undeclared,
@@ -1525,7 +1662,7 @@ def _is_source_default_read(tool_name: str, tool_args: Any = None) -> bool:
         return False
     if _is_reference_read(tool_name, tool_args):
         return False
-    return _reading_tool_source(tool_name) not in ("reference", "private")
+    return not _reading_tool_source(tool_name)
 
 
 def _is_strict_unknown_read(tool_name: str, result_value: Any, status: str = "", tool_args: Any = None) -> bool:
@@ -1541,7 +1678,7 @@ def _is_strict_unknown_read(tool_name: str, result_value: Any, status: str = "",
         return False
     if _classes_from_tool_name(tool_name) or _is_web_sourced_tool(tool_name):
         return False
-    if _reading_tool_source(tool_name) in ("reference", "private"):
+    if _reading_tool_source(tool_name):
         return False
     if _reading_tool_taint_classes(tool_name):
         return False

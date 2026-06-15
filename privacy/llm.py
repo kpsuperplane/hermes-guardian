@@ -503,6 +503,95 @@ def _validated_llm_security_verdict(parsed: Any) -> dict[str, str]:
     }
 
 
+def _validated_llm_source_classification(parsed: Any) -> dict[str, Any]:
+    if not isinstance(parsed, dict):
+        raise ValueError("source classification was not a JSON object")
+    allowed_sources = set(core._LLM_SOURCE_CLASSIFICATION_SCHEMA["properties"]["source"]["enum"])
+    allowed_confidence = set(core._LLM_SOURCE_CLASSIFICATION_SCHEMA["properties"]["confidence"]["enum"])
+    missing = [
+        key
+        for key in core._LLM_SOURCE_CLASSIFICATION_SCHEMA["required"]
+        if key not in parsed
+    ]
+    if missing:
+        raise ValueError(f"source classification missing required fields: {', '.join(missing)}")
+    source = str(parsed.get("source") or "").strip().lower()
+    confidence = str(parsed.get("confidence") or "").strip().lower()
+    rationale = str(parsed.get("rationale") or "").strip()
+    if source not in allowed_sources:
+        raise ValueError("source classification source was invalid")
+    if confidence not in allowed_confidence:
+        raise ValueError("source classification confidence was invalid")
+    if not rationale:
+        raise ValueError("source classification rationale was empty")
+    raw_taints = parsed.get("taints") if isinstance(parsed.get("taints"), list) else []
+    taints = [
+        str(cls).strip()
+        for cls in raw_taints
+        if str(cls).strip() in core._ALL_PRIVACY_CLASSES
+    ][:8]
+    if source != "private":
+        taints = []
+    elif not taints:
+        taints = ["documents"]
+    return {
+        "source": source,
+        "taints": taints,
+        "confidence": confidence,
+        "rationale": _sanitize_rationale(rationale),
+    }
+
+
+def _llm_source_classification(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    llm = state._PLUGIN_LLM
+    if llm is None or not hasattr(llm, "complete_structured"):
+        return None
+    activity_store._perf_mark_llm_invoked()
+    verifier_model = rules._llm_verifier_model()
+    input_text = json.dumps(metadata, sort_keys=True)
+
+    def _call(use_model: bool) -> Any:
+        kwargs: dict[str, Any] = {
+            "instructions": core._LLM_SOURCE_CLASSIFICATION_INSTRUCTIONS,
+            "input": [{"type": "text", "text": input_text}],
+            "json_schema": core._LLM_SOURCE_CLASSIFICATION_SCHEMA,
+            "temperature": 0,
+            "max_tokens": 180,
+            "timeout": 20,
+            "purpose": "hermes-guardian.source_llm",
+            "schema_name": "hermes_guardian_source_classification",
+        }
+        if use_model and verifier_model:
+            kwargs["model"] = verifier_model
+        return llm.complete_structured(**kwargs)
+
+    try:
+        result = _call(use_model=True)
+    except Exception as exc:
+        if verifier_model:
+            core.logger.warning(
+                "%s: source classifier model override %r failed (%s); retrying on default model",
+                core._PLUGIN_NAME, verifier_model, exc,
+            )
+            try:
+                result = _call(use_model=False)
+            except Exception as exc2:
+                core.logger.warning("%s: LLM source classifier unavailable: %s", core._PLUGIN_NAME, exc2)
+                return None
+        else:
+            core.logger.warning("%s: LLM source classifier unavailable: %s", core._PLUGIN_NAME, exc)
+            return None
+
+    try:
+        parsed = getattr(result, "parsed", None)
+        if parsed is None and getattr(result, "text", ""):
+            parsed = json.loads(str(result.text))
+        return _validated_llm_source_classification(parsed)
+    except Exception as exc:
+        core.logger.warning("%s: LLM source classifier returned invalid output: %s", core._PLUGIN_NAME, exc)
+        return None
+
+
 def _deny_cache_key(shape: dict[str, Any]) -> str:
     return "|".join([
         tool_policy._normalize_session_id(shape.get("session_id")),
