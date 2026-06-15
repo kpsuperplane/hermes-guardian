@@ -1154,6 +1154,7 @@ python -m pytest -q tests/test_language_packs.py tests/test_multilingual_securit
 python -m pytest -q tests/test_loader_contract.py tests/test_hooks_registration.py
 python -m pytest -q tests/test_approval_fatigue_benchmark.py
 python -m pytest -q tests/test_adversarial_corpus.py
+python -m pytest -q tests/test_hermes_e2e_eval.py
 ```
 
 Run the additive approval-fatigue benchmark:
@@ -1183,6 +1184,35 @@ sanitization violations, and known-gap count. CI gates URL path/query/base64
 exfiltration, filename/upload shapes, supported same-call terminal exfiltration,
 multilingual auth-code/security phrasing, sensitive auth links, and benign
 controls. DNS-label-only exfiltration is tracked as a non-gating known gap.
+
+Run the Hermes-like e2e conversation eval:
+
+```bash
+python -m benchmarks.hermes_e2e_eval --pretty
+python -m pytest -q tests/test_hermes_e2e_eval.py
+```
+
+The e2e eval loads the plugin facade into temporary Guardian state and drives
+full multi-turn transcripts from `tests/fixtures/e2e_conversations.json` through
+the real Hermes hook lifecycle: inbound user dispatch, pre-LLM hygiene,
+pre-tool checks, tool-result observation, final-output checks, time advances,
+and session reset/end hooks. It uses deterministic transcript steps in normal
+CI and reports attack prevented rate, benign false-positive rate, completion,
+auto approvals, LLM calls, p50/p95/max hook latency, and sanitization
+violations.
+
+Live model evals are opt-in locally and required by the dedicated live CI job on
+pushes to `main` and manual dispatch:
+
+```bash
+python -m pytest -m llm --run-llm -q
+```
+
+These tests reuse the configured live backend (`GEMINI_API_KEY` or
+`OPENROUTER_API_KEY` plus `GUARDIAN_LLM_TEST_MODEL`; `OPENROUTER_MODEL` is also
+accepted for OpenRouter and prefers OpenRouter if both backend keys are present)
+and include both the batched verifier judgment suite and compact Hermes-like
+planner/verifier e2e cases.
 
 ### AgentDojo adapter (optional, local research)
 

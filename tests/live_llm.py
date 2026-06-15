@@ -13,17 +13,18 @@ Two backends are supported, selected from the environment:
   ``generateContent`` API with ``responseSchema`` structured output. (The native
   API is what enforces the schema for Gemma; Google's OpenAI-compat layer mangles
   ``json_schema`` for Gemma.) Free tier includes Gemma and Gemini Flash.
-- **OpenRouter** (``OPENROUTER_API_KEY``) — uses the OpenAI-compatible
+- **OpenRouter** (``OPENROUTER_API_KEY`` / ``OPENROUTER_MODEL``) — uses the OpenAI-compatible
   ``/chat/completions`` API with ``response_format`` json_schema, plus
   ``provider.require_parameters`` so routing only lands on a provider that enforces
   the schema.
 
-Either way ``GUARDIAN_LLM_TEST_MODEL`` names the model. The live suite is opt-in
+``GUARDIAN_LLM_TEST_MODEL`` names the model for either backend. For OpenRouter,
+``OPENROUTER_MODEL`` is also accepted and, when set with ``OPENROUTER_API_KEY``,
+selects OpenRouter even if a Gemini key is present. The live suite is opt-in
 (``--run-llm`` / ``GUARDIAN_RUN_LLM``); once opted in, a missing backend key FAILS
 the run (see ``live_llm_or_fail``) rather than skipping, so an unconfigured
 environment can't masquerade as a pass. Standard-library only (``urllib``), matching
-the plugin's no-runtime-dependency policy; imported solely by
-``test_llm_verifier_live.py``.
+the plugin's no-runtime-dependency policy.
 """
 
 from __future__ import annotations
@@ -332,6 +333,17 @@ class LiveSecurityLlm:
 
 def _select_backend() -> _Backend | None:
     google_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    prefer_openrouter = bool(openrouter_key and os.environ.get("OPENROUTER_MODEL"))
+    if openrouter_key and prefer_openrouter:
+        return _Backend(
+            label="OpenRouter",
+            mode="openai",
+            base_url=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/"),
+            api_key=openrouter_key,
+            require_parameters=True,
+            suggestion="a model whose supported_parameters include 'structured_outputs', e.g. openai/gpt-4o-mini",
+        )
     if google_key:
         return _Backend(
             label="Google AI Studio",
@@ -343,7 +355,6 @@ def _select_backend() -> _Backend | None:
             require_parameters=False,
             suggestion="a free structured-output model such as gemini-2.5-flash or gemma-4-31b-it",
         )
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
     if openrouter_key:
         return _Backend(
             label="OpenRouter",
@@ -357,8 +368,8 @@ def _select_backend() -> _Backend | None:
 
 
 def live_models() -> list[str]:
-    """Models to test, from ``GUARDIAN_LLM_TEST_MODEL`` (comma-separated for many)."""
-    raw = os.environ.get("GUARDIAN_LLM_TEST_MODEL") or ""
+    """Models to test, from ``GUARDIAN_LLM_TEST_MODEL`` or ``OPENROUTER_MODEL``."""
+    raw = os.environ.get("GUARDIAN_LLM_TEST_MODEL") or os.environ.get("OPENROUTER_MODEL") or ""
     return [m.strip() for m in raw.split(",") if m.strip()]
 
 
@@ -368,8 +379,10 @@ def live_llm_or_fail(model: str | None = None) -> LiveSecurityLlm:
     Configuration comes from the environment (set as CI secrets / repo variables):
     ``GUARDIAN_LLM_TEST_MODEL`` (one model, or a comma-separated list) plus one
     backend key — ``GEMINI_API_KEY`` / ``GOOGLE_API_KEY`` (Google AI Studio) or
-    ``OPENROUTER_API_KEY`` (OpenRouter). Google is preferred when both are present.
-    Pass ``model`` to pick one from a multi-model list; defaults to the first.
+    ``OPENROUTER_API_KEY`` (OpenRouter). ``OPENROUTER_MODEL`` may be used instead
+    of ``GUARDIAN_LLM_TEST_MODEL`` for OpenRouter and makes OpenRouter preferred
+    when both backend keys are present. Pass ``model`` to pick one from a
+    multi-model list; defaults to the first.
 
     Reaching this call means the live suite was explicitly opted into (``--run-llm``
     / ``GUARDIAN_RUN_LLM`` — otherwise the conftest hook deselects every ``llm`` test
@@ -382,10 +395,10 @@ def live_llm_or_fail(model: str | None = None) -> LiveSecurityLlm:
     if backend is None or not chosen:
         pytest.fail(
             "live LLM verifier tests were requested (--run-llm / GUARDIAN_RUN_LLM) but "
-            "no backend is configured. Set GUARDIAN_LLM_TEST_MODEL plus one of "
-            "GEMINI_API_KEY / GOOGLE_API_KEY (Google AI Studio) or OPENROUTER_API_KEY "
-            "(OpenRouter). Locally, a gitignored repo-root .env works; in CI set them as "
-            "repository secrets/variables.",
+            "no backend is configured. Set GUARDIAN_LLM_TEST_MODEL (or OPENROUTER_MODEL) "
+            "plus one of GEMINI_API_KEY / GOOGLE_API_KEY (Google AI Studio) or "
+            "OPENROUTER_API_KEY (OpenRouter). Locally, a gitignored repo-root .env works; "
+            "in CI set them as repository secrets/variables.",
             pytrace=False,
         )
     return LiveSecurityLlm(model=chosen, backend=backend)

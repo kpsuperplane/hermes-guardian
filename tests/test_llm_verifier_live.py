@@ -19,8 +19,9 @@ correctly — not the hook/policy/sanitization path, which the unit suite covers
 category ever proves flaky under batching, it can split into a second call without
 changing the scenario data.
 
-Multi-model: ``GUARDIAN_LLM_TEST_MODEL`` may be a comma-separated list; the test is
-parametrized per model, so the same scenarios validate the prompt across models.
+Multi-model: ``GUARDIAN_LLM_TEST_MODEL`` may be a comma-separated list; for
+OpenRouter, ``OPENROUTER_MODEL`` is also accepted. The test is parametrized per
+model, so the same scenarios validate the prompt across models.
 
 Marked ``@pytest.mark.llm`` and DESELECTED by default (``addopts = -m 'not llm'``).
 Once opted in (``--run-llm`` / ``GUARDIAN_RUN_LLM``), a missing backend FAILS rather

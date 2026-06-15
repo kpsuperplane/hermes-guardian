@@ -67,10 +67,9 @@ Issues = "https://github.com/kpsuperplane/hermes-guardian/issues"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-# The live LLM verifier test (tests/test_llm_verifier_live.py) calls a real model
-# over the network. It is marked `llm` and SKIPPED by default via a conftest hook;
-# it runs only on explicit opt-in — `pytest --run-llm` (or GUARDIAN_RUN_LLM=1) —
-# which is what the dedicated CI job passes.
+# Live LLM tests call a real model over the network. They are marked `llm` and
+# SKIPPED by default via a conftest hook; they run only on explicit opt-in —
+# `pytest --run-llm` (or GUARDIAN_RUN_LLM=1) — which is what the dedicated CI job passes.
 markers = [
-    "llm: live test that calls a real model; skipped unless --run-llm / GUARDIAN_RUN_LLM",
+    "llm: live tests that call a real model; skipped unless --run-llm / GUARDIAN_RUN_LLM",
 ]

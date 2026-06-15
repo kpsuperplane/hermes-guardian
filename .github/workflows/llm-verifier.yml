@@ -1,15 +1,13 @@
-name: LLM Verifier (live)
+name: LLM Evals (live)
 
-# Live, end-to-end tests of the LLM security verifier against a real model. These
-# call an external API, so they do NOT run on every PR (and secrets are not exposed
-# to fork PRs anyway). They run on pushes to main and on manual dispatch. The free,
-# hermetic unit matrix in tests.yml still runs on every PR.
+# Live tests of Guardian's LLM security verifier and Hermes-like e2e evals against
+# a real model. These call an external API, so they do NOT run on every PR (and
+# secrets are not exposed to fork PRs anyway). They run on pushes to main and on
+# manual dispatch. The free, hermetic unit matrix in tests.yml still runs on every PR.
 #
-# Configure in the repository (one backend; Google is preferred when both are set):
-#   - secret GEMINI_API_KEY           Google AI Studio key (free tier), OR
+# Configure in the repository:
 #   - secret OPENROUTER_API_KEY       OpenRouter key
-#   - secret GUARDIAN_LLM_TEST_MODEL  model id for the chosen backend, e.g.
-#                                      gemini-2.5-flash (Google) or openai/gpt-4o-mini.
+#   - secret/variable OPENROUTER_MODEL model id, e.g. openai/gpt-4o-mini.
 #                                      May be a comma-separated list to test several.
 # This job opts into the live tests (--run-llm), so if no backend key/model is set it
 # FAILS with a message naming the env vars to add — it does not silently self-skip.
@@ -21,17 +19,16 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: llm-verifier-${{ github.ref }}
+  group: llm-evals-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  llm-verifier:
+  llm-evals:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      GUARDIAN_LLM_TEST_MODEL: ${{ secrets.GUARDIAN_LLM_TEST_MODEL }}
+      OPENROUTER_MODEL: ${{ secrets.OPENROUTER_MODEL || vars.OPENROUTER_MODEL }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -46,5 +43,5 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
 
-      - name: Run live LLM verifier test
+      - name: Run live LLM eval tests
         run: python -m pytest -m llm --run-llm -q
