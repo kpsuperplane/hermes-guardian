@@ -226,7 +226,7 @@ def test_partial_file_only_whats_yours_fills_defaults():
     # Egress Safety defaults to llm; contexts and taint classification to their safe defaults.
     assert config["privacy"]["egress_safety"] == "llm" == plugin._DEFAULT_EGRESS_SAFETY
     assert config["privacy"]["llm_user_context"] is True
-    assert config["privacy"]["llm_cron_context"] is False
+    assert config["privacy"]["llm_cron_context"] is True
     assert config["privacy"]["taint_classification"] == "balanced"
     assert config["privacy"]["llm_source_classification"] is True
     assert config["privacy"]["reading_tools"] == []
@@ -336,7 +336,7 @@ def test_invalid_sharing_context_value_fails_closed_to_strict():
     config = plugin._load_privacy_config()
 
     assert config["privacy"]["egress_safety"] == "strict"
-    assert config["privacy"]["llm_cron_context"] is False
+    assert config["privacy"]["llm_cron_context"] is True
     assert plugin.state._PERSISTENT_RULES_ERROR is True
 
 
@@ -454,7 +454,7 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     assert set(on_disk) == {"version", "whats_yours", "reading", "sharing", "protection"}
     assert on_disk["sharing"]["egress_safety"] == "read-only"
     assert on_disk["sharing"]["owner_context"] is True
-    assert on_disk["sharing"]["cron_context"] is False
+    assert on_disk["sharing"]["cron_context"] is True
     assert on_disk["sharing"]["verifier_model"] == ""
     assert "store:crm" in on_disk["whats_yours"]["stores"]
     assert on_disk["protection"]["security"]["sensitive_links"] is False

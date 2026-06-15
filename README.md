@@ -217,7 +217,7 @@ the file is reading the decision:
   "sharing": {
     "egress_safety": "llm",
     "owner_context": true,
-    "cron_context": false,
+    "cron_context": true,
     "verifier_model": "",
     "trusted_recipients": [],
     "rules": [],
@@ -342,15 +342,15 @@ command, or directly in `guardian-rules.json` under `sharing`:
 
 ```text
 /guardian sharing owner-context on|off   # default on
-/guardian sharing cron-context on|off    # default off
+/guardian sharing cron-context on|off    # default on
 ```
 
 ```json
-{ "sharing": { "owner_context": true, "cron_context": false } }
+{ "sharing": { "owner_context": true, "cron_context": true } }
 ```
 
 `llm_user_context` (default on) gates the owner channel above. `llm_cron_context`
-(default off) gates a parallel channel for cron runs: when on, the verifier also
+(default on) gates a parallel channel for cron runs: when on, the verifier also
 receives `cron_context`, a sanitized excerpt of the cron job's own stored
 instruction (sourced from the job record, redacted the same way). Because cron
 runs unattended with no human to catch a bad auto-approval, a cron job can **never

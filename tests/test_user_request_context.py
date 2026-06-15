@@ -216,7 +216,7 @@ def _stub_cron_record(plugin, monkeypatch, prompt=_CRON_INSTRUCTION):
     )
 
 
-def test_cron_context_off_by_default_not_attached(monkeypatch):
+def test_cron_context_on_by_default_attaches_job_instruction(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     _stub_cron_record(plugin, monkeypatch)
@@ -227,7 +227,7 @@ def test_cron_context_off_by_default_not_attached(monkeypatch):
     _submit_form(plugin, session_id=_CRON_SESSION)
 
     payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
-    assert "cron_context" not in payload
+    assert "cron_context" in payload
 
 
 def test_cron_context_on_attaches_job_instruction(monkeypatch):

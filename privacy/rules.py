@@ -26,10 +26,11 @@ _TAINT_CLASSIFICATION_MODES = {"balanced", "strict", "relaxed"}
 # it writes ordinary Reading tool classifications so the same source is not re-judged.
 _DEFAULT_LLM_SOURCE_CLASSIFICATION = True
 # Whether the llm-mode verifier receives sanitized authorization-evidence context.
-# user context (authenticated owner's inbound request) defaults on; cron context
-# (a job's own stored instruction) defaults off because cron runs unattended.
+# User context (authenticated owner's inbound request) and cron context (a job's
+# own stored instruction) default on. High-risk cron egress still falls back to
+# manual approval in the verifier path.
 _DEFAULT_LLM_USER_CONTEXT = True
-_DEFAULT_LLM_CRON_CONTEXT = False
+_DEFAULT_LLM_CRON_CONTEXT = True
 # Opt-in debugging: persist the (already-sanitized) user/cron prompt onto activity rows
 # so dashboard history groups can show what was asked. Default OFF — it relaxes the
 # "prompt is never persisted" invariant, so it is confirmation-gated on every surface.

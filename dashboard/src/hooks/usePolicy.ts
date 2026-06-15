@@ -34,7 +34,7 @@ export function usePolicy(): PolicyController {
   const [taintClassification, setTaintClassification] = useState("balanced");
   const [llmSourceClassification, setLlmSourceClassification] = useState(true);
   const [llmUserContext, setLlmUserContext] = useState(true);
-  const [llmCronContext, setLlmCronContext] = useState(false);
+  const [llmCronContext, setLlmCronContext] = useState(true);
   const [persistPrompts, setPersistPrompts] = useState(false);
   const [llmVerifierModel, setLlmVerifierModel] = useState("");
 
@@ -48,7 +48,7 @@ export function usePolicy(): PolicyController {
         setTaintClassification(value.taint_classification || "balanced");
         setLlmSourceClassification(value.llm_source_classification !== false);
         setLlmUserContext(value.llm_user_context !== false);
-        setLlmCronContext(value.llm_cron_context === true);
+        setLlmCronContext(value.llm_cron_context !== false);
         setPersistPrompts(value.persist_prompts === true);
         setLlmVerifierModel(value.llm_verifier_model || "");
       })

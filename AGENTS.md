@@ -210,7 +210,7 @@ the tests/docs are updated accordingly:
   must never populate it. (Persisting this excerpt is the `persist_prompts`
   exception above.)
 - Both context channels are gated by privacy booleans: `llm_user_context`
-  (default on) gates the owner channel above; `llm_cron_context` (default off)
+  (default on) gates the owner channel above; `llm_cron_context` (default on)
   gates a parallel `cron_context` channel that supplies a cron job's own
   sanitized stored instruction. Because cron runs unattended, a cron job may
   never self-authorize high-risk egress: a high-risk `allow` verdict on a cron
@@ -265,7 +265,7 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
   "sharing": {
     "egress_safety": "strict",
     "owner_context": true,
-    "cron_context": false,
+    "cron_context": true,
     "verifier_model": "",
     "trusted_recipients": [
       {"identity": "ally@example.com", "classes": ["communications"], "note": ""}
@@ -360,7 +360,7 @@ destination labels, and MCP server prefixes. It never stores raw arguments, resu
 content, prompts, URL paths/query strings, or payloads.
 
 `privacy.llm_user_context` (default `true`) and `privacy.llm_cron_context`
-(default `false`) are booleans gating the two `llm`-mode authorization-evidence
+(default `true`) are booleans gating the two `llm`-mode authorization-evidence
 channels. They are normalized by `_config_bool` and exposed through
 `_llm_user_context_enabled` / `_llm_cron_context_enabled` and the
 `_set_llm_user_context` / `_set_llm_cron_context` setters.

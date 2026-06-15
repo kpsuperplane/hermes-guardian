@@ -1,7 +1,7 @@
 """Config, slash-command, and dashboard surface for the LLM context settings.
 
 Two privacy-level booleans gate the authorization-evidence channels:
-`llm_user_context` (default on) and `llm_cron_context` (default off). These tests
+`llm_user_context` (default on) and `llm_cron_context` (default on). These tests
 cover defaults, JSON normalization/preservation, the `/guardian privacy
 user-context|cron-context` command handlers with owner checks, the dashboard adapters and
 policy snapshot, and the cron-context confirmation guard.
@@ -20,10 +20,10 @@ from support import *  # noqa: F403
 
 # --- config + normalization ----------------------------------------------
 
-def test_defaults_user_on_cron_off():
+def test_defaults_user_on_cron_on():
     plugin = load_plugin()
     assert plugin._llm_user_context_enabled() is True
-    assert plugin._llm_cron_context_enabled() is False
+    assert plugin._llm_cron_context_enabled() is True
 
 
 def test_settings_persist_and_preserve_other_privacy_config(tmp_path):
@@ -78,9 +78,9 @@ def test_invalid_context_value_is_rejected_to_fail_closed(tmp_path):
     plugin.state._PERSISTENT_RULES_CACHE = None
     plugin.state._PERSISTENT_RULES_MTIME = None
 
-    # Invalid config falls back to strict; cron context stays off (fail-closed).
+    # Invalid config falls back to strict; context defaults still apply.
     assert plugin._egress_safety_policy() == "strict"
-    assert plugin._llm_cron_context_enabled() is False
+    assert plugin._llm_cron_context_enabled() is True
 
 
 def test_policy_snapshot_exposes_both_flags():
@@ -115,17 +115,17 @@ def test_slash_invalid_value_returns_usage():
     plugin = load_plugin()
     response = plugin._handle_guardian_command("sharing cron-context maybe")
     assert "Usage: /guardian sharing cron-context on|off" in response
-    assert plugin._llm_cron_context_enabled() is False
+    assert plugin._llm_cron_context_enabled() is True
 
 
 def test_non_owner_cannot_toggle_contexts():
     plugin = load_plugin()
 
-    plugin._on_pre_gateway_dispatch(gateway_event("/guardian sharing cron-context on", user_id="attacker"))
-    response = plugin._handle_guardian_command("sharing cron-context on")
+    plugin._on_pre_gateway_dispatch(gateway_event("/guardian sharing cron-context off", user_id="attacker"))
+    response = plugin._handle_guardian_command("sharing cron-context off")
 
     assert "Permission denied" in response
-    assert plugin._llm_cron_context_enabled() is False
+    assert plugin._llm_cron_context_enabled() is True
 
 
 # --- dashboard adapters + confirmation guard ------------------------------
