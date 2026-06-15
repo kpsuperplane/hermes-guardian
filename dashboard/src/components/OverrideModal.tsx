@@ -68,15 +68,15 @@ export function OverrideModal({
                   ? "Edit source classification"
                   : "Edit egress classification"
                 : isReading
-                  ? "New source classification"
-                  : "New egress classification"}
+                  ? "Set source policy"
+                  : "Set egress policy"}
             </h2>
             <div className="hermes-guardian-subtitle">
               {form.isEdit
                 ? text(form.match)
                 : isReading
-                  ? "Teach Guardian what a tool reads"
-                  : "Teach Guardian when a tool sends data"}
+                  ? "Set the source policy for this table row"
+                  : "Set the egress policy for this table row"}
             </div>
           </div>
           <IconButton icon="x" label="Close tool classification dialog" onClick={onCancel} />
@@ -198,7 +198,7 @@ export function OverrideModal({
           ) : null}
           {formError ? <div className="hermes-guardian-banner">{formError}</div> : null}
           <div className="hermes-guardian-actions">
-            <Button type="submit">{form.isEdit ? "Save changes" : "Create override"}</Button>
+            <Button type="submit">{form.isEdit ? "Save changes" : "Set policy"}</Button>
             <Button variant="secondary" onClick={onCancel}>
               Cancel
             </Button>

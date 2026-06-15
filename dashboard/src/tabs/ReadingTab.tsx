@@ -63,9 +63,6 @@ function ToolClassification(props: {
           </div>
         </div>
       </div>
-      <div className="hermes-guardian-tools-override-actions">
-        <Button onClick={() => props.onNewOverride()}>New source classification</Button>
-      </div>
       {rows.length ? (
         <div className="hermes-guardian-tool-table-wrap">
           <table className="hermes-guardian-tool-table">
@@ -141,7 +138,7 @@ function ToolClassification(props: {
                           </>
                         ) : (
                           <Button variant="secondary" onClick={() => props.onNewOverride(createMatch)}>
-                            Add policy
+                            Set policy
                           </Button>
                         )}
                       </div>

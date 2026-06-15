@@ -203,7 +203,7 @@ function EgressToolClassification(props: {
                           </>
                         ) : (
                           <Button variant="secondary" onClick={() => props.onNewTool(createMatch)}>
-                            Add policy
+                            Set policy
                           </Button>
                         )}
                       </div>
@@ -217,9 +217,6 @@ function EgressToolClassification(props: {
       ) : (
         <div className="hermes-guardian-muted">No tools seen yet.</div>
       )}
-      <div className="hermes-guardian-tools-override-actions">
-        <Button onClick={() => props.onNewTool()}>New egress classification</Button>
-      </div>
     </div>
   );
 }
