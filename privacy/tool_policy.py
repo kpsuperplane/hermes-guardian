@@ -1090,7 +1090,7 @@ def _taint_classes_for_tool_result(
 ) -> set[str]:
     if str(status or "").lower() == "error":
         return set()
-    override_taints = _tool_override_taint_classes(tool_name)
+    override_taints = _reading_tool_taint_classes(tool_name)
     if _is_local_system_tool(tool_name):
         classes = _classes_from_content(result_value)
         policy = local_system_policy if local_system_policy is not None else _consume_local_system_result_policy(session_id, tool_name)
@@ -1104,7 +1104,7 @@ def _taint_classes_for_tool_result(
         return _doc_content_taint_classes(result_value) | override_taints
     # An MCP doc-read (by name shape) follows its declaration if any, else fails closed.
     if _is_mcp_doc_read(tool_name):
-        source = _tool_override_source(tool_name)
+        source = _reading_tool_source(tool_name)
         if source == "reference":
             return _doc_content_taint_classes(result_value) | override_taints
         if source == "private":
@@ -1119,7 +1119,7 @@ def _taint_classes_for_tool_result(
         return classes | override_taints
     if _is_web_sourced_tool(tool_name):
         return _web_content_taint_classes(result_value, session_id) | override_taints
-    source = _tool_override_source(tool_name)
+    source = _reading_tool_source(tool_name)
     if source == "private":
         return _source_private_taint_classes(tool_name) | override_taints
     if source == "reference":
@@ -1494,24 +1494,24 @@ def _safe_tool_destination(name: str) -> str:
     return token or "tool"
 
 
-def _tool_override_taint_classes(tool_name: str) -> set[str]:
-    override = rules_mod._tool_override_for(tool_name)
+def _reading_tool_taint_classes(tool_name: str) -> set[str]:
+    override = rules_mod._reading_tool_for(tool_name)
     if not override:
         return set()
     return {cls for cls in (override.get("taints") or []) if cls in core._ALL_PRIVACY_CLASSES}
 
 
-def _tool_override_source(tool_name: str) -> str:
+def _reading_tool_source(tool_name: str) -> str:
     """Declared source-classification mode ('reference' | 'private') for a doc-read tool,
     or '' if undeclared. `source` is the classification *mode*; `taints` stays additive."""
-    override = rules_mod._tool_override_for(tool_name)
+    override = rules_mod._reading_tool_for(tool_name)
     return str(override.get("source") or "") if override else ""
 
 
 def _source_private_taint_classes(tool_name: str) -> set[str]:
     """Fine taint classes for a declared-`private` source: the override's explicit `taints`
     if it lists any, else `documents` (the default fine tag for personal_private content)."""
-    override = rules_mod._tool_override_for(tool_name) or {}
+    override = rules_mod._reading_tool_for(tool_name) or {}
     declared = {cls for cls in (override.get("taints") or []) if cls in core._ALL_PRIVACY_CLASSES}
     return declared or {"documents"}
 
@@ -1525,7 +1525,7 @@ def _is_source_default_read(tool_name: str, tool_args: Any = None) -> bool:
         return False
     if _is_reference_read(tool_name, tool_args):
         return False
-    return _tool_override_source(tool_name) not in ("reference", "private")
+    return _reading_tool_source(tool_name) not in ("reference", "private")
 
 
 def _is_strict_unknown_read(tool_name: str, result_value: Any, status: str = "", tool_args: Any = None) -> bool:
@@ -1541,9 +1541,9 @@ def _is_strict_unknown_read(tool_name: str, result_value: Any, status: str = "",
         return False
     if _classes_from_tool_name(tool_name) or _is_web_sourced_tool(tool_name):
         return False
-    if _tool_override_source(tool_name) in ("reference", "private"):
+    if _reading_tool_source(tool_name) in ("reference", "private"):
         return False
-    if _tool_override_taint_classes(tool_name):
+    if _reading_tool_taint_classes(tool_name):
         return False
     return not _classes_from_content(result_value)
 
@@ -1609,13 +1609,13 @@ def _recognized_builtin_tool(lower: str, args: Any) -> bool:
     return False
 
 
-def _tool_override_action(
+def _sharing_tool_action(
     override: dict[str, Any] | None,
     lower: str,
     args: Any,
     session_id: str | None,
 ) -> tuple[bool, ToolAction | None]:
-    """Resolve a tool override's egress directive.
+    """Resolve a Sharing tool classification's egress directive.
 
     Returns (decided, action). ``decided`` False means the override has no egress
     directive (or none exists) and normal classification should continue. ``taints``
@@ -1651,8 +1651,8 @@ def _egress_tool_action(tool_name: str, args: Any, session_id: str | None) -> To
     name = str(tool_name or "")
     lower = name.lower()
 
-    decided, override_action = _tool_override_action(
-        rules_mod._tool_override_for(lower), lower, args, session_id
+    decided, override_action = _sharing_tool_action(
+        rules_mod._sharing_tool_for(lower), lower, args, session_id
     )
     if decided:
         return override_action

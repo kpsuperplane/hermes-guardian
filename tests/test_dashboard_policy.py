@@ -31,13 +31,15 @@ def _request(headers: dict | None = None):
     return SimpleNamespace(headers=headers or {})
 
 
-def test_reading_routes_replace_old_tool_and_taint_routes():
+def test_reading_and_sharing_routes_replace_old_tool_and_taint_routes():
     source = (Path(__file__).resolve().parents[1] / "dashboard" / "plugin_api.py").read_text()
 
     for path in {
         "/reading/taint-classification",
         "/reading/tools",
         "/reading/tools/{override_id}",
+        "/sharing/tools",
+        "/sharing/tools/{override_id}",
         "/reading/source-suggestions",
         "/reading/source-classification",
     }:
@@ -866,9 +868,12 @@ def _mutation_route_invokers(api):
         "set_cron_context": lambda: api.set_cron_context(req, {"enabled": False}),
         "set_verifier_model": lambda: api.set_verifier_model(req, {"model": ""}),
         "set_persist_prompts": lambda: api.set_persist_prompts(req, {"enabled": False}),
-        "create_tool_override": lambda: api.create_tool_override(req, {"match": "acme_*"}),
-        "update_tool_override": lambda: api.update_tool_override(req, "tool_x", {}),
-        "delete_tool_override": lambda: api.delete_tool_override(req, "tool_x"),
+        "create_reading_tool": lambda: api.create_reading_tool(req, {"match": "acme_*"}),
+        "update_reading_tool": lambda: api.update_reading_tool(req, "source_tool_x", {}),
+        "delete_reading_tool": lambda: api.delete_reading_tool(req, "source_tool_x"),
+        "create_sharing_tool": lambda: api.create_sharing_tool(req, {"match": "acme_*"}),
+        "update_sharing_tool": lambda: api.update_sharing_tool(req, "sharing_tool_x", {}),
+        "delete_sharing_tool": lambda: api.delete_sharing_tool(req, "sharing_tool_x"),
         "classify_source": lambda: api.classify_source(req, {"tool_name": "acme_read", "source": "private"}),
         "add_self_destination": lambda: api.add_self_destination(req, {"kind": "identity", "value": "x@example.com"}),
         "remove_self_destination": lambda: api.remove_self_destination(req, {"kind": "identity", "value": "x@example.com"}),
@@ -911,7 +916,7 @@ def _confirmation_gate_invokers(api):
             },
         ),
         "taint-classification-relaxed": lambda: api.set_taint_classification(req, {"mode": "relaxed"}),
-        "tool-ignore": lambda: api.create_tool_override(req, {"match": "acme_*", "egress": "ignore"}),
+        "tool-ignore": lambda: api.create_sharing_tool(req, {"match": "acme_*", "egress": "ignore"}),
         "source-reference": lambda: api.classify_source(req, {"tool_name": "acme_read", "source": "reference"}),
     }
 

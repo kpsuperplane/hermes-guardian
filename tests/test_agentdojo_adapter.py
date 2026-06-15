@@ -17,23 +17,27 @@ def _agentdojo_available() -> bool:
     return importlib.util.find_spec("agentdojo") is not None
 
 
-def test_tool_overrides_are_valid_guardian_overrides():
-    # Every classified tool must normalize into a usable Guardian tool override
+def test_tool_classifications_are_valid_guardian_classifications():
+    # Every classified tool must normalize into usable Guardian classifications
     # so the adapter's mapping never silently drops a tool.
-    overrides = adapter._tool_overrides()
-    assert len(overrides) == len(adapter.TOOL_CLASSIFICATION)
-    egress_values = {o.get("egress") for o in overrides}
-    # Sources/neutral reads are marked ignore; sinks use real egress families.
+    reading_tools = adapter._reading_tools()
+    sharing_tools = adapter._sharing_tools()
+    source_count = sum(1 for spec in adapter.TOOL_CLASSIFICATION.values() if spec[0] == "source")
+    assert len(reading_tools) == source_count
+    assert len(sharing_tools) == len(adapter.TOOL_CLASSIFICATION)
+    egress_values = {o.get("egress") for o in sharing_tools}
+    # Sources/neutral reads are marked ignore in Sharing; sinks use real egress families.
     assert "ignore" in egress_values
     assert "message_send" in egress_values
     assert "tool_write" in egress_values
-    for entry in overrides:
+    for entry in sharing_tools:
         assert entry["egress"] in {"", "ignore"} | {
             "message_send",
             "web_api",
             "tool_write",
             "local_write",
         }
+    assert all(entry.get("taints") for entry in reading_tools)
 
 
 def test_classification_summary_partitions_tools():

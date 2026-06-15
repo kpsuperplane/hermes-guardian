@@ -188,13 +188,13 @@ def test_source_overrides_apply_to_arbitrary_unknown_reads():
     plugin = load_plugin()
     bind_owner(plugin)
 
-    assert plugin._set_tool_override("fetch_personal_note", source="private")[0]
+    assert plugin._set_reading_tool("fetch_personal_note", source="private")[0]
     plugin._on_transform_tool_result(
         tool_name="fetch_personal_note", result=_SIGNALLESS_PROSE, session_id="private"
     )
     assert plugin._session_taint("private") == {"documents"}
 
-    assert plugin._set_tool_override("fetch_reference_note", source="reference")[0]
+    assert plugin._set_reading_tool("fetch_reference_note", source="reference")[0]
     plugin._on_transform_tool_result(
         tool_name="fetch_reference_note", result=_PLACEHOLDER_DOC, session_id="reference"
     )
@@ -204,7 +204,7 @@ def test_source_overrides_apply_to_arbitrary_unknown_reads():
 def test_source_reference_does_not_override_known_private_source_names():
     plugin = load_plugin()
     bind_owner(plugin)
-    assert plugin._set_tool_override("gmail_*", source="reference")[0]
+    assert plugin._set_reading_tool("gmail_*", source="reference")[0]
 
     plugin._on_transform_tool_result(
         tool_name="gmail_fetch", result=_PLACEHOLDER_DOC, session_id="gmail"
@@ -218,7 +218,7 @@ def test_declared_reference_relaxes_to_placeholder_tolerant_scan():
     # through the relaxed scan: placeholders are tolerated where the undeclared floor taints.
     plugin = load_plugin()
     bind_owner(plugin)
-    ok, _ = plugin._set_tool_override("crm_*", source="reference")
+    ok, _ = plugin._set_reading_tool("crm_*", source="reference")
     assert ok
 
     plugin._on_transform_tool_result(
@@ -239,7 +239,7 @@ def test_declared_reference_overrides_name_rule_taint():
     # branch; a declaration is authoritative and relaxes it anyway.
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._set_tool_override("crm_*", source="reference")
+    plugin._set_reading_tool("crm_*", source="reference")
 
     plugin._on_transform_tool_result(
         tool_name="crm_read_document", result=_PLACEHOLDER_DOC, session_id="ref"
@@ -251,7 +251,7 @@ def test_declared_private_taints_signalless_prose():
     # `source = "private"` always taints `documents`, even content with no structural signal.
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._set_tool_override("crm_*", source="private")
+    plugin._set_reading_tool("crm_*", source="private")
     plugin._on_transform_tool_result(
         tool_name="crm_read_resource", result=_SIGNALLESS_PROSE, session_id="declared"
     )
@@ -262,10 +262,10 @@ def test_unknown_source_value_is_conservative():
     plugin = load_plugin()
     bind_owner(plugin)
     # The setter rejects an unknown mode outright...
-    ok, message = plugin._set_tool_override("crm_*", source="trusted")
+    ok, message = plugin._set_reading_tool("crm_*", source="trusted")
     assert not ok and "reference" in message
     # ...and the config loader drops it (fails toward the conservative default, never reference).
-    normalized = plugin._normalize_tool_override({"match": "crm_*", "source": "trusted"})
+    normalized = plugin._normalize_reading_tool({"match": "crm_*", "source": "trusted"})
     assert normalized is not None and normalized["source"] == ""
 
 

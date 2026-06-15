@@ -47,9 +47,9 @@ _GUARDIAN_HELP_LINES = [
     "- `/guardian check <destination|recipient>` — resolve trust preview",
     "",
     "READING — what has entered context",
-    "- `/guardian reading` — show source/tool classification",
+    "- `/guardian reading` — show source classification",
     "- `/guardian reading taint-classification balanced|strict|relaxed`",
-    "- `/guardian reading tool set|delete|enable|disable ...`",
+    "- `/guardian reading tool set|delete|enable|disable <match> ...`",
     "- `/guardian reading tools`",
     "- `/guardian reading source suggest|set <server> reference|private`",
     "",
@@ -57,6 +57,8 @@ _GUARDIAN_HELP_LINES = [
     "- `/guardian sharing` — show trusted destinations + rules + outward-sharing",
     "- `/guardian sharing destination add|remove <identity> [classes=<class+class>]`",
     "- `/guardian sharing destination suggest | trust <n>` — pick a trusted command",
+    "- `/guardian sharing tool set|delete|enable|disable <match> ...`",
+    "- `/guardian sharing tools`",
     "- `/guardian sharing rule add|delete|enable|disable|move ...`",
     "- `/guardian sharing outward add|remove <subtype>`",
     "- `/guardian sharing preview <action> <destination> <class>` — which step fires",
@@ -101,12 +103,15 @@ _RULE_ADD_KEYS = {
     "ttl",
 }
 
-_TOOL_SET_KEYS = {
+_READING_TOOL_SET_KEYS = {
     "taints",
     "taint",
-    "egress",
-    "direction",
     "source",
+    "note",
+}
+
+_SHARING_TOOL_SET_KEYS = {
+    "egress",
     "destination",
     "dest",
     "note",
@@ -574,7 +579,7 @@ def _guardian_status_telegram(owner_hash: str) -> str:
     enabled_packs = ", ".join(pack.get("id", "") for pack in snapshot["enabled_language_packs"]) or "none"
     rows = [
         ["Egress Safety", core._egress_safety_policy()],
-        ["Taint Classification", f"{rules_mod._taint_classification_mode()} ({len(rules_mod._tool_overrides())} tool override(s))"],
+        ["Taint Classification", f"{rules_mod._taint_classification_mode()} ({len(rules_mod._reading_tools())} reading tool(s))"],
         ["LLM context", f"user-prompt {'on' if rules_mod._llm_user_context_enabled() else 'off'}, cron {'on' if rules_mod._llm_cron_context_enabled() else 'off'}"],
         ["Security rules", f"{len(rules_mod._SECURITY_RULE_IDS) - len(snapshot['disabled_security'])} enabled, {len(snapshot['disabled_security'])} disabled"],
         ["Language packs", enabled_packs],
@@ -865,6 +870,7 @@ def _guardian_sharing_group_command_telegram(owner_hash: str, tokens: list[str])
     trusted = rules_mod._trusted_recipients_snapshot()
     rules = rules_mod._privacy_rules_for_owner(owner_hash)
     outward = rules_mod._outward_sharing_snapshot()
+    sharing_tools = rules_mod._sharing_tools_snapshot()
     trusted_rows = [
         [
             entry.get("kind", "identity"),
@@ -886,6 +892,25 @@ def _guardian_sharing_group_command_telegram(owner_hash: str, tokens: list[str])
         ])
     lines = ["## Sharing"]
     lines.extend(["", "### Trusted Destinations", _md_table(["Kind", "Value", "Classes", "Note"], trusted_rows) if trusted_rows else "No trusted destinations configured."])
+    lines.extend([
+        "",
+        "### Egress Tool Classification",
+        _md_table(
+            ["ID", "Match", "State", "Egress", "Destination"],
+            [
+                [
+                    tool.get("id", ""),
+                    tool.get("match", ""),
+                    "enabled" if tool.get("enabled") else "disabled",
+                    tool.get("egress") or "",
+                    tool.get("destination") or "",
+                ]
+                for tool in sharing_tools
+            ],
+        )
+        if sharing_tools
+        else "No Sharing tool classifications configured.",
+    ])
     lines.extend(["", "### Privacy Rules", _md_table(["ID", "Effect", "Action", "Destination", "Classes"], rule_rows) if rule_rows else "No persistent Guardian privacy rules."])
     lines.extend([
         "",
@@ -902,21 +927,21 @@ def _guardian_reading_command_telegram(owner_hash: str, tokens: list[str]) -> st
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     if sub:
         return ""
-    overrides = rules_mod._tool_overrides_snapshot()
+    tools = rules_mod._reading_tools_snapshot()
     override_rows = [
         [
-            override.get("id", ""),
-            override.get("match", ""),
-            "enabled" if override.get("enabled") else "disabled",
-            override.get("egress") or override.get("direction") or "",
-            ",".join(override.get("taints") or []) or "none",
+            tool.get("id", ""),
+            tool.get("match", ""),
+            "enabled" if tool.get("enabled") else "disabled",
+            tool.get("source") or "",
+            ",".join(tool.get("taints") or []) or "none",
         ]
-        for override in overrides
+        for tool in tools
     ]
     return "\n\n".join([
         "## Reading",
         f"Taint Classification: `{rules_mod._taint_classification_mode()}`",
-        "### Tool Overrides\n" + (_md_table(["ID", "Match", "State", "Egress/Direction", "Taints"], override_rows) if override_rows else "No tool overrides configured."),
+        "### Source Tool Classification\n" + (_md_table(["ID", "Match", "State", "Source", "Taints"], override_rows) if override_rows else "No Reading tool classifications configured."),
     ])
 
 
@@ -1058,7 +1083,7 @@ def _guardian_mine_command(owner_hash: str, tokens: list[str]) -> str:
 
 
 def _guardian_sharing_group_command(owner_hash: str, tokens: list[str]) -> str:
-    """SHARING group: trusted recipients + rules + outward-sharing + preview.
+    """SHARING group: trusted recipients + egress tools + rules + outward-sharing + preview.
 
     Delegates to the existing trusted/rule/outward handlers; no logic is copied.
     """
@@ -1067,6 +1092,10 @@ def _guardian_sharing_group_command(owner_hash: str, tokens: list[str]) -> str:
         return _guardian_trusted_command(owner_hash, ["trusted", *tokens[2:]])
     if sub in {"rule", "rules"}:
         return _guardian_rule_command(owner_hash, ["rule", *tokens[2:]])
+    if sub == "tool":
+        return _guardian_sharing_tool_command(owner_hash, ["tool", *tokens[2:]])
+    if sub == "tools":
+        return _guardian_sharing_tools_command()
     if sub == "outward":
         return _guardian_sharing_command(owner_hash, ["sharing", *tokens[2:]])
     if sub == "preview":
@@ -1076,6 +1105,8 @@ def _guardian_sharing_group_command(owner_hash: str, tokens: list[str]) -> str:
     return (
         "Usage: `/guardian sharing` | "
         "`/guardian sharing trusted add|remove <identity> [classes=<class+class>]` | "
+        "`/guardian sharing tool set|delete|enable|disable ...` | "
+        "`/guardian sharing tools` | "
         "`/guardian sharing rule add|delete|enable|disable|move ...` | "
         "`/guardian sharing outward add|remove <subtype>` | "
         "`/guardian sharing preview <action> <destination> <class>`"
@@ -1083,10 +1114,11 @@ def _guardian_sharing_group_command(owner_hash: str, tokens: list[str]) -> str:
 
 
 def _guardian_sharing_overview(owner_hash: str) -> str:
-    """The SHARING parent screen: trusted recipients + rules + outward-sharing."""
+    """The SHARING parent screen: trusted recipients + egress tools + rules + outward-sharing."""
     return "\n\n".join(
         [
             _guardian_trusted_command(owner_hash, ["trusted"]),
+            _guardian_sharing_tools_command(),
             _guardian_rules(owner_hash),
             _guardian_sharing_command(owner_hash, ["sharing"]),
         ]
@@ -1125,7 +1157,7 @@ def _guardian_review_command(owner_hash: str, tokens: list[str]) -> str:
 
 
 def _guardian_reading_command(owner_hash: str, tokens: list[str]) -> str:
-    """READING group: source provenance, Taint Classification, tool overrides."""
+    """READING group: source provenance, Taint Classification, source tools."""
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     if sub == "tool":
         return _guardian_tool_command(owner_hash, ["tool", *tokens[2:]])
@@ -1183,7 +1215,7 @@ def _guardian_source_command(owner_hash: str, tokens: list[str]) -> str:
     """SOURCE group: classify the doc-read provenance of an MCP server seen by Guardian.
 
     `suggest` lists servers whose undeclared doc-reads were tainted conservatively; `set`
-    declares one as reference material or personal data (a prefix-scoped tool override).
+    declares one as reference material or personal data (a prefix-scoped Reading tool classification).
     """
     sub = tokens[2].lower() if len(tokens) > 2 else ""
     usage = (
@@ -1370,22 +1402,18 @@ def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
 
 
 def _guardian_tools_command() -> str:
-    overrides = rules_mod._tool_overrides_snapshot()
+    overrides = rules_mod._reading_tools_snapshot()
     lines = [
-        "Hermes Guardian tool overrides",
+        "Hermes Guardian Reading tool classifications",
         f"Taint Classification: {rules_mod._taint_classification_mode()}",
     ]
     if not overrides:
-        lines.append("No tool overrides configured.")
+        lines.append("No Reading tool classifications configured.")
     for override in overrides:
         state = "enabled" if override.get("enabled") else "disabled"
         bits = [f"match={override.get('match', '')}", state]
-        if override.get("egress"):
-            bits.append(f"egress={override['egress']}")
-        if override.get("direction"):
-            bits.append(f"direction={override['direction']}")
-        if override.get("destination"):
-            bits.append(f"destination={override['destination']}")
+        if override.get("source"):
+            bits.append(f"source={override['source']}")
         if override.get("taints"):
             bits.append(f"taints={','.join(override['taints'])}")
         note = override.get("note") or ""
@@ -1401,8 +1429,8 @@ def _guardian_tools_command() -> str:
 def _guardian_tool_command(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     usage = (
-        "Usage: `/guardian reading tool set <match> [taints=a+b] [egress=ignore|gate|<family>] "
-        "[direction=read|write] [source=reference|private] [destination=<dest>] [note=<text>]` | "
+        "Usage: `/guardian reading tool set <match> [taints=a+b] "
+        "[source=reference|private] [note=<text>]` | "
         "`/guardian reading tool delete <match_or_id>` | "
         "`/guardian reading tool enable|disable <id_or_match>`"
     )
@@ -1410,37 +1438,89 @@ def _guardian_tool_command(owner_hash: str, tokens: list[str]) -> str:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
         match = tokens[2]
-        params, errors = _parse_key_value_args(tokens[3:], allowed_keys=_TOOL_SET_KEYS)
+        params, errors = _parse_key_value_args(tokens[3:], allowed_keys=_READING_TOOL_SET_KEYS)
         if errors:
-            return "Invalid tool override arguments: " + "; ".join(errors) + f"\n{usage}"
+            return "Invalid Reading tool arguments: " + "; ".join(errors) + f"\n{usage}"
         kwargs: dict[str, Any] = {}
         raw_taints = params.get("taints") or params.get("taint")
         if raw_taints is not None:
             kwargs["taints"] = [cls.strip() for cls in re.split(r"[,+]", raw_taints) if cls.strip()]
-        if "egress" in params:
-            kwargs["egress"] = params["egress"]
-        if "direction" in params:
-            kwargs["direction"] = params["direction"]
         if "source" in params:
             kwargs["source"] = params["source"]
+        if "note" in params:
+            kwargs["note"] = params["note"]
+        if not kwargs:
+            return "Provide at least one of: taints=, source=, note=.\n" + usage
+        ok, message = rules_mod._set_reading_tool(match, **kwargs)
+        return message
+    if sub in {"delete", "remove"} and len(tokens) == 3:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        ok, message = rules_mod._delete_reading_tool(tokens[2])
+        return message
+    if sub in {"enable", "disable"} and len(tokens) == 3:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        ok, message = rules_mod._set_reading_tool_enabled(tokens[2], sub == "enable")
+        return message
+    return usage
+
+
+def _guardian_sharing_tools_command() -> str:
+    overrides = rules_mod._sharing_tools_snapshot()
+    lines = ["Hermes Guardian Sharing tool classifications"]
+    if not overrides:
+        lines.append("No Sharing tool classifications configured.")
+    for override in overrides:
+        state = "enabled" if override.get("enabled") else "disabled"
+        bits = [f"match={override.get('match', '')}", state]
+        if override.get("egress"):
+            bits.append(f"egress={override['egress']}")
+        if override.get("destination"):
+            bits.append(f"destination={override['destination']}")
+        note = override.get("note") or ""
+        suffix = f" - {note}" if note else ""
+        lines.append(f"- {override.get('id', '')}: " + " ".join(bits) + suffix)
+    lines.append("Use /guardian sharing tool set|delete|enable|disable.")
+    return "\n".join(lines)
+
+
+def _guardian_sharing_tool_command(owner_hash: str, tokens: list[str]) -> str:
+    sub = tokens[1].lower() if len(tokens) > 1 else ""
+    usage = (
+        "Usage: `/guardian sharing tool set <match> egress=ignore|gate|<family> "
+        "[destination=<dest>] [note=<text>]` | "
+        "`/guardian sharing tool delete <match_or_id>` | "
+        "`/guardian sharing tool enable|disable <id_or_match>`"
+    )
+    if sub == "set" and len(tokens) >= 3:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        match = tokens[2]
+        params, errors = _parse_key_value_args(tokens[3:], allowed_keys=_SHARING_TOOL_SET_KEYS)
+        if errors:
+            return "Invalid Sharing tool arguments: " + "; ".join(errors) + f"\n{usage}"
+        kwargs: dict[str, Any] = {}
+        if "egress" in params:
+            kwargs["egress"] = params["egress"]
         raw_destination = params.get("destination") or params.get("dest")
         if raw_destination is not None:
             kwargs["destination"] = raw_destination
         if "note" in params:
             kwargs["note"] = params["note"]
         if not kwargs:
-            return "Provide at least one of: taints=, egress=, direction=, source=, destination=, note=.\n" + usage
-        ok, message = rules_mod._set_tool_override(match, **kwargs)
+            return "Provide at least one of: egress=, destination=, note=.\n" + usage
+        ok, message = rules_mod._set_sharing_tool(match, **kwargs)
         return message
     if sub in {"delete", "remove"} and len(tokens) == 3:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
-        ok, message = rules_mod._delete_tool_override(tokens[2])
+        ok, message = rules_mod._delete_sharing_tool(tokens[2])
         return message
     if sub in {"enable", "disable"} and len(tokens) == 3:
         if not _slash_admin_allowed(owner_hash):
             return _global_mutation_denied_message()
-        ok, message = rules_mod._set_tool_override_enabled(tokens[2], sub == "enable")
+        ok, message = rules_mod._set_sharing_tool_enabled(tokens[2], sub == "enable")
         return message
     return usage
 
@@ -1889,7 +1969,7 @@ def _guardian_status(owner_hash: str) -> str:
     lines = [
         "Hermes Guardian status",
         f"Egress Safety: {core._egress_safety_policy()}",
-        f"Taint Classification: {rules_mod._taint_classification_mode()} ({len(rules_mod._tool_overrides())} tool override(s))",
+        f"Taint Classification: {rules_mod._taint_classification_mode()} ({len(rules_mod._reading_tools())} reading tool(s))",
         f"LLM context: user-prompt {'on' if rules_mod._llm_user_context_enabled() else 'off'}, "
         f"cron {'on' if rules_mod._llm_cron_context_enabled() else 'off'}",
         f"Security rules: {len(rules_mod._SECURITY_RULE_IDS) - len(disabled_security)} enabled, {len(disabled_security)} disabled",

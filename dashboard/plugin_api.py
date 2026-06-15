@@ -155,9 +155,9 @@ def _require_dashboard_confirmation(action: str, body: dict[str, Any]) -> None:
     if action == "taint_classification" and str(body.get("mode") or "").strip().lower() == "relaxed":
         if _confirmation_value(body) != "taint-classification-relaxed":
             raise HTTPException(status_code=400, detail="Taint Classification relaxed requires confirmation")
-    if action == "tool_override" and str(body.get("egress") or "").strip().lower() == "ignore":
+    if action == "sharing_tool" and str(body.get("egress") or "").strip().lower() == "ignore":
         if _confirmation_value(body) != "tool-ignore":
-            raise HTTPException(status_code=400, detail="ignore tool override requires confirmation")
+            raise HTTPException(status_code=400, detail="No egress tool classification requires confirmation")
     if action == "source_classify" and str(body.get("source") or "").strip().lower() == "reference":
         # Declaring a source as reference relaxes scanning of its reads, so confirm that
         # weakening direction (private only tightens and needs no token).
@@ -419,28 +419,52 @@ async def set_persist_prompts(request: Request, body: dict[str, Any]) -> JSONRes
 
 
 @router.post("/reading/tools")
-async def create_tool_override(request: Request, body: dict[str, Any]) -> JSONResponse:
+async def create_reading_tool(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
-    _require_dashboard_confirmation("tool_override", body)
     return _json_mutation_result(
-        _guardian()._dashboard_tool_override_create_action(body),
+        _guardian()._dashboard_reading_tool_create_action(body),
     )
 
 
 @router.patch("/reading/tools/{override_id}")
-async def update_tool_override(request: Request, override_id: str, body: dict[str, Any]) -> JSONResponse:
+async def update_reading_tool(request: Request, override_id: str, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
-    _require_dashboard_confirmation("tool_override", body)
     return _json_mutation_result(
-        _guardian()._dashboard_tool_override_update_action(override_id, body),
+        _guardian()._dashboard_reading_tool_update_action(override_id, body),
     )
 
 
 @router.delete("/reading/tools/{override_id}")
-async def delete_tool_override(request: Request, override_id: str) -> JSONResponse:
+async def delete_reading_tool(request: Request, override_id: str) -> JSONResponse:
     _require_dashboard_admin(request)
     return _json_mutation_result(
-        _guardian()._dashboard_tool_override_delete_action(override_id),
+        _guardian()._dashboard_reading_tool_delete_action(override_id),
+    )
+
+
+@router.post("/sharing/tools")
+async def create_sharing_tool(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    _require_dashboard_confirmation("sharing_tool", body)
+    return _json_mutation_result(
+        _guardian()._dashboard_sharing_tool_create_action(body),
+    )
+
+
+@router.patch("/sharing/tools/{override_id}")
+async def update_sharing_tool(request: Request, override_id: str, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    _require_dashboard_confirmation("sharing_tool", body)
+    return _json_mutation_result(
+        _guardian()._dashboard_sharing_tool_update_action(override_id, body),
+    )
+
+
+@router.delete("/sharing/tools/{override_id}")
+async def delete_sharing_tool(request: Request, override_id: str) -> JSONResponse:
+    _require_dashboard_admin(request)
+    return _json_mutation_result(
+        _guardian()._dashboard_sharing_tool_delete_action(override_id),
     )
 
 

@@ -29,10 +29,10 @@ Modeling assumptions, made explicit because they bound the numbers
 1. **Tool taxonomy.** AgentDojo's tools are not Hermes tools, so Guardian has no
    built-in classification for them. We supply an explicit, auditable
    source/sink mapping (``TOOL_CLASSIFICATION`` below) via Guardian's documented
-   ``privacy.tools`` override registry -- exactly how an operator would onboard a
-   new MCP/tool surface. The full mapping is emitted in the metrics JSON so the
-   classification is inspectable. Without it the benchmark would only measure
-   "AgentDojo's vocabulary is unknown to Guardian," which is uninformative.
+   Reading and Sharing tool classifications -- exactly how an operator would
+   onboard a new MCP/tool surface. The full mapping is emitted in the metrics JSON
+   so the classification is inspectable. Without it the benchmark would only
+   measure "AgentDojo's vocabulary is unknown to Guardian," which is uninformative.
 2. **Session taint.** Every AgentDojo environment is seeded with attacker-
    controlled third-party content (emails, web pages, reviews, files) -- that is
    the injection vector. We therefore taint every session, reflecting the threat
@@ -204,26 +204,41 @@ def _resolve_suites(version: str | None) -> tuple[str, dict[str, Any]]:
     return chosen, _SUITES[chosen]
 
 
-def _tool_overrides() -> list[dict[str, Any]]:
-    overrides: list[dict[str, Any]] = []
+def _reading_tools() -> list[dict[str, Any]]:
+    tools: list[dict[str, Any]] = []
+    for index, (tool, spec) in enumerate(sorted(TOOL_CLASSIFICATION.items())):
+        role = spec[0]
+        if role != "source":
+            continue
+        entry: dict[str, Any] = {
+            "id": f"agentdojo_source_{index:03d}",
+            "match": tool,
+            "enabled": True,
+            "taints": [spec[1]],
+            "note": "AgentDojo read surface",
+        }
+        tools.append(entry)
+    return tools
+
+
+def _sharing_tools() -> list[dict[str, Any]]:
+    tools: list[dict[str, Any]] = []
     for index, (tool, spec) in enumerate(sorted(TOOL_CLASSIFICATION.items())):
         role = spec[0]
         entry: dict[str, Any] = {
-            "id": f"agentdojo_{index:03d}",
+            "id": f"agentdojo_sharing_{index:03d}",
             "match": tool,
             "enabled": True,
         }
         if role in {"source", "read"}:
             entry["egress"] = "ignore"
-            entry["taints"] = [spec[1]] if spec[1] else []
             entry["note"] = "AgentDojo read surface"
         elif role == "sink":
             entry["egress"] = spec[1]
             entry["destination"] = spec[2]
-            entry["taints"] = []
             entry["note"] = "AgentDojo egress sink"
-        overrides.append(entry)
-    return overrides
+        tools.append(entry)
+    return tools
 
 
 def _classification_summary() -> dict[str, Any]:
@@ -305,7 +320,8 @@ def run_agentdojo_adapter(*, version: str | None = None) -> dict[str, Any]:
     agentdojo = _load_agentdojo()
     resolved_version, suites = _resolve_suites(version)
 
-    overrides = _tool_overrides()
+    reading_tools = _reading_tools()
+    sharing_tools = _sharing_tools()
     per_suite: dict[str, dict[str, Any]] = {}
     task_results: list[dict[str, Any]] = []
     unmapped_seen: set[str] = set()
@@ -316,7 +332,8 @@ def run_agentdojo_adapter(*, version: str | None = None) -> dict[str, Any]:
         cache = plugin._PERSISTENT_RULES_CACHE
         cache["privacy"]["egress_safety"] = "strict"
         cache["privacy"]["taint_classification"] = "strict"
-        cache["privacy"]["tools"] = plugin._normalize_tool_overrides(overrides)
+        cache["privacy"]["reading_tools"] = plugin._normalize_reading_tools(reading_tools)
+        cache["privacy"]["sharing_tools"] = plugin._normalize_sharing_tools(sharing_tools)
         plugin._apply_language_pack_config(cache)
 
         for suite_name in sorted(suites):

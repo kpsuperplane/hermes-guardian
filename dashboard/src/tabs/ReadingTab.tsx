@@ -3,16 +3,16 @@ import { Button } from "@/components/Button";
 import { IconButton } from "@/components/IconButton";
 import { Mono } from "@/components/Mono";
 import { text } from "@/lib/format";
-import type { Policy, SourceSuggestion, ToolOverride } from "@/types";
+import type { Policy, ReadingTool, SourceSuggestion } from "@/types";
 
 const TAINT_CLASSIFICATION_MODES = ["balanced", "strict", "relaxed"];
 
 export interface ReadingTabProps {
   policy: Policy | null;
   onNewOverride: () => void;
-  onEditOverride: (override: ToolOverride) => void;
-  onToggleOverride: (override: ToolOverride) => void;
-  onDeleteOverride: (override: ToolOverride) => void;
+  onEditOverride: (override: ReadingTool) => void;
+  onToggleOverride: (override: ReadingTool) => void;
+  onDeleteOverride: (override: ReadingTool) => void;
   taintClassification: string;
   taintClassificationSaving: boolean;
   onChangeTaintClassification: (mode: string) => void;
@@ -24,24 +24,23 @@ export interface ReadingTabProps {
 function ToolClassification(props: {
   policy: Policy | null;
   onNewOverride: () => void;
-  onEditOverride: (override: ToolOverride) => void;
-  onToggleOverride: (override: ToolOverride) => void;
-  onDeleteOverride: (override: ToolOverride) => void;
+  onEditOverride: (override: ReadingTool) => void;
+  onToggleOverride: (override: ReadingTool) => void;
+  onDeleteOverride: (override: ReadingTool) => void;
   taintClassification: string;
   taintClassificationSaving: boolean;
   onChangeTaintClassification: (mode: string) => void;
 }) {
-  const toolOverrides = (props.policy && props.policy.tool_overrides) || [];
+  const toolOverrides = (props.policy && props.policy.reading_tools) || [];
   return (
     <div className="hermes-guardian-card">
       <div className="hermes-guardian-card-head">
         <div>
-          <div className="hermes-guardian-card-title">Tool classification</div>
+          <div className="hermes-guardian-card-title">Source tool classification</div>
           <div className="hermes-guardian-muted">
-            Teach Guardian what a tool is: which private classes it reads (taints) and whether it
-            is a safe non-sink (No egress), forced to gate, or a specific action family. (Declaring
-            a custom store yours lives in What's Yours; teaching Guardian what a tool is lives
-            here.) Overrides never bypass the Security Module.
+            Teach Guardian what a tool reads: which private classes its results apply and whether
+            its reads are reference material or personal data. Egress behavior lives in Sharing.
+            Classifications never bypass the Security Module.
           </div>
         </div>
       </div>
@@ -58,23 +57,15 @@ function ToolClassification(props: {
                     <div className="hermes-guardian-rule-title">{text(override.match)}</div>
                     <div className="hermes-guardian-rule-subline">
                       <span className="hermes-guardian-rule-id">{text(override.id)}</span>
-                      {override.egress ? (
-                        <span className="hermes-guardian-pill">
-                          {"egress " + (override.egress === "ignore" ? "none" : override.egress)}
-                        </span>
-                      ) : null}
                       {override.source ? (
                         <span className="hermes-guardian-pill">{"source " + override.source}</span>
-                      ) : null}
-                      {override.destination ? (
-                        <span className="hermes-guardian-pill">{"dest " + override.destination}</span>
                       ) : null}
                     </div>
                   </div>
                   <div className="hermes-guardian-actions">
                     <IconButton
                       icon="edit"
-                      label={"Edit tool override " + text(override.match)}
+                      label={"Edit source classification " + text(override.match)}
                       onClick={() => props.onEditOverride(override)}
                     />
                     <Button variant="secondary" onClick={() => props.onToggleOverride(override)}>
@@ -83,7 +74,7 @@ function ToolClassification(props: {
                     <IconButton
                       icon="trash"
                       variant="danger"
-                      label={"Delete tool override " + text(override.match)}
+                      label={"Delete source classification " + text(override.match)}
                       onClick={() => props.onDeleteOverride(override)}
                     />
                   </div>
@@ -106,7 +97,7 @@ function ToolClassification(props: {
         </div>
       ) : (
         <div className="hermes-guardian-muted">
-          No tool overrides. Unrecognized tools follow Taint Classification in Reading.
+          No Reading tool classifications. Unrecognized tools follow Taint Classification.
         </div>
       )}
       <div className="hermes-guardian-tools-override-actions">

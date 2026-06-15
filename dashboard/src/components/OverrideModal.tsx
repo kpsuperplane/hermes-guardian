@@ -7,6 +7,7 @@ import { text } from "@/lib/format";
 import type { OverrideForm, Policy } from "@/types";
 
 export interface OverrideModalProps {
+  kind: "reading" | "sharing";
   policy: Policy;
   form: OverrideForm;
   setForm: (form: OverrideForm) => void;
@@ -16,6 +17,7 @@ export interface OverrideModalProps {
 }
 
 export function OverrideModal({
+  kind,
   policy,
   form,
   setForm,
@@ -23,9 +25,10 @@ export function OverrideModal({
   onSubmit,
   onCancel,
 }: OverrideModalProps) {
+  const isReading = kind === "reading";
   const allClasses = policy.all_privacy_classes || DEFAULT_PRIVACY_CLASSES;
-  const egressOptions = policy.tool_override_egress_options
-    ? [""].concat(policy.tool_override_egress_options)
+  const egressOptions = policy.sharing_tool_egress_options
+    ? [""].concat(policy.sharing_tool_egress_options)
     : TOOL_EGRESS_OPTIONS;
   const matchSuggestions =
     policy.tool_name_suggestions || (policy.suggestions && policy.suggestions.tool_names) || [];
@@ -55,13 +58,23 @@ export function OverrideModal({
         <div className="hermes-guardian-card-head">
           <div>
             <h2 className="hermes-guardian-title">
-              {form.isEdit ? "Edit tool override" : "New tool override"}
+              {form.isEdit
+                ? isReading
+                  ? "Edit source classification"
+                  : "Edit egress classification"
+                : isReading
+                  ? "New source classification"
+                  : "New egress classification"}
             </h2>
             <div className="hermes-guardian-subtitle">
-              {form.isEdit ? text(form.match) : "Tell Guardian how to treat a specific tool"}
+              {form.isEdit
+                ? text(form.match)
+                : isReading
+                  ? "Teach Guardian what a tool reads"
+                  : "Teach Guardian when a tool sends data"}
             </div>
           </div>
-          <IconButton icon="x" label="Close tool override dialog" onClick={onCancel} />
+          <IconButton icon="x" label="Close tool classification dialog" onClick={onCancel} />
         </div>
         <div className="hermes-guardian-modal-body">
           <datalist id="hermes-guardian-override-match-options">
@@ -80,28 +93,30 @@ export function OverrideModal({
                 onChange={(event) => update("match", event.target.value)}
               />
             </Field>
-            <Field label="Egress Type">
-              <select
-                className="hermes-guardian-select"
-                value={form.egress}
-                onChange={(event) => update("egress", event.target.value)}
-              >
-                {egressOptions.map((value) => {
-                  const label =
-                    value === ""
-                      ? "Default (taints only)"
-                      : value === "ignore"
-                        ? "No egress"
-                        : value;
-                  return (
-                    <option key={value || "none"} value={value}>
-                      {label}
-                    </option>
-                  );
-                })}
-              </select>
-            </Field>
-            {concreteEgress ? (
+            {!isReading ? (
+              <Field label="Egress Type">
+                <select
+                  className="hermes-guardian-select"
+                  value={form.egress}
+                  onChange={(event) => update("egress", event.target.value)}
+                >
+                  {egressOptions.map((value) => {
+                    const label =
+                      value === ""
+                        ? "Default"
+                        : value === "ignore"
+                          ? "No egress"
+                          : value;
+                    return (
+                      <option key={value || "none"} value={value}>
+                        {label}
+                      </option>
+                    );
+                  })}
+                </select>
+              </Field>
+            ) : null}
+            {!isReading && concreteEgress ? (
               <Field label="Destination">
                 <input
                   className="hermes-guardian-input"
@@ -111,33 +126,37 @@ export function OverrideModal({
                 />
               </Field>
             ) : null}
-            <Field label="Source">
-              <select
-                className="hermes-guardian-select"
-                value={form.source}
-                onChange={(event) => update("source", event.target.value)}
-              >
-                <option value="">Default</option>
-                <option value="reference">Reference material</option>
-                <option value="private">Personal data</option>
-              </select>
-            </Field>
+            {isReading ? (
+              <Field label="Source">
+                <select
+                  className="hermes-guardian-select"
+                  value={form.source}
+                  onChange={(event) => update("source", event.target.value)}
+                >
+                  <option value="">Default</option>
+                  <option value="reference">Reference material</option>
+                  <option value="private">Personal data</option>
+                </select>
+              </Field>
+            ) : null}
           </div>
-          <div className="hermes-guardian-field">
-            Taints applied when this tool's results are read
-            <div className="hermes-guardian-check-grid">
-              {allClasses.map((cls) => (
-                <label key={cls} className="hermes-guardian-check">
-                  <input
-                    type="checkbox"
-                    checked={taintSet.has(cls)}
-                    onChange={() => toggleTaint(cls)}
-                  />
-                  {cls}
-                </label>
-              ))}
+          {isReading ? (
+            <div className="hermes-guardian-field">
+              Taints applied when this tool's results are read
+              <div className="hermes-guardian-check-grid">
+                {allClasses.map((cls) => (
+                  <label key={cls} className="hermes-guardian-check">
+                    <input
+                      type="checkbox"
+                      checked={taintSet.has(cls)}
+                      onChange={() => toggleTaint(cls)}
+                    />
+                    {cls}
+                  </label>
+                ))}
+              </div>
             </div>
-          </div>
+          ) : null}
           <div className="hermes-guardian-form-grid">
             <Field label="Note">
               <input
@@ -158,7 +177,7 @@ export function OverrideModal({
               </label>
             </Field>
           </div>
-          {form.egress === "ignore" ? (
+          {!isReading && form.egress === "ignore" ? (
             <div className="hermes-guardian-banner">
               "No egress" marks this tool as a safe non-sink: it will be allowed even under
               taint. This weakens egress protection and requires confirmation.

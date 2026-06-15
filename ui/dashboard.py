@@ -211,14 +211,51 @@ def _dashboard_llm_verifier_model_action(model: Any) -> tuple[dict[str, Any], in
     return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
-def _dashboard_tool_override_create_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+def _dashboard_reading_tool_create_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     match = payload.get("match") or payload.get("tool") or payload.get("tool_name") or ""
-    ok, message = rules_mod._set_tool_override(
+    ok, message = rules_mod._set_reading_tool(
         match,
         taints=payload.get("taints"),
-        egress=payload.get("egress"),
-        direction=payload.get("direction"),
         source=payload.get("source"),
+        note=payload.get("note"),
+        enabled=payload.get("enabled"),
+    )
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
+
+
+def _dashboard_reading_tool_update_action(override_id: str, payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    target = str(override_id or "").strip()
+    existing = next((o for o in rules_mod._reading_tools() if o.get("id") == target), None)
+    if existing is None:
+        return {
+            "ok": False,
+            "message": f"No matching Reading tool classification found for {override_id}.",
+            "policy": activity_rows._policy_snapshot(),
+        }, 404
+    if set(payload.keys()) <= {"enabled"} and "enabled" in payload:
+        ok, message = rules_mod._set_reading_tool_enabled(target, rules_mod._config_bool(payload.get("enabled"), default=True))
+    else:
+        ok, message = rules_mod._set_reading_tool(
+            existing.get("match"),
+            taints=payload.get("taints"),
+            source=payload.get("source"),
+            note=payload.get("note"),
+            enabled=payload.get("enabled"),
+        )
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
+
+
+def _dashboard_reading_tool_delete_action(match_or_id: str) -> tuple[dict[str, Any], int]:
+    ok, message = rules_mod._delete_reading_tool(match_or_id)
+    status = 200 if ok else (404 if message.startswith("No matching Reading tool") else 400)
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, status
+
+
+def _dashboard_sharing_tool_create_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    match = payload.get("match") or payload.get("tool") or payload.get("tool_name") or ""
+    ok, message = rules_mod._set_sharing_tool(
+        match,
+        egress=payload.get("egress"),
         destination=payload.get("destination"),
         note=payload.get("note"),
         enabled=payload.get("enabled"),
@@ -226,24 +263,21 @@ def _dashboard_tool_override_create_action(payload: dict[str, Any]) -> tuple[dic
     return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
-def _dashboard_tool_override_update_action(override_id: str, payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+def _dashboard_sharing_tool_update_action(override_id: str, payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     target = str(override_id or "").strip()
-    existing = next((o for o in rules_mod._tool_overrides() if o.get("id") == target), None)
+    existing = next((o for o in rules_mod._sharing_tools() if o.get("id") == target), None)
     if existing is None:
         return {
             "ok": False,
-            "message": f"No matching tool override found for {override_id}.",
+            "message": f"No matching Sharing tool classification found for {override_id}.",
             "policy": activity_rows._policy_snapshot(),
         }, 404
     if set(payload.keys()) <= {"enabled"} and "enabled" in payload:
-        ok, message = rules_mod._set_tool_override_enabled(target, rules_mod._config_bool(payload.get("enabled"), default=True))
+        ok, message = rules_mod._set_sharing_tool_enabled(target, rules_mod._config_bool(payload.get("enabled"), default=True))
     else:
-        ok, message = rules_mod._set_tool_override(
+        ok, message = rules_mod._set_sharing_tool(
             existing.get("match"),
-            taints=payload.get("taints"),
             egress=payload.get("egress"),
-            direction=payload.get("direction"),
-            source=payload.get("source"),
             destination=payload.get("destination"),
             note=payload.get("note"),
             enabled=payload.get("enabled"),
@@ -251,9 +285,9 @@ def _dashboard_tool_override_update_action(override_id: str, payload: dict[str, 
     return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
 
 
-def _dashboard_tool_override_delete_action(match_or_id: str) -> tuple[dict[str, Any], int]:
-    ok, message = rules_mod._delete_tool_override(match_or_id)
-    status = 200 if ok else (404 if message.startswith("No matching tool override") else 400)
+def _dashboard_sharing_tool_delete_action(match_or_id: str) -> tuple[dict[str, Any], int]:
+    ok, message = rules_mod._delete_sharing_tool(match_or_id)
+    status = 200 if ok else (404 if message.startswith("No matching Sharing tool") else 400)
     return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, status
 
 

@@ -114,18 +114,14 @@ def test_self_customization_survives_unrelated_mode_change():
     assert "store:crm" in plugin._self_config_snapshot()["destinations"]
 
 
-def test_tool_override_direction_and_destination_round_trip():
+def test_sharing_tool_destination_round_trip_and_no_public_direction():
     plugin = load_plugin()
-    ok, _msg = plugin._set_tool_override("crm_*", direction="read", destination="store:crm")
+    ok, _msg = plugin._set_sharing_tool("crm_*", egress="tool_write", destination="store:crm")
     assert ok
-    override = plugin._tool_override_for("crm_lookup")
+    override = plugin._sharing_tool_for("crm_lookup")
     assert override is not None
-    assert override["direction"] == "read"
+    assert "direction" not in override
     assert override["destination"] == "store:crm"
-    # An invalid direction is rejected.
-    ok, msg = plugin._set_tool_override("crm_*", direction="sideways")
-    assert ok is False
-    assert "direction" in msg
 
 
 def test_env_overrides_surface_in_status(monkeypatch):

@@ -82,12 +82,25 @@ def test_reading_tool_replaces_tools_and_old_protection_location_is_gone():
     assert plugin._handle_guardian_command("tools") == "Invalid /guardian command. Try /guardian help."
     assert "Usage" in plugin._handle_guardian_command("protection tool set mcp_acme_* egress=ignore")
     plugin._remember_command_owner(
-        "reading tool set mcp_acme_* egress=ignore", plugin._CLI_OWNER_HASH
+        "reading tool set mcp_acme_* source=reference", plugin._CLI_OWNER_HASH
     )
-    out = plugin._handle_guardian_command("reading tool set mcp_acme_* egress=ignore")
-    assert "Saved tool override" in out
+    out = plugin._handle_guardian_command("reading tool set mcp_acme_* source=reference")
+    assert "Saved Reading tool classification" in out
     listing = plugin._handle_guardian_command("reading tools")
     assert "mcp_acme_*" in listing
+    assert "Invalid Reading tool arguments" in plugin._handle_guardian_command(
+        "reading tool set other_* egress=ignore"
+    )
+    plugin._remember_command_owner(
+        "sharing tool set mcp_acme_* egress=ignore", plugin._CLI_OWNER_HASH
+    )
+    sharing_out = plugin._handle_guardian_command("sharing tool set mcp_acme_* egress=ignore")
+    assert "Saved Sharing tool classification" in sharing_out
+    sharing_listing = plugin._handle_guardian_command("sharing tools")
+    assert "mcp_acme_*" in sharing_listing
+    assert "Invalid Sharing tool arguments" in plugin._handle_guardian_command(
+        "sharing tool set other_* taints=contacts"
+    )
     assert "Usage" in plugin._handle_guardian_command("protection source suggest")
 
 
@@ -97,7 +110,7 @@ def test_reading_source_command_replaces_protection_source():
     plugin._remember_command_owner("reading source set crm reference", plugin._CLI_OWNER_HASH)
     out = plugin._handle_guardian_command("reading source set crm reference")
     assert "crm" in out
-    assert plugin._tool_override_for("crm_read_resource").get("source") == "reference"
+    assert plugin._reading_tool_for("crm_read_resource").get("source") == "reference"
 
 
 def test_protection_language_packs_replaces_language_packs_and_reuses_handler():

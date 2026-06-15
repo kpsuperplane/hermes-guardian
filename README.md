@@ -168,7 +168,7 @@ retain the prior safety.
 
 The entire risk posture lives in one policy document (the persisted Guardian config):
 Egress Safety, the self allowlist (destinations / identities / hosts), declassification
-rules, and tool overrides. The file format is shown under
+rules, and tool classifications. The file format is shown under
 [Egress Safety](#egress-safety).
 
 Security checks run before privacy checks. Privacy allow rules and approval
@@ -216,7 +216,8 @@ the file is reading the decision:
   "sharing": {
     "trusted_recipients": [],
     "rules": [],
-    "outward": { "extra": [] }
+    "outward": { "extra": [] },
+    "tools": []
   },
   "review": {
     "egress_safety": "llm",
@@ -589,7 +590,7 @@ operator-installed reference material is not silently extended to arbitrary sour
 A read of provably-reference material (the `skill_view` builtin, or any read whose
 target path resolves under the skills tree) is scanned leniently, tolerating the
 placeholder contacts that fill skill docs. A read from an MCP server you have
-declared (`source = reference` or `source = private` on a tool override) follows
+declared (`source = reference` or `source = private` on a Reading tool classification) follows
 that declaration. An undeclared MCP document read (`…_read_resource`,
 `…_read_document`, `…_get_resource`) of unknown provenance fails closed: it taints
 `documents` conservatively — even with no detectable signal — and Guardian surfaces
@@ -598,7 +599,7 @@ server once.
 
 For arbitrary unknown non-MCP reads, **Taint Classification** controls the fallback:
 
-- `balanced` (default): use recognized source names, tool overrides, and content
+- `balanced` (default): use recognized source names, Reading tool classifications, and content
   signals. Mundane private prose from an unknown tool can remain untainted;
   unrecognized tools are still gated under taint.
 - `strict`: if an otherwise-unknown non-MCP read returns content with no stronger
@@ -638,7 +639,7 @@ These action families normally require approval when private data is in scope:
 - Model/media tools that may send context to another model or generation
   service.
 - Unrecognized tools (custom or third-party) under taint, unless declared safe by
-  a tool override (see [Tool Classification And Overrides](#tool-classification-and-overrides)).
+  a Sharing tool classification (see [Tool Classification](#tool-classification)).
 
 Final responses are not Privacy-module egress-gated. The Security Module still
 scans final responses and suppresses credentials, OTPs, reset links, security
@@ -660,7 +661,7 @@ network call. Anything the allowlist cannot prove read-only falls through to nor
 gating (and, in `llm` mode, to a verifier likewise instructed to allow genuine
 reads).
 
-## Tool Classification And Overrides
+## Tool Classification
 
 Guardian recognizes Hermes built-in tools and classifies their calls. In
 `balanced` and `strict` Taint Classification, any non-MCP tool it does **not**
@@ -668,46 +669,62 @@ recognize — a custom integration or a tool Guardian simply has no rule for —
 treated as a potential sink and gated under taint, exactly like unknown MCP
 tools. In `relaxed`, unrecognized non-MCP tools are not gated under taint.
 
-When the default gating is too strict for a tool you trust, declare it with a **tool
-override** instead of weakening the global mode. Overrides let you tell Guardian
-what a tool actually does, and Guardian trusts your declaration:
+Tool classifications are split by what they control:
+
+- **Reading tool classifications** say what a tool reads: source taints and
+  `source=reference|private`.
+- **Sharing tool classifications** say whether a tool sends data: `egress=ignore`,
+  `egress=gate`, or a concrete action family and optional destination.
+
+When the default behavior is too strict for a tool you trust, classify that tool
+instead of weakening the global mode:
 
 ```text
-# An MCP server you trust: its reads carry communications, and it is not a sink.
-/guardian reading tool set mcp_acme_* taints=communications egress=ignore note="trusted acme server"
+# An MCP server whose reads carry communications.
+/guardian reading tool set mcp_acme_* taints=communications source=private note="acme server"
+
+# The same MCP server is a safe non-sink for egress purposes.
+/guardian sharing tool set mcp_acme_* egress=ignore note="acme read tools"
 
 # A custom tool that really sends messages: classify it so it gates correctly.
-/guardian reading tool set send_widget egress=message_send
+/guardian sharing tool set send_widget egress=message_send
 
 # A custom tool that is just a safe read:
-/guardian reading tool set lookup_widget egress=ignore
+/guardian sharing tool set lookup_widget egress=ignore
 
 # Force an unrecognized tool to require approval under taint:
-/guardian reading tool set risky_tool egress=gate
+/guardian sharing tool set risky_tool egress=gate
 
-/guardian reading tools            # list overrides + current Taint Classification
+/guardian reading tools            # list source classifications + current Taint Classification
 /guardian reading tool enable|disable <id>
 /guardian reading tool delete <match_or_id>
+
+/guardian sharing tools            # list egress classifications
+/guardian sharing tool enable|disable <id>
+/guardian sharing tool delete <match_or_id>
 ```
 
-Override fields:
+Reading fields:
 
 - `match`: exact tool name, or a single trailing-`*` prefix (e.g. `mcp_acme_*`) to
   cover every tool from one MCP server.
 - `taints`: data classes additively applied when the tool's result is observed (the
-  "this tool reads my email" case). Independent of egress.
-- `egress`: `ignore` (safe non-sink, allowed under taint), `gate` (force approval
-  under taint), or a concrete action family such as `message_send` or `web_api`.
-- `direction`: `read` or `write`, overriding the read/write direction otherwise
-  inferred from the tool name or MCP annotation. Empty keeps the inference.
+  "this tool reads my email" case).
 - `source`: the document-read classification *mode* — `reference` (scan the read
   leniently, like a skill doc) or `private` (always taint as personal data). Empty
   uses the tiered default. Because MCP tools are server-prefixed, a prefix match
   (`match = "crm_*"`) declares a whole server at once.
 
-Overrides are a privacy-layer convenience. They never bypass the Security Module
+Sharing fields:
+
+- `match`: exact tool name, or a single trailing-`*` prefix.
+- `egress`: `ignore` (safe non-sink, allowed under taint), `gate` (force approval
+  under taint), or a concrete action family such as `message_send` or `web_api`.
+- `destination`: optional destination token for concrete egress families.
+
+Tool classifications are a privacy-layer convenience. They never bypass the Security Module
 (credentials, OTPs, sensitive links) or the intrinsic same-call exfiltration hard
-blocks, which always run first. Editing overrides requires CLI or configured-owner
+blocks, which always run first. Editing classifications requires CLI or configured-owner
 privileges, and the dashboard requires explicit confirmation for the weakening
 `egress=ignore`, `source=reference`, and `taint-classification=relaxed` actions.
 
@@ -765,7 +782,7 @@ sit on top as the everyday commands.
 # READING — what has entered context
 /guardian reading
 /guardian reading taint-classification balanced|strict|relaxed
-/guardian reading tool set <match> [taints=class+class] [egress=ignore|gate|<family>] [direction=read|write] [source=reference|private] [destination=<dest>] [note=<text>]
+/guardian reading tool set <match> [taints=class+class] [source=reference|private] [note=<text>]
 /guardian reading tool delete <match_or_id>
 /guardian reading tool enable|disable <id_or_match>
 /guardian reading source suggest|set <server> reference|private
@@ -776,6 +793,9 @@ sit on top as the everyday commands.
 /guardian sharing destination suggest        list trusted-command suggestions
 /guardian sharing destination trust <n> [classes=<class+class>] [note=<text>]
 /guardian sharing destination remove command <n>
+/guardian sharing tool set <match> egress=ignore|gate|<family> [destination=<dest>] [note=<text>]
+/guardian sharing tool delete <match_or_id>
+/guardian sharing tool enable|disable <id_or_match>
 /guardian sharing rule add allow|deny action=<family|*> destination=<dest|*> classes=<class+class|*> [tool=<tool_name|*>] [purpose=<token|*>] [recipient=<id|raw|*>]
 /guardian sharing rule delete|enable|disable <rule_id>
 /guardian sharing rule move <rule_id> before|after <other_rule_id>
@@ -883,6 +903,9 @@ DELETE /api/plugins/hermes-guardian/rules/{rule_id}
 POST /api/plugins/hermes-guardian/reading/tools
 PATCH /api/plugins/hermes-guardian/reading/tools/{override_id}
 DELETE /api/plugins/hermes-guardian/reading/tools/{override_id}
+POST /api/plugins/hermes-guardian/sharing/tools
+PATCH /api/plugins/hermes-guardian/sharing/tools/{override_id}
+DELETE /api/plugins/hermes-guardian/sharing/tools/{override_id}
 POST /api/plugins/hermes-guardian/reading/source-classification
 POST /api/plugins/hermes-guardian/protection/persist-prompts
 POST /api/plugins/hermes-guardian/approvals/{approval_id}/approve
@@ -1183,7 +1206,7 @@ its FP rate is far lower.
 **Assumptions and comparability** (all emitted in the metrics JSON and bounding
 the numbers): (1) AgentDojo's tools are unknown to Guardian, so the adapter
 supplies an explicit, auditable source/sink mapping via Guardian's
-`privacy.tools` override registry — without it the run would only measure
+Reading/Sharing tool classifications — without it the run would only measure
 "AgentDojo's vocabulary is unknown to Guardian"; (2) every session is tainted,
 reflecting AgentDojo's threat model in which the agent has read
 attacker-controlled content before acting; (3) runs use `strict` mode with the
@@ -1230,7 +1253,7 @@ systemctl restart hermes-gateway.service
   retention window.
 - Tool classification is heuristic. Unrecognized tools (unknown MCP tools, custom
   integrations, future Hermes tools) are gated conservatively under taint by
-  default; declare trusted ones with tool overrides rather than disabling the
+  default; declare trusted ones with tool classifications rather than disabling the
   secure default. A tool whose name matches a private-source pattern but is also a
   non-standard sink may still be treated as a recognized read — review and add an
   `egress=gate` override if needed.

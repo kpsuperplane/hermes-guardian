@@ -949,7 +949,7 @@ def _privacy_observe_tool_result(
     # First time this session sees an undeclared MCP doc-read from a server, surface a
     # one-click classification suggestion (server prefix only, never content). Declaring the
     # server (reference|private) via the Reading picker silences it and sets the behavior.
-    if tool_policy._is_mcp_doc_read(tool_name) and not is_reference_read and not tool_policy._tool_override_source(tool_name):
+    if tool_policy._is_mcp_doc_read(tool_name) and not is_reference_read and not tool_policy._reading_tool_source(tool_name):
         server = tool_policy._mcp_server_prefix(tool_name)
         if server and tool_policy._mark_source_suggested(session_id, server):
             activity_store._record_suggestion("source", server)

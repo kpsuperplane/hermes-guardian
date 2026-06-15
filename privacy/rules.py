@@ -36,9 +36,10 @@ _DEFAULT_PERSIST_PROMPTS = False
 # dramatically vs. a reasoning model. Requires the operator to grant
 # plugins.entries.hermes-guardian.llm.allow_model_override in config.yaml.
 _DEFAULT_LLM_VERIFIER_MODEL = ""
-# Action families a user may assign to a custom/unknown tool via a tool override.
-# "ignore" marks a tool as a safe non-sink; "gate" forces tool_unknown gating.
-_TOOL_OVERRIDE_EGRESS_FAMILIES = {
+# Action families a user may assign to a custom/unknown tool via a Sharing tool
+# classification. "ignore" marks a tool as a safe non-sink; "gate" forces
+# tool_unknown gating.
+_SHARING_TOOL_EGRESS_FAMILIES = {
     "message_send",
     "web_api",
     "mcp_write",
@@ -53,16 +54,13 @@ _TOOL_OVERRIDE_EGRESS_FAMILIES = {
     "cron_write",
     "homeassistant_write",
 }
-_TOOL_OVERRIDE_EGRESS_VALUES = {"ignore", "gate"} | _TOOL_OVERRIDE_EGRESS_FAMILIES
-# Tool-override direction (doc 03 §1.2): read|write. Empty means "infer from name /
-# MCP annotation" (the existing behavior); a stored value overrides the inference.
-_TOOL_OVERRIDE_DIRECTIONS = {"read", "write"}
+_SHARING_TOOL_EGRESS_VALUES = {"ignore", "gate"} | _SHARING_TOOL_EGRESS_FAMILIES
 # Source-provenance classification mode for a doc-read tool. `reference` routes reads
 # through the placeholder-tolerant relaxed scan (operator-installed reference material);
 # `private` always taints the read as personal data. Empty means "use the tiered default"
 # (provenance for reference reads, conservative for undeclared MCP doc-reads). For an MCP
 # server, declare the whole server at once with a prefix match (e.g. match = "crm_*").
-_TOOL_OVERRIDE_SOURCES = {"reference", "private"}
+_READING_TOOL_SOURCES = {"reference", "private"}
 # Env vars that override the named `retention` / `dashboard` config blocks (doc 03
 # §1.2). The document is the source of truth; these env vars remain readable as ops
 # overrides and are surfaced in `/guardian status` so they are never invisible.
@@ -169,7 +167,8 @@ def _default_privacy_config() -> dict[str, Any]:
             "llm_cron_context": _DEFAULT_LLM_CRON_CONTEXT,
             "llm_verifier_model": _DEFAULT_LLM_VERIFIER_MODEL,
             "rules": [],
-            "tools": [],
+            "reading_tools": [],
+            "sharing_tools": [],
         },
         "self": _default_self_config(),
         "trusted_recipients": _default_trusted_recipients_config(),
@@ -305,7 +304,7 @@ def _normalize_verifier_model(value: Any) -> str:
 
 
 def _normalize_tool_match(value: Any) -> str:
-    """Normalize a tool override matcher: exact name or single trailing-* prefix."""
+    """Normalize a tool-classification matcher: exact name or single trailing-* prefix."""
     text = str(value or "").strip().lower()
     if not text:
         return ""
@@ -317,7 +316,7 @@ def _normalize_tool_match(value: Any) -> str:
     return f"{base}*" if star else base
 
 
-def _normalize_tool_override(entry: Any) -> dict[str, Any] | None:
+def _normalize_reading_tool(entry: Any) -> dict[str, Any] | None:
     if not isinstance(entry, dict):
         return None
     match = _normalize_tool_match(
@@ -326,19 +325,39 @@ def _normalize_tool_override(entry: Any) -> dict[str, Any] | None:
     if not match:
         return None
     taints = _normalize_rule_classes(entry.get("taints", entry.get("taint", [])), allow_star=False)
-    egress_raw = str(entry.get("egress") or "").strip().lower()
-    egress = egress_raw if egress_raw in _TOOL_OVERRIDE_EGRESS_VALUES else ""
-    direction_raw = str(entry.get("direction") or "").strip().lower()
-    direction = direction_raw if direction_raw in _TOOL_OVERRIDE_DIRECTIONS else ""
     source_raw = str(entry.get("source") or "").strip().lower()
-    source = source_raw if source_raw in _TOOL_OVERRIDE_SOURCES else ""
+    source = source_raw if source_raw in _READING_TOOL_SOURCES else ""
     if source_raw and not source:
         # Fail toward the conservative default, never toward `reference`: drop the unknown
         # value rather than guess. The read then follows the tiered default for its kind.
         core.logger.warning(
-            "%s: ignoring unknown tool-override source %r (expected one of: %s).",
-            core._PLUGIN_NAME, source_raw, ", ".join(sorted(_TOOL_OVERRIDE_SOURCES)),
+            "%s: ignoring unknown reading tool source %r (expected one of: %s).",
+            core._PLUGIN_NAME, source_raw, ", ".join(sorted(_READING_TOOL_SOURCES)),
         )
+    note = re.sub(r"\s+", " ", str(entry.get("note") or "")).strip()[:200]
+    override_id = str(entry.get("id") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", override_id):
+        override_id = f"source_tool_{secrets.token_hex(4)}"
+    return {
+        "id": override_id,
+        "match": match,
+        "taints": taints,
+        "source": source,
+        "enabled": _config_bool(entry.get("enabled"), default=True),
+        "note": note,
+    }
+
+
+def _normalize_sharing_tool(entry: Any) -> dict[str, Any] | None:
+    if not isinstance(entry, dict):
+        return None
+    match = _normalize_tool_match(
+        entry.get("match") or entry.get("tool") or entry.get("tool_name")
+    )
+    if not match:
+        return None
+    egress_raw = str(entry.get("egress") or "").strip().lower()
+    egress = egress_raw if egress_raw in _SHARING_TOOL_EGRESS_VALUES else ""
     destination = (
         tool_policy._safe_policy_token(entry.get("destination"), default="", limit=80)
         if entry.get("destination")
@@ -347,30 +366,42 @@ def _normalize_tool_override(entry: Any) -> dict[str, Any] | None:
     note = re.sub(r"\s+", " ", str(entry.get("note") or "")).strip()[:200]
     override_id = str(entry.get("id") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", override_id):
-        override_id = f"tool_{secrets.token_hex(4)}"
+        override_id = f"sharing_tool_{secrets.token_hex(4)}"
     return {
         "id": override_id,
         "match": match,
-        "taints": taints,
         "egress": egress,
-        "direction": direction,
-        "source": source,
         "destination": destination,
         "enabled": _config_bool(entry.get("enabled"), default=True),
         "note": note,
     }
 
 
-def _normalize_tool_overrides(raw: Any) -> list[dict[str, Any]]:
+def _normalize_reading_tools(raw: Any) -> list[dict[str, Any]]:
     items = raw if isinstance(raw, list) else []
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for entry in items:
-        normalized = _normalize_tool_override(entry)
+        normalized = _normalize_reading_tool(entry)
         if normalized is None:
             continue
         if normalized["id"] in seen:
-            normalized["id"] = f"tool_{secrets.token_hex(4)}"
+            normalized["id"] = f"source_tool_{secrets.token_hex(4)}"
+        seen.add(normalized["id"])
+        out.append(normalized)
+    return out
+
+
+def _normalize_sharing_tools(raw: Any) -> list[dict[str, Any]]:
+    items = raw if isinstance(raw, list) else []
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in items:
+        normalized = _normalize_sharing_tool(entry)
+        if normalized is None:
+            continue
+        if normalized["id"] in seen:
+            normalized["id"] = f"sharing_tool_{secrets.token_hex(4)}"
         seen.add(normalized["id"])
         out.append(normalized)
     return out
@@ -688,9 +719,10 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
 # The conceptual correspondence (doc 04 §3), file block -> internal key:
 #   whats_yours.stores/.identities/.hosts -> self.destinations/.identities/.hosts
 #   reading.taint_classification          -> privacy.taint_classification
-#   reading.tools                         -> privacy.tools
+#   reading.tools                         -> privacy.reading_tools
 #   sharing.trusted_recipients            -> trusted_recipients.entries
 #   sharing.rules                         -> privacy.rules
+#   sharing.tools                         -> privacy.sharing_tools
 #   sharing.outward.extra                 -> outward_sharing.extra (builtin code-owned)
 #   review.egress_safety/.owner_context/.cron_context/.verifier_model
 #                                         -> privacy.egress_safety/.llm_user_context/...
@@ -847,8 +879,10 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
             "llm_verifier_model": _normalize_verifier_model(review.get("verifier_model")),
             # 3 — SHARING: standing authorization (decide step 5).
             "rules": _v4_sharing_rules(sharing.get("rules")),
-            # 2.5 — READING: tool/source classification overrides.
-            "tools": _normalize_tool_overrides(reading.get("tools")),
+            # 2.5 — READING: source classification.
+            "reading_tools": _normalize_reading_tools(reading.get("tools")),
+            # 3 — SHARING: egress classification.
+            "sharing_tools": _normalize_sharing_tools(sharing.get("tools")),
         },
         # 2 — WHAT'S YOURS: destination trust (decide steps 2–3).
         "self": _v4_whats_yours_to_self(whats_yours),
@@ -902,6 +936,20 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
         block = parsed.get(block_name)
         if block is not None and not isinstance(block, dict):
             raise ValueError(f"privacy rule file {block_name} must be an object")
+    reading = parsed.get("reading")
+    if isinstance(reading, dict):
+        for index, entry in enumerate(reading.get("tools") or []):
+            if isinstance(entry, dict):
+                for mixed_key in ("egress", "destination", "direction"):
+                    if mixed_key in entry:
+                        raise ValueError(f"privacy rule file has invalid reading.tools[{index}].{mixed_key}")
+    sharing = parsed.get("sharing")
+    if isinstance(sharing, dict):
+        for index, entry in enumerate(sharing.get("tools") or []):
+            if isinstance(entry, dict):
+                for mixed_key in ("taints", "taint", "source", "direction"):
+                    if mixed_key in entry:
+                        raise ValueError(f"privacy rule file has invalid sharing.tools[{index}].{mixed_key}")
     protection = parsed.get("protection")
     if isinstance(protection, dict):
         for obsolete_key in ("unknown_tools", "taint_classification", "tools"):
@@ -977,7 +1025,8 @@ def _normalize_internal_config(data: Any) -> dict[str, Any]:
             ),
             "llm_verifier_model": _normalize_verifier_model(privacy.get("llm_verifier_model")),
             "rules": normalized_rules,
-            "tools": _normalize_tool_overrides(privacy.get("tools")),
+            "reading_tools": _normalize_reading_tools(privacy.get("reading_tools")),
+            "sharing_tools": _normalize_sharing_tools(privacy.get("sharing_tools")),
         },
         "self": _normalize_self_config(data.get("self")),
         "trusted_recipients": _normalize_trusted_recipients(data.get("trusted_recipients")),
@@ -1024,7 +1073,7 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
             "taint_classification": _normalize_taint_classification(
                 privacy.get("taint_classification")
             ),
-            "tools": list(privacy.get("tools") or []),
+            "tools": list(privacy.get("reading_tools") or []),
         },
         "sharing": {
             "trusted_recipients": [
@@ -1038,6 +1087,7 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
                 if isinstance(entry, dict)
             ],
             "rules": list(privacy.get("rules") or []),
+            "tools": list(privacy.get("sharing_tools") or []),
             "outward": {"extra": list(outward.get("extra") or [])},
         },
         "review": {
@@ -1380,20 +1430,35 @@ def _verifier_model_options() -> list[str]:
     return options
 
 
-def _tool_overrides() -> list[dict[str, Any]]:
-    return list(_load_privacy_config().get("privacy", {}).get("tools", []))
+def _reading_tools() -> list[dict[str, Any]]:
+    return list(_load_privacy_config().get("privacy", {}).get("reading_tools", []))
 
 
-def _tool_overrides_snapshot() -> list[dict[str, Any]]:
+def _sharing_tools() -> list[dict[str, Any]]:
+    return list(_load_privacy_config().get("privacy", {}).get("sharing_tools", []))
+
+
+def _reading_tools_snapshot() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for override in _tool_overrides():
+    for override in _reading_tools():
         out.append({
             "id": str(override.get("id") or ""),
             "match": str(override.get("match") or ""),
             "taints": sorted(override.get("taints") or []),
-            "egress": str(override.get("egress") or ""),
-            "direction": str(override.get("direction") or ""),
             "source": str(override.get("source") or ""),
+            "enabled": bool(override.get("enabled", True)),
+            "note": str(override.get("note") or ""),
+        })
+    return out
+
+
+def _sharing_tools_snapshot() -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for override in _sharing_tools():
+        out.append({
+            "id": str(override.get("id") or ""),
+            "match": str(override.get("match") or ""),
+            "egress": str(override.get("egress") or ""),
             "destination": str(override.get("destination") or ""),
             "enabled": bool(override.get("enabled", True)),
             "note": str(override.get("note") or ""),
@@ -1401,21 +1466,25 @@ def _tool_overrides_snapshot() -> list[dict[str, Any]]:
     return out
 
 
-def _save_tool_overrides(overrides: list[dict[str, Any]]) -> bool:
+def _save_reading_tools(overrides: list[dict[str, Any]]) -> bool:
     data = _load_privacy_config()
     privacy = dict(data.get("privacy") or {})
-    privacy["tools"] = overrides
+    privacy["reading_tools"] = overrides
     return _save_privacy_config(_config_for_save(data, privacy=privacy))
 
 
-def _set_tool_override(
+def _save_sharing_tools(overrides: list[dict[str, Any]]) -> bool:
+    data = _load_privacy_config()
+    privacy = dict(data.get("privacy") or {})
+    privacy["sharing_tools"] = overrides
+    return _save_privacy_config(_config_for_save(data, privacy=privacy))
+
+
+def _set_reading_tool(
     match: str,
     *,
     taints: Any = None,
-    egress: Any = None,
-    direction: Any = None,
     source: Any = None,
-    destination: Any = None,
     note: Any = None,
     enabled: Any = None,
 ) -> tuple[bool, str]:
@@ -1424,19 +1493,8 @@ def _set_tool_override(
         return False, "Tool match must be a tool name or a prefix like mcp_acme_*."
     if source is not None:
         source_text = str(source).strip().lower()
-        if source_text and source_text not in _TOOL_OVERRIDE_SOURCES:
+        if source_text and source_text not in _READING_TOOL_SOURCES:
             return False, "source must be one of: reference, private."
-    if egress is not None:
-        egress_text = str(egress).strip().lower()
-        if egress_text and egress_text not in _TOOL_OVERRIDE_EGRESS_VALUES:
-            return False, (
-                "egress must be one of: ignore, gate, or a known action family "
-                f"({', '.join(sorted(_TOOL_OVERRIDE_EGRESS_FAMILIES))})."
-            )
-    if direction is not None:
-        direction_text = str(direction).strip().lower()
-        if direction_text and direction_text not in _TOOL_OVERRIDE_DIRECTIONS:
-            return False, "direction must be one of: read, write."
     if taints is not None:
         requested = taints if isinstance(taints, list) else [taints]
         invalid = [
@@ -1446,58 +1504,111 @@ def _set_tool_override(
         ]
         if invalid:
             return False, "Unknown data class(es): " + ", ".join(sorted(set(invalid))) + "."
-    overrides = _tool_overrides()
+    overrides = _reading_tools()
     existing = next((o for o in overrides if o.get("match") == normalized_match), None)
     payload = dict(existing) if existing else {"match": normalized_match}
     payload["match"] = normalized_match
     if taints is not None:
         payload["taints"] = taints
-    if egress is not None:
-        payload["egress"] = egress
-    if direction is not None:
-        payload["direction"] = direction
     if source is not None:
         payload["source"] = source
+    if note is not None:
+        payload["note"] = note
+    if enabled is not None:
+        payload["enabled"] = enabled
+    normalized = _normalize_reading_tool(payload)
+    if normalized is None:
+        return False, "Invalid Reading tool classification."
+    if existing:
+        normalized["id"] = existing.get("id") or normalized["id"]
+        overrides = [normalized if o.get("id") == existing.get("id") else o for o in overrides]
+    else:
+        overrides.append(normalized)
+    if not _save_reading_tools(overrides):
+        return False, "Failed to save Reading tool classification; Guardian remains unchanged."
+    return True, f"Saved Reading tool classification {normalized['id']} for {normalized_match}."
+
+
+def _set_sharing_tool(
+    match: str,
+    *,
+    egress: Any = None,
+    destination: Any = None,
+    note: Any = None,
+    enabled: Any = None,
+) -> tuple[bool, str]:
+    normalized_match = _normalize_tool_match(match)
+    if not normalized_match:
+        return False, "Tool match must be a tool name or a prefix like mcp_acme_*."
+    if egress is not None:
+        egress_text = str(egress).strip().lower()
+        if egress_text and egress_text not in _SHARING_TOOL_EGRESS_VALUES:
+            return False, (
+                "egress must be one of: ignore, gate, or a known action family "
+                f"({', '.join(sorted(_SHARING_TOOL_EGRESS_FAMILIES))})."
+            )
+    overrides = _sharing_tools()
+    existing = next((o for o in overrides if o.get("match") == normalized_match), None)
+    payload = dict(existing) if existing else {"match": normalized_match}
+    payload["match"] = normalized_match
+    if egress is not None:
+        payload["egress"] = egress
     if destination is not None:
         payload["destination"] = destination
     if note is not None:
         payload["note"] = note
     if enabled is not None:
         payload["enabled"] = enabled
-    normalized = _normalize_tool_override(payload)
+    normalized = _normalize_sharing_tool(payload)
     if normalized is None:
-        return False, "Invalid tool override."
+        return False, "Invalid Sharing tool classification."
     if existing:
         normalized["id"] = existing.get("id") or normalized["id"]
         overrides = [normalized if o.get("id") == existing.get("id") else o for o in overrides]
     else:
         overrides.append(normalized)
-    if not _save_tool_overrides(overrides):
-        return False, "Failed to save tool override; Guardian remains unchanged."
-    return True, f"Saved tool override {normalized['id']} for {normalized_match}."
+    if not _save_sharing_tools(overrides):
+        return False, "Failed to save Sharing tool classification; Guardian remains unchanged."
+    return True, f"Saved Sharing tool classification {normalized['id']} for {normalized_match}."
 
 
-def _delete_tool_override(match_or_id: str) -> tuple[bool, str]:
+def _delete_reading_tool(match_or_id: str) -> tuple[bool, str]:
     target = str(match_or_id or "").strip()
     target_match = _normalize_tool_match(target)
-    overrides = _tool_overrides()
+    overrides = _reading_tools()
     remaining = [
         o
         for o in overrides
         if o.get("id") != target and o.get("match") != target_match
     ]
     if len(remaining) == len(overrides):
-        return False, f"No matching tool override found for {match_or_id}."
-    if not _save_tool_overrides(remaining):
-        return False, "Failed to save tool overrides; Guardian remains unchanged."
-    return True, f"Deleted tool override {match_or_id}."
+        return False, f"No matching Reading tool classification found for {match_or_id}."
+    if not _save_reading_tools(remaining):
+        return False, "Failed to save Reading tool classifications; Guardian remains unchanged."
+    return True, f"Deleted Reading tool classification {match_or_id}."
 
 
-def _set_tool_override_enabled(override_id: str, enabled: bool) -> tuple[bool, str]:
+def _delete_sharing_tool(match_or_id: str) -> tuple[bool, str]:
+    target = str(match_or_id or "").strip()
+    target_match = _normalize_tool_match(target)
+    overrides = _sharing_tools()
+    remaining = [
+        o
+        for o in overrides
+        if o.get("id") != target and o.get("match") != target_match
+    ]
+    if len(remaining) == len(overrides):
+        return False, f"No matching Sharing tool classification found for {match_or_id}."
+    if not _save_sharing_tools(remaining):
+        return False, "Failed to save Sharing tool classifications; Guardian remains unchanged."
+    return True, f"Deleted Sharing tool classification {match_or_id}."
+
+
+def _set_reading_tool_enabled(override_id: str, enabled: bool) -> tuple[bool, str]:
     target = str(override_id or "").strip()
     target_match = _normalize_tool_match(target)
     desired = _config_bool(enabled, default=True)
-    overrides = _tool_overrides()
+    overrides = _reading_tools()
     found = False
     for override in overrides:
         if override.get("id") == target or override.get("match") == target_match:
@@ -1505,19 +1616,59 @@ def _set_tool_override_enabled(override_id: str, enabled: bool) -> tuple[bool, s
             found = True
             break
     if not found:
-        return False, f"No matching tool override found for {override_id}."
-    if not _save_tool_overrides(overrides):
-        return False, "Failed to save tool override; Guardian remains unchanged."
-    return True, f"{'Enabled' if desired else 'Disabled'} tool override {target}."
+        return False, f"No matching Reading tool classification found for {override_id}."
+    if not _save_reading_tools(overrides):
+        return False, "Failed to save Reading tool classification; Guardian remains unchanged."
+    return True, f"{'Enabled' if desired else 'Disabled'} Reading tool classification {target}."
 
 
-def _tool_override_for(tool_name: str) -> dict[str, Any] | None:
+def _set_sharing_tool_enabled(override_id: str, enabled: bool) -> tuple[bool, str]:
+    target = str(override_id or "").strip()
+    target_match = _normalize_tool_match(target)
+    desired = _config_bool(enabled, default=True)
+    overrides = _sharing_tools()
+    found = False
+    for override in overrides:
+        if override.get("id") == target or override.get("match") == target_match:
+            override["enabled"] = desired
+            found = True
+            break
+    if not found:
+        return False, f"No matching Sharing tool classification found for {override_id}."
+    if not _save_sharing_tools(overrides):
+        return False, "Failed to save Sharing tool classification; Guardian remains unchanged."
+    return True, f"{'Enabled' if desired else 'Disabled'} Sharing tool classification {target}."
+
+
+def _reading_tool_for(tool_name: str) -> dict[str, Any] | None:
     name = str(tool_name or "").strip().lower()
     if not name:
         return None
     best: dict[str, Any] | None = None
     best_len = -1
-    for override in _tool_overrides():
+    for override in _reading_tools():
+        if not override.get("enabled", True):
+            continue
+        match = str(override.get("match") or "")
+        if not match:
+            continue
+        if match.endswith("*"):
+            prefix = match[:-1]
+            if name.startswith(prefix) and len(prefix) > best_len:
+                best = override
+                best_len = len(prefix)
+        elif name == match:
+            return override
+    return best
+
+
+def _sharing_tool_for(tool_name: str) -> dict[str, Any] | None:
+    name = str(tool_name or "").strip().lower()
+    if not name:
+        return None
+    best: dict[str, Any] | None = None
+    best_len = -1
+    for override in _sharing_tools():
         if not override.get("enabled", True):
             continue
         match = str(override.get("match") or "")
@@ -1728,7 +1879,7 @@ def _source_classification_suggestions(limit: int = 40) -> list[dict[str, Any]]:
         seen.add(server)
         # A declaration scopes the whole server via a prefix match; a representative read tool
         # resolves it. Already-classified servers no longer need a suggestion.
-        if tool_policy._tool_override_source(f"{server}_read_resource"):
+        if tool_policy._reading_tool_source(f"{server}_read_resource"):
             continue
         out.append({
             "server": server,
@@ -1742,13 +1893,14 @@ def _source_classification_suggestions(limit: int = 40) -> list[dict[str, Any]]:
 
 def _set_source_classification(server: str, mode: str) -> tuple[bool, str]:
     """Declare an MCP server's doc-reads as `reference` or `private` from the picker — a
-    prefix-scoped tool override (``<server>_*``). Mirrors the trusted-destination picker flow."""
+    prefix-scoped Reading tool classification (``<server>_*``). Mirrors the
+    trusted-destination picker flow."""
     name = re.sub(r"[^a-z0-9_]+", "_", str(server or "").strip().lower()).strip("_")
     if not name:
         return False, "Provide an MCP server prefix (e.g. crm)."
-    if str(mode or "").strip().lower() not in _TOOL_OVERRIDE_SOURCES:
+    if str(mode or "").strip().lower() not in _READING_TOOL_SOURCES:
         return False, "Mode must be one of: reference, private."
-    return _set_tool_override(f"{name}_*", source=str(mode).strip().lower())
+    return _set_reading_tool(f"{name}_*", source=str(mode).strip().lower())
 
 
 def _add_trusted_command(command: str, *, classes: Any = None, note: str = "") -> tuple[bool, str]:

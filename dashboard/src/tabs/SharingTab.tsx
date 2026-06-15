@@ -8,16 +8,21 @@ import { TrustPill } from "@/components/TrustPill";
 import { TrustedDestinationModal } from "@/components/TrustedDestinationModal";
 import { classesText, displayText, expiryPillText, ruleScopeText, text, timeText } from "@/lib/format";
 import type { DestinationsController } from "@/hooks/useDestinations";
-import type { ImpactPreview as ImpactPreviewData, Rule } from "@/types";
+import type { ImpactPreview as ImpactPreviewData, Rule, SharingTool } from "@/types";
 
 export interface SharingTabProps {
   controller: DestinationsController;
   rules: Rule[];
+  sharingTools: SharingTool[];
   onNewRule: () => void;
   onEditRule: (rule: Rule) => void;
   onPatchRule: (ruleId: string, payload: Record<string, unknown>) => void;
   onDeleteRule: (ruleId: string) => void;
   onMoveRule: (rule: Rule, direction: "up" | "down") => void;
+  onNewTool: () => void;
+  onEditTool: (tool: SharingTool) => void;
+  onToggleTool: (tool: SharingTool) => void;
+  onDeleteTool: (tool: SharingTool) => void;
 }
 
 // --- Trusted destinations: identities + commands you've consented to share with --
@@ -85,6 +90,79 @@ function TrustedDestinations(props: { controller: DestinationsController }) {
           onCancel={() => setShowModal(false)}
         />
       ) : null}
+    </div>
+  );
+}
+
+function EgressToolClassification(props: {
+  tools: SharingTool[];
+  onNewTool: () => void;
+  onEditTool: (tool: SharingTool) => void;
+  onToggleTool: (tool: SharingTool) => void;
+  onDeleteTool: (tool: SharingTool) => void;
+}) {
+  return (
+    <div className="hermes-guardian-card">
+      <div className="hermes-guardian-card-head">
+        <div>
+          <div className="hermes-guardian-card-title">Egress tool classification</div>
+          <div className="hermes-guardian-muted">
+            Teach Guardian whether a tool sends data: no egress, gate as unknown, or a specific
+            action family and destination. Source taints live in Reading.
+          </div>
+        </div>
+      </div>
+      {props.tools.length ? (
+        <div className="hermes-guardian-grid">
+          {props.tools.map((tool) => {
+            const disabled = tool.enabled === false;
+            const cardClasses = ["hermes-guardian-card"];
+            if (disabled) cardClasses.push("hermes-guardian-rule-disabled");
+            return (
+              <div key={tool.id} className={cardClasses.join(" ")}>
+                <div className="hermes-guardian-rule-head">
+                  <div className="hermes-guardian-rule-main">
+                    <div className="hermes-guardian-rule-title">{text(tool.match)}</div>
+                    <div className="hermes-guardian-rule-subline">
+                      <span className="hermes-guardian-rule-id">{text(tool.id)}</span>
+                      {tool.egress ? (
+                        <span className="hermes-guardian-pill">
+                          {"egress " + (tool.egress === "ignore" ? "none" : tool.egress)}
+                        </span>
+                      ) : null}
+                      {tool.destination ? (
+                        <span className="hermes-guardian-pill">{"dest " + tool.destination}</span>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="hermes-guardian-actions">
+                    <IconButton
+                      icon="edit"
+                      label={"Edit egress classification " + text(tool.match)}
+                      onClick={() => props.onEditTool(tool)}
+                    />
+                    <Button variant="secondary" onClick={() => props.onToggleTool(tool)}>
+                      {disabled ? "Enable" : "Disable"}
+                    </Button>
+                    <IconButton
+                      icon="trash"
+                      variant="danger"
+                      label={"Delete egress classification " + text(tool.match)}
+                      onClick={() => props.onDeleteTool(tool)}
+                    />
+                  </div>
+                </div>
+                {tool.note ? <div className="hermes-guardian-muted">{text(tool.note)}</div> : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="hermes-guardian-muted">No Sharing tool classifications.</div>
+      )}
+      <div className="hermes-guardian-tools-override-actions">
+        <Button onClick={props.onNewTool}>New egress classification</Button>
+      </div>
     </div>
   );
 }
@@ -347,7 +425,20 @@ function OutwardSharing(props: { controller: DestinationsController }) {
 }
 
 export function SharingTab(props: SharingTabProps) {
-  const { controller, rules, onNewRule, onEditRule, onPatchRule, onDeleteRule, onMoveRule } = props;
+  const {
+    controller,
+    rules,
+    sharingTools,
+    onNewRule,
+    onEditRule,
+    onPatchRule,
+    onDeleteRule,
+    onMoveRule,
+    onNewTool,
+    onEditTool,
+    onToggleTool,
+    onDeleteTool,
+  } = props;
 
   if (controller.loading && !controller.data) {
     return <div className="hermes-guardian-muted">Loading sharing settings...</div>;
@@ -356,6 +447,14 @@ export function SharingTab(props: SharingTabProps) {
   return (
     <div className="hermes-guardian-grid">
       <TrustedDestinations controller={controller} />
+
+      <EgressToolClassification
+        tools={sharingTools}
+        onNewTool={onNewTool}
+        onEditTool={onEditTool}
+        onToggleTool={onToggleTool}
+        onDeleteTool={onDeleteTool}
+      />
 
       <div className="hermes-guardian-card">
         <div className="hermes-guardian-card-head">

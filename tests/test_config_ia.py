@@ -50,8 +50,7 @@ def _full_v4_document() -> dict:
         "reading": {
             "taint_classification": "strict",
             "tools": [
-                {"match": "crm_*", "direction": "read", "taints": ["contacts"],
-                 "destination": "store:crm", "egress": "ignore"},
+                {"match": "crm_*", "taints": ["contacts"], "source": "private"},
             ],
         },
         "sharing": {
@@ -68,6 +67,9 @@ def _full_v4_document() -> dict:
                 ),
             ],
             "outward": {"extra": ["crosspost"]},
+            "tools": [
+                {"match": "crm_*", "destination": "store:crm", "egress": "ignore"},
+            ],
         },
         "review": {
             "egress_safety": "llm",
@@ -107,9 +109,14 @@ def test_full_v4_file_parses_to_internal_structure():
     assert "crosspost" in config["outward_sharing"]["extra"]
     assert set(config["outward_sharing"]["builtin"]) == set(plugin._OUTWARD_SHARING_BUILTIN_SUBTYPES)
 
-    # reading.* -> internal privacy.{taint_classification,tools}.
+    # reading.* -> internal privacy.{taint_classification,reading_tools}.
     assert config["privacy"]["taint_classification"] == "strict"
-    assert [t["match"] for t in config["privacy"]["tools"]] == ["crm_*"]
+    assert [t["match"] for t in config["privacy"]["reading_tools"]] == ["crm_*"]
+    assert config["privacy"]["reading_tools"][0]["source"] == "private"
+
+    # sharing.tools -> internal privacy.sharing_tools.
+    assert [t["match"] for t in config["privacy"]["sharing_tools"]] == ["crm_*"]
+    assert config["privacy"]["sharing_tools"][0]["egress"] == "ignore"
 
     # review.* -> internal privacy.{egress_safety,llm_*}.
     assert config["privacy"]["egress_safety"] == "llm"
@@ -221,7 +228,8 @@ def test_partial_file_only_whats_yours_fills_defaults():
     assert config["privacy"]["llm_user_context"] is True
     assert config["privacy"]["llm_cron_context"] is False
     assert config["privacy"]["taint_classification"] == "balanced"
-    assert config["privacy"]["tools"] == []
+    assert config["privacy"]["reading_tools"] == []
+    assert config["privacy"]["sharing_tools"] == []
     # sharing empty; outward builtin code-owned.
     assert config["privacy"]["rules"] == []
     assert config["trusted_recipients"]["entries"] == []
@@ -271,6 +279,22 @@ def test_obsolete_unknown_tools_fails_closed_to_strict():
 def test_obsolete_reading_keys_under_protection_fail_closed_to_strict(key, value):
     plugin = load_plugin()
     _write_file(plugin, {"version": 4, "protection": {key: value}})
+
+    config = plugin._load_privacy_config()
+
+    assert config["privacy"]["egress_safety"] == "strict"
+    assert plugin.state._PERSISTENT_RULES_ERROR is True
+
+
+@pytest.mark.parametrize("block,tool", [
+    ("reading", {"match": "crm_*", "egress": "ignore"}),
+    ("reading", {"match": "crm_*", "destination": "store:crm"}),
+    ("sharing", {"match": "crm_*", "taints": ["contacts"]}),
+    ("sharing", {"match": "crm_*", "source": "private"}),
+])
+def test_mixed_reading_and_sharing_tool_fields_fail_closed(block, tool):
+    plugin = load_plugin()
+    _write_file(plugin, {"version": 4, block: {"tools": [tool]}})
 
     config = plugin._load_privacy_config()
 
@@ -343,6 +367,8 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     assert plugin._add_trusted_recipient("ally@example.com", classes=["communications"], note="team")[0]
     assert plugin._set_security_rule("sensitive_links", False)[0]
     assert plugin._set_taint_classification_mode("relaxed")[0]
+    assert plugin._set_reading_tool("crm_*", source="private", taints=["contacts"])[0]
+    assert plugin._set_sharing_tool("crm_*", egress="ignore", destination="store:crm")[0]
     assert plugin._add_outward_sharing_subtype("crosspost")[0]
 
     # The on-disk file is the v4 IA schema, not the old keys.
@@ -355,6 +381,8 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     assert "taint_classification" not in on_disk["protection"]
     assert "tools" not in on_disk["protection"]
     assert on_disk["reading"]["taint_classification"] == "relaxed"
+    assert on_disk["reading"]["tools"][0]["source"] == "private"
+    assert on_disk["sharing"]["tools"][0]["egress"] == "ignore"
     assert "crosspost" in on_disk["sharing"]["outward"]["extra"]
     # builtin subtypes are NOT serialized (code-owned, never written to config).
     assert "builtin" not in on_disk["sharing"]["outward"]
@@ -373,5 +401,7 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
     assert {r["id"]: r["enabled"] for r in after["security"]["rules"]}["sensitive_links"] is False
     assert "unknown_tools" not in after["privacy"]
     assert after["privacy"]["taint_classification"] == "relaxed"
+    assert after["privacy"]["reading_tools"][0]["source"] == "private"
+    assert after["privacy"]["sharing_tools"][0]["egress"] == "ignore"
     assert "crosspost" in after["outward_sharing"]["extra"]
     assert plugin.state._PERSISTENT_RULES_ERROR is False

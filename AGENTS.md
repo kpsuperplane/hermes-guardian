@@ -153,7 +153,7 @@ Preserve these invariants unless the user explicitly asks for a model change and
 the tests/docs are updated accordingly:
 
 - Security-sensitive content is non-approvable. Privacy allow rules, approval
-  commands, and `privacy.tools` overrides must not bypass Security Module
+  commands, and Reading/Sharing tool classifications must not bypass Security Module
   blocks/suppression or intrinsic same-call hard blocks.
 - Unrecognized non-MCP tools fail closed under taint by default (`tool_unknown`).
   Do not regress this to an allow fallback; the only opt-out is Taint
@@ -252,13 +252,12 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
     "taint_classification": "balanced",
     "tools": [
       {
-        "id": "tool_ab12cd34",
+        "id": "source_tool_ab12cd34",
         "match": "mcp_acme_*",
         "taints": ["email"],
-        "egress": "ignore",
-        "destination": "",
+        "source": "private",
         "enabled": true,
-        "note": "acme MCP server is a trusted read"
+        "note": "acme MCP server reads private mail"
       }
     ]
   },
@@ -267,7 +266,17 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
       {"identity": "ally@example.com", "classes": ["communications"], "note": ""}
     ],
     "rules": [],
-    "outward": {"extra": []}
+    "outward": {"extra": []},
+    "tools": [
+      {
+        "id": "sharing_tool_cd34ef56",
+        "match": "mcp_acme_*",
+        "egress": "ignore",
+        "destination": "",
+        "enabled": true,
+        "note": "acme read tools are not sinks"
+      }
+    ]
   },
   "review": {
     "egress_safety": "strict",
@@ -292,7 +301,7 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
 
 Internally, `privacy/rules.py` consumes a normalized in-memory structure
 (`privacy.{egress_safety,taint_classification,llm_user_context,
-llm_cron_context,llm_verifier_model,rules,tools}`, `self`, `trusted_recipients`,
+llm_cron_context,llm_verifier_model,rules,reading_tools,sharing_tools}`, `self`, `trusted_recipients`,
 `outward_sharing`, `security.rules`, `language_packs.enabled`, `retention`,
 `dashboard`); these internal keys are what the engine and mutators use.
 `_normalize_privacy_config` parses the v4 file into that structure,
@@ -301,9 +310,10 @@ re-normalizes it on save; `decide`, `classify`, and `resolve_destination_trust`
 only ever see the internal structure.
 The file→internal map (doc 04 §3): `whats_yours.stores/.identities/.hosts`
 → `self.destinations/.identities/.hosts`; `reading.taint_classification` →
-`privacy.taint_classification`; `reading.tools` → `privacy.tools`;
+`privacy.taint_classification`; `reading.tools` → `privacy.reading_tools`;
 `sharing.trusted_recipients` →
 `trusted_recipients.entries`; `sharing.rules` → `privacy.rules`;
+`sharing.tools` → `privacy.sharing_tools`;
 `sharing.outward.extra` → `outward_sharing.extra` (builtin subtypes are code-owned and
 never read from / written to config); `review.egress_safety/.owner_context/.cron_context/
 .verifier_model` → `privacy.egress_safety/.llm_user_context/.llm_cron_context/
@@ -314,18 +324,23 @@ never read from / written to config); `review.egress_safety/.owner_context/.cron
 
 `reading.taint_classification` is `balanced` (default), `strict`, or `relaxed`.
 In `balanced`, arbitrary unknown non-MCP read results use recognized source names,
-tool overrides, and content signals; unrecognized non-MCP tools are gated under
+Reading tool classifications, and content signals; unrecognized non-MCP tools are gated under
 taint. In `strict`, an otherwise-unknown non-MCP read result that carries no
 stronger classification taints as `documents`. In `relaxed`, read behavior matches
 balanced and unrecognized non-MCP tools are not gated under taint; relaxed raises
 a runtime risk banner.
 
-`privacy.tools` is the user-managed tool override registry. Each entry has a `match`
-(exact tool name or a single trailing-`*` prefix), optional `taints` (source classes
-applied when the tool's result is observed), and optional `egress`: `ignore` (treat
-as a safe non-sink), `gate` (force `tool_unknown` gating), or a concrete action
-family. Overrides take precedence over built-in classification but are privacy-layer
-only: they never bypass the Security Module or intrinsic same-call hard blocks.
+`privacy.reading_tools` is the user-managed source-classification registry. Each
+entry has a `match` (exact tool name or a single trailing-`*` prefix), optional
+`taints` (source classes applied when the tool's result is observed), and optional
+`source` (`reference` or `private`).
+
+`privacy.sharing_tools` is the user-managed egress-classification registry. Each
+entry has a `match`, optional `egress`: `ignore` (treat as a safe non-sink),
+`gate` (force `tool_unknown` gating), or a concrete action family, plus optional
+`destination`. Classifications take precedence over built-in classification but
+are privacy-layer only: they never bypass the Security Module or intrinsic
+same-call hard blocks.
 
 `privacy.llm_user_context` (default `true`) and `privacy.llm_cron_context`
 (default `false`) are booleans gating the two `llm`-mode authorization-evidence
@@ -349,7 +364,7 @@ never become a false allow.
 
 Rule mutation helpers must preserve privacy rules, security rule settings,
 `taint_classification`, the `llm_user_context` / `llm_cron_context` flags,
-`llm_verifier_model`, and `tools` overrides. This is covered by
+`llm_verifier_model`, and Reading/Sharing tool classifications. This is covered by
 `tests/test_security_rules_config.py`, `tests/test_tool_overrides.py`,
 `tests/test_llm_context_settings.py`, and `tests/test_verifier_model.py`.
 
@@ -421,10 +436,12 @@ Keep `dashboard/plugin_api.py` as a thin adapter:
 - It should require explicit confirmation for the weakening actions: Egress Safety
   `off` (`egress-safety-off`), global wildcard allow rules (`wildcard-allow`),
   Taint Classification `relaxed` (`taint-classification-relaxed`),
-  `egress:ignore` tool overrides (`tool-ignore`), and enabling cron context
+  Sharing `egress:ignore` tool classifications (`tool-ignore`), and enabling cron context
   (`cron-context-on`).
-- Tool override, Taint Classification, and LLM-context routes (`POST /reading/tools`,
-  `PATCH /reading/tools/{id}`, `DELETE /reading/tools/{id}`, `POST /reading/taint-classification`,
+- Reading/Sharing tool-classification, Taint Classification, and LLM-context routes
+  (`POST /reading/tools`, `PATCH /reading/tools/{id}`, `DELETE /reading/tools/{id}`,
+  `POST /sharing/tools`, `PATCH /sharing/tools/{id}`, `DELETE /sharing/tools/{id}`,
+  `POST /reading/taint-classification`,
   `GET /reading/source-suggestions`, `POST /reading/source-classification`,
   `POST /privacy/user-context`, `POST /privacy/cron-context`,
   `POST /privacy/verifier-model`) are thin adapters over the `privacy/rules.py`

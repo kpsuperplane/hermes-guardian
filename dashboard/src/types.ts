@@ -74,13 +74,20 @@ export interface Rule {
   scope?: string;
 }
 
-export interface ToolOverride {
+export interface ReadingTool {
+  id?: string;
+  match?: string;
+  source?: string;
+  taints?: string[];
+  note?: string;
+  enabled?: boolean;
+}
+
+export interface SharingTool {
   id?: string;
   match?: string;
   egress?: string;
-  source?: string;
   destination?: string;
-  taints?: string[];
   note?: string;
   enabled?: boolean;
 }
@@ -183,7 +190,8 @@ export interface Policy {
   rules?: Rule[];
   recent_blocks?: RecentBlock[];
   risk_banners?: RiskBanner[];
-  tool_overrides?: ToolOverride[];
+  reading_tools?: ReadingTool[];
+  sharing_tools?: SharingTool[];
   security_rules?: SecurityRule[];
   language_packs?: LanguagePack[];
   all_privacy_classes?: string[];
@@ -193,7 +201,7 @@ export interface Policy {
   tool_name_suggestions?: string[];
   purpose_suggestions?: string[];
   recipient_identity_suggestions?: string[];
-  tool_override_egress_options?: string[];
+  sharing_tool_egress_options?: string[];
   egress_safety?: string;
   taint_classification?: string;
   llm_user_context?: boolean;
@@ -337,7 +345,7 @@ export interface RulePayload {
   confirm?: string;
 }
 
-// Local form state for the tool-override modal.
+// Local form state for Reading/Sharing tool-classification modals.
 export interface OverrideForm {
   id: string;
   match: string;

@@ -181,10 +181,10 @@ export function GuardianPage() {
       {tab === "reading" ? (
         <ReadingTab
           policy={policy}
-          onNewOverride={actions.openCreateOverride}
-          onEditOverride={actions.openEditOverride}
-          onToggleOverride={actions.toggleOverride}
-          onDeleteOverride={actions.deleteOverride}
+          onNewOverride={actions.openCreateReadingTool}
+          onEditOverride={actions.openEditReadingTool}
+          onToggleOverride={actions.toggleReadingTool}
+          onDeleteOverride={actions.deleteReadingTool}
           taintClassification={taintClassification}
           taintClassificationSaving={actions.taintClassificationSaving}
           onChangeTaintClassification={actions.saveTaintClassification}
@@ -198,11 +198,16 @@ export function GuardianPage() {
         <SharingTab
           controller={destinations}
           rules={rules}
+          sharingTools={(policy && policy.sharing_tools) || []}
           onNewRule={actions.openCreate}
           onEditRule={actions.openEdit}
           onPatchRule={actions.patchRule}
           onDeleteRule={actions.deleteRule}
           onMoveRule={actions.moveRule}
+          onNewTool={actions.openCreateSharingTool}
+          onEditTool={actions.openEditSharingTool}
+          onToggleTool={actions.toggleSharingTool}
+          onDeleteTool={actions.deleteSharingTool}
         />
       ) : null}
 
@@ -250,11 +255,12 @@ export function GuardianPage() {
       ) : null}
       {actions.showOverrideModal ? (
         <OverrideModal
+          kind={actions.toolFormKind}
           policy={policy || {}}
           form={actions.overrideForm}
           setForm={actions.setOverrideForm}
           formError={actions.overrideFormError}
-          onSubmit={actions.submitOverride}
+          onSubmit={actions.submitToolClassification}
           onCancel={() => actions.setShowOverrideModal(false)}
         />
       ) : null}

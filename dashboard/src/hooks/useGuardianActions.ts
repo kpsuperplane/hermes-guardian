@@ -8,11 +8,12 @@ import type {
   OverrideForm,
   PendingApproval,
   Policy,
+  ReadingTool,
   Rule,
   RuleForm,
+  SharingTool,
   SourceSuggestion,
   ToastVariant,
-  ToolOverride,
 } from "@/types";
 
 export interface GuardianActionDeps {
@@ -79,6 +80,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
   const [form, setForm] = useState<RuleForm>(Object.assign({}, DEFAULT_FORM));
   const [formError, setFormError] = useState("");
   const [showOverrideModal, setShowOverrideModal] = useState(false);
+  const [toolFormKind, setToolFormKind] = useState<"reading" | "sharing">("reading");
   const [overrideForm, setOverrideForm] = useState<OverrideForm>(
     Object.assign({}, DEFAULT_OVERRIDE_FORM),
   );
@@ -234,54 +236,83 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       .finally(() => setVerifierModelSaving(false));
   }
 
-  function openCreateOverride() {
+  function openCreateReadingTool() {
+    setToolFormKind("reading");
     setOverrideForm(Object.assign({}, DEFAULT_OVERRIDE_FORM));
     setOverrideFormError("");
     setShowOverrideModal(true);
   }
 
-  function openEditOverride(override: ToolOverride) {
+  function openEditReadingTool(tool: ReadingTool) {
+    setToolFormKind("reading");
     setOverrideForm({
-      id: text(override.id),
-      match: text(override.match),
-      egress: text(override.egress),
-      source: text(override.source),
-      destination: text(override.destination),
-      taints: Array.isArray(override.taints) ? override.taints.slice() : [],
-      note: text(override.note),
-      enabled: override.enabled !== false,
+      id: text(tool.id),
+      match: text(tool.match),
+      egress: "",
+      source: text(tool.source),
+      destination: "",
+      taints: Array.isArray(tool.taints) ? tool.taints.slice() : [],
+      note: text(tool.note),
+      enabled: tool.enabled !== false,
       isEdit: true,
     });
     setOverrideFormError("");
     setShowOverrideModal(true);
   }
 
-  function submitOverride(event: React.FormEvent<HTMLFormElement>) {
+  function openCreateSharingTool() {
+    setToolFormKind("sharing");
+    setOverrideForm(Object.assign({}, DEFAULT_OVERRIDE_FORM));
+    setOverrideFormError("");
+    setShowOverrideModal(true);
+  }
+
+  function openEditSharingTool(tool: SharingTool) {
+    setToolFormKind("sharing");
+    setOverrideForm({
+      id: text(tool.id),
+      match: text(tool.match),
+      egress: text(tool.egress),
+      source: "",
+      destination: text(tool.destination),
+      taints: [],
+      note: text(tool.note),
+      enabled: tool.enabled !== false,
+      isEdit: true,
+    });
+    setOverrideFormError("");
+    setShowOverrideModal(true);
+  }
+
+  function submitToolClassification(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const current = overrideForm;
     if (!text(current.match)) {
       setOverrideFormError("Provide a tool name or prefix (e.g. mcp_acme_*).");
       return;
     }
-    const payload: {
+    const readingPayload = {
+      match: current.match,
+      source: current.source || "",
+      taints: current.taints || [],
+      note: current.note || "",
+      enabled: current.enabled !== false,
+    };
+    const sharingPayload: {
       match: string;
       egress: string;
-      source: string;
       destination: string;
-      taints: string[];
       note: string;
       enabled: boolean;
       confirm?: string;
     } = {
       match: current.match,
       egress: current.egress || "",
-      source: current.source || "",
       destination: current.destination || "",
-      taints: current.taints || [],
       note: current.note || "",
       enabled: current.enabled !== false,
     };
-    if (current.egress === "ignore") {
+    if (toolFormKind === "sharing" && current.egress === "ignore") {
       if (
         !window.confirm(
           "Mark '" +
@@ -291,12 +322,15 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       ) {
         return;
       }
-      payload.confirm = "tool-ignore";
+      sharingPayload.confirm = "tool-ignore";
     }
     setOverrideFormError("");
-    api("/reading/tools", { method: "POST", body: JSON.stringify(payload) })
+    api(toolFormKind === "reading" ? "/reading/tools" : "/sharing/tools", {
+      method: "POST",
+      body: JSON.stringify(toolFormKind === "reading" ? readingPayload : sharingPayload),
+    })
       .then((result) => {
-        showToast(result.message || "Override saved.");
+        showToast(result.message || "Tool classification saved.");
         setShowOverrideModal(false);
         return load();
       })
@@ -305,9 +339,9 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       });
   }
 
-  function toggleOverride(override: ToolOverride) {
-    const enabled = override.enabled !== false;
-    api("/reading/tools/" + encodeURIComponent(text(override.id)), {
+  function toggleReadingTool(tool: ReadingTool) {
+    const enabled = tool.enabled !== false;
+    api("/reading/tools/" + encodeURIComponent(text(tool.id)), {
       method: "PATCH",
       body: JSON.stringify({ enabled: !enabled }),
     })
@@ -320,9 +354,36 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       });
   }
 
-  function deleteOverride(override: ToolOverride) {
-    if (!window.confirm("Delete the tool override for '" + text(override.match) + "'?")) return;
-    api("/reading/tools/" + encodeURIComponent(text(override.id)), { method: "DELETE" })
+  function deleteReadingTool(tool: ReadingTool) {
+    if (!window.confirm("Delete the Reading tool classification for '" + text(tool.match) + "'?")) return;
+    api("/reading/tools/" + encodeURIComponent(text(tool.id)), { method: "DELETE" })
+      .then((result) => {
+        showToast(result.message || "Deleted.");
+        return load();
+      })
+      .catch((err) => {
+        showToast(errText(err), "error");
+      });
+  }
+
+  function toggleSharingTool(tool: SharingTool) {
+    const enabled = tool.enabled !== false;
+    api("/sharing/tools/" + encodeURIComponent(text(tool.id)), {
+      method: "PATCH",
+      body: JSON.stringify({ enabled: !enabled }),
+    })
+      .then((result) => {
+        showToast(result.message || "Updated.");
+        return load();
+      })
+      .catch((err) => {
+        showToast(errText(err), "error");
+      });
+  }
+
+  function deleteSharingTool(tool: SharingTool) {
+    if (!window.confirm("Delete the Sharing tool classification for '" + text(tool.match) + "'?")) return;
+    api("/sharing/tools/" + encodeURIComponent(text(tool.id)), { method: "DELETE" })
       .then((result) => {
         showToast(result.message || "Deleted.");
         return load();
@@ -599,6 +660,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     // override modal
     showOverrideModal,
     setShowOverrideModal,
+    toolFormKind,
     overrideForm,
     setOverrideForm,
     overrideFormError,
@@ -612,11 +674,15 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     patchSecurityRule,
     patchLanguagePack,
     setAllLanguagePacks,
-    openCreateOverride,
-    openEditOverride,
-    submitOverride,
-    toggleOverride,
-    deleteOverride,
+    openCreateReadingTool,
+    openEditReadingTool,
+    submitToolClassification,
+    toggleReadingTool,
+    deleteReadingTool,
+    openCreateSharingTool,
+    openEditSharingTool,
+    toggleSharingTool,
+    deleteSharingTool,
     sourceSuggestions,
     loadSourceSuggestions,
     classifySource,

@@ -60,14 +60,14 @@ def test_relaxed_taint_classification_allows_unknown_tools_under_taint():
     assert "taint_classification_relaxed" in banner_ids
 
 
-# --- Tool override registry --------------------------------------------------
+# --- Reading and Sharing tool classification --------------------------------
 
 
 def test_override_ignore_allows_tool_under_taint():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
-    ok, _ = plugin._set_tool_override("graphql", egress="ignore")
+    ok, _ = plugin._set_sharing_tool("graphql", egress="ignore")
     assert ok
 
     assert plugin._on_pre_tool_call("graphql", {"query": "x"}, session_id="s1") is None
@@ -77,7 +77,7 @@ def test_override_concrete_family_classifies_and_gates():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
-    ok, _ = plugin._set_tool_override("send_widget", egress="message_send")
+    ok, _ = plugin._set_sharing_tool("send_widget", egress="message_send")
     assert ok
 
     result = plugin._on_pre_tool_call("send_widget", {"to": "x", "text": "hi"}, session_id="s1")
@@ -89,7 +89,7 @@ def test_override_prefix_match_applies_to_all_server_tools():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
-    ok, _ = plugin._set_tool_override("mcp_acme_*", egress="ignore")
+    ok, _ = plugin._set_sharing_tool("mcp_acme_*", egress="ignore")
     assert ok
 
     # Without the override an unknown mcp_ tool under taint is gated (mcp_unknown).
@@ -100,7 +100,7 @@ def test_override_prefix_match_applies_to_all_server_tools():
 def test_override_taints_source_on_result_observation():
     plugin = load_plugin()
     bind_owner(plugin, session_id="s1")
-    ok, _ = plugin._set_tool_override("acme_lookup", taints=["communications"])
+    ok, _ = plugin._set_reading_tool("acme_lookup", taints=["communications"])
     assert ok
 
     plugin._on_transform_tool_result(
@@ -116,8 +116,8 @@ def test_override_takes_precedence_over_builtin_classification():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
-    # send_message is normally a gated message_send sink; ignore override downgrades it.
-    ok, _ = plugin._set_tool_override("send_message", egress="ignore")
+    # send_message is normally a gated message_send sink; Sharing classification downgrades it.
+    ok, _ = plugin._set_sharing_tool("send_message", egress="ignore")
     assert ok
 
     assert plugin._on_pre_tool_call("send_message", {"to": "x", "text": "hi"}, session_id="s1") is None
@@ -127,8 +127,8 @@ def test_disabled_override_is_not_applied():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
-    plugin._set_tool_override("graphql", egress="ignore")
-    plugin._set_tool_override_enabled("graphql", False)
+    plugin._set_sharing_tool("graphql", egress="ignore")
+    plugin._set_sharing_tool_enabled("graphql", False)
 
     assert plugin._on_pre_tool_call("graphql", {"query": "x"}, session_id="s1") is not None
 
@@ -138,9 +138,9 @@ def test_disabled_override_is_not_applied():
 
 def test_set_override_rejects_invalid_egress_and_classes():
     plugin = load_plugin()
-    ok, message = plugin._set_tool_override("x", egress="nonsense")
+    ok, message = plugin._set_sharing_tool("x", egress="nonsense")
     assert not ok and "egress must be one of" in message
-    ok, message = plugin._set_tool_override("x", taints=["notaclass"])
+    ok, message = plugin._set_reading_tool("x", taints=["notaclass"])
     assert not ok and "Unknown data class" in message
 
 
@@ -154,9 +154,10 @@ def test_set_taint_classification_mode_rejects_invalid():
 # --- Persistence preservation ------------------------------------------------
 
 
-def test_overrides_survive_other_config_mutations():
+def test_tool_classifications_survive_other_config_mutations():
     plugin = load_plugin()
-    plugin._set_tool_override("mcp_acme_*", taints=["communications"], egress="ignore")
+    plugin._set_reading_tool("mcp_acme_*", taints=["communications"])
+    plugin._set_sharing_tool("mcp_acme_*", egress="ignore")
     plugin._set_taint_classification_mode("relaxed")
 
     plugin._set_egress_safety_mode("strict")
@@ -166,25 +167,49 @@ def test_overrides_survive_other_config_mutations():
     rules.append(privacy_rule(rule_id="keep_me"))
     plugin._save_persistent_privacy_rules(rules)
 
-    assert len(plugin._tool_overrides()) == 1
+    assert len(plugin._reading_tools()) == 1
+    assert len(plugin._sharing_tools()) == 1
     assert plugin._taint_classification_mode() == "relaxed"
-    assert plugin._tool_overrides()[0]["match"] == "mcp_acme_*"
+    assert plugin._reading_tools()[0]["match"] == "mcp_acme_*"
+    assert plugin._sharing_tools()[0]["match"] == "mcp_acme_*"
     # other config preserved too
     assert plugin._egress_safety_mode() == "strict"
     assert not plugin._security_rule_enabled("sensitive_links")
     assert any(r.get("id") == "keep_me" for r in plugin._persistent_privacy_rules())
 
 
-def test_overrides_round_trip_through_file():
+def test_tool_classifications_round_trip_through_file():
     plugin = load_plugin()
-    plugin._set_tool_override("widget_*", egress="gate", note="custom server")
+    plugin._set_reading_tool("widget_*", source="private", note="source server")
+    plugin._set_sharing_tool("widget_*", egress="gate", note="custom server")
     plugin.state._PERSISTENT_RULES_CACHE = None
     plugin.state._PERSISTENT_RULES_MTIME = None
 
-    reloaded = plugin._tool_overrides_snapshot()
-    assert len(reloaded) == 1
-    assert reloaded[0]["match"] == "widget_*"
-    assert reloaded[0]["egress"] == "gate"
+    reading = plugin._reading_tools_snapshot()
+    sharing = plugin._sharing_tools_snapshot()
+    assert len(reading) == 1
+    assert len(sharing) == 1
+    assert reading[0]["match"] == "widget_*"
+    assert reading[0]["source"] == "private"
+    assert sharing[0]["match"] == "widget_*"
+    assert sharing[0]["egress"] == "gate"
+
+
+def test_same_match_reading_and_sharing_tools_apply_independently():
+    plugin = load_plugin()
+    bind_owner(plugin, session_id="s1")
+    assert plugin._set_reading_tool("acme_*", taints=["communications"])[0]
+    assert plugin._set_sharing_tool("acme_*", egress="ignore")[0]
+
+    plugin._on_transform_tool_result(
+        tool_name="acme_lookup",
+        result=json.dumps({"result": "ordinary text"}),
+        session_id="s1",
+    )
+    plugin._taint_session("s1", {"documents"})
+
+    assert "communications" in plugin._session_taint("s1")
+    assert plugin._on_pre_tool_call("acme_send", {"payload": "x"}, session_id="s1") is None
 
 
 # --- Security invariants: overrides never bypass the Security Module ----------
@@ -193,7 +218,7 @@ def test_overrides_round_trip_through_file():
 def test_ignore_override_does_not_bypass_security_scanner():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._set_tool_override("send_widget", egress="ignore")
+    plugin._set_sharing_tool("send_widget", egress="ignore")
 
     # Credential content in args must still be blocked by the Security Module,
     # which runs before privacy/override classification.
@@ -210,7 +235,7 @@ def test_ignore_override_does_not_bypass_security_scanner():
 def test_ignore_override_does_not_bypass_intrinsic_exfiltration():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._set_tool_override("terminal", egress="ignore")
+    plugin._set_sharing_tool("terminal", egress="ignore")
 
     result = plugin._on_pre_tool_call(
         "terminal",
@@ -224,19 +249,29 @@ def test_ignore_override_does_not_bypass_intrinsic_exfiltration():
 # --- Slash command owner gating ----------------------------------------------
 
 
-def test_tool_override_slash_requires_owner():
+def test_reading_tool_slash_requires_owner():
     plugin = load_plugin()
     stranger = plugin._hash_identity("telegram", "stranger")
-    plugin._remember_command_owner("reading tool set evil egress=ignore", stranger)
-    message = plugin._handle_guardian_command("reading tool set evil egress=ignore")
+    plugin._remember_command_owner("reading tool set evil source=private", stranger)
+    message = plugin._handle_guardian_command("reading tool set evil source=private")
     assert "Permission denied" in message
 
 
-def test_tool_override_slash_roundtrip_for_cli_owner():
+def test_reading_tool_slash_roundtrip_for_cli_owner():
     plugin = load_plugin()
-    plugin._remember_command_owner("reading tool set mcp_acme_* egress=ignore", plugin._CLI_OWNER_HASH)
-    message = plugin._handle_guardian_command("reading tool set mcp_acme_* egress=ignore")
-    assert "Saved tool override" in message
+    plugin._remember_command_owner("reading tool set mcp_acme_* source=reference", plugin._CLI_OWNER_HASH)
+    message = plugin._handle_guardian_command("reading tool set mcp_acme_* source=reference")
+    assert "Saved Reading tool classification" in message
     plugin._remember_command_owner("reading tools", plugin._CLI_OWNER_HASH)
     listing = plugin._handle_guardian_command("reading tools")
+    assert "mcp_acme_*" in listing
+
+
+def test_sharing_tool_slash_roundtrip_for_cli_owner():
+    plugin = load_plugin()
+    plugin._remember_command_owner("sharing tool set mcp_acme_* egress=ignore", plugin._CLI_OWNER_HASH)
+    message = plugin._handle_guardian_command("sharing tool set mcp_acme_* egress=ignore")
+    assert "Saved Sharing tool classification" in message
+    plugin._remember_command_owner("sharing tools", plugin._CLI_OWNER_HASH)
+    listing = plugin._handle_guardian_command("sharing tools")
     assert "mcp_acme_*" in listing
