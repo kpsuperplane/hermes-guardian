@@ -44,6 +44,9 @@ function ToolClassification(props: {
           </div>
         </div>
       </div>
+      <div className="hermes-guardian-tools-override-actions">
+        <Button onClick={props.onNewOverride}>New source classification</Button>
+      </div>
       {toolOverrides.length ? (
         <div className="hermes-guardian-grid">
           {toolOverrides.map((override) => {
@@ -97,33 +100,37 @@ function ToolClassification(props: {
         </div>
       ) : (
         <div className="hermes-guardian-muted">
-          No Reading tool classifications. Unrecognized tools follow Taint Classification.
+          No Reading tool classifications yet.
         </div>
       )}
-      <div className="hermes-guardian-tools-override-actions">
-        <Button onClick={props.onNewOverride}>New override</Button>
-      </div>
-      <div className="hermes-guardian-taint-classification-row">
-        <div className="hermes-guardian-taint-classification-label">
-          <span>Taint Classification</span>
-          <span className="hermes-guardian-muted">
-            Balanced uses recognized sources, declarations, and content signals. Strict also
-            treats otherwise-unknown read results as documents. Relaxed allows unrecognized
-            tools under taint.
-          </span>
+      <div className="hermes-guardian-card hermes-guardian-reading-fallthrough">
+        <div className="hermes-guardian-rule-head">
+          <div className="hermes-guardian-rule-main">
+            <div className="hermes-guardian-rule-title">Default for unknown reads</div>
+            <div className="hermes-guardian-rule-subline">
+              <span className="hermes-guardian-pill">fallthrough</span>
+              <span className="hermes-guardian-pill">{props.taintClassification}</span>
+            </div>
+          </div>
+          <select
+            className="hermes-guardian-select"
+            value={props.taintClassification}
+            disabled={props.taintClassificationSaving}
+            aria-label="Default for unknown reads"
+            onChange={(event) => props.onChangeTaintClassification(event.target.value)}
+          >
+            {TAINT_CLASSIFICATION_MODES.map((mode) => (
+              <option key={mode} value={mode}>
+                {mode}
+              </option>
+            ))}
+          </select>
         </div>
-        <select
-          className="hermes-guardian-select"
-          value={props.taintClassification}
-          disabled={props.taintClassificationSaving}
-          onChange={(event) => props.onChangeTaintClassification(event.target.value)}
-        >
-          {TAINT_CLASSIFICATION_MODES.map((mode) => (
-            <option key={mode} value={mode}>
-              {mode}
-            </option>
-          ))}
-        </select>
+        <div className="hermes-guardian-muted">
+          Balanced uses recognized sources, declarations, and content signals. Strict also treats
+          otherwise-unknown read results as documents. Relaxed keeps balanced read inference and
+          allows unrecognized non-MCP tools under taint.
+        </div>
       </div>
     </div>
   );
