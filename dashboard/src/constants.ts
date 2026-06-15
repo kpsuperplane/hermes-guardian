@@ -48,6 +48,8 @@ export const DEFAULT_PRIVACY_CLASSES = [
 
 export const HISTORY_PAGE_SIZES = [25, 50, 100];
 
+export const TOOL_CLASSIFICATION_NOTE_MAX_LENGTH = 2000;
+
 export const DEFAULT_FORM: RuleForm = {
   id: "",
   enabled: true,

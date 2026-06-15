@@ -199,6 +199,37 @@ def test_tool_classifications_round_trip_through_file():
     assert sharing[0]["egress"] == "gate"
 
 
+def test_tool_classification_notes_allow_multiline_long_text():
+    plugin = load_plugin()
+    note = "line one\n" + ("classifier rationale " * 80) + "\nline three"
+    normalized_note = "line one\n" + ("classifier rationale " * 80).strip() + "\nline three"
+    assert len(note) > 1000
+
+    assert plugin._set_reading_tool("long_read_*", source="private", note=note)[0]
+    assert plugin._set_sharing_tool("long_send_*", egress="gate", note=note)[0]
+
+    reading_note = plugin._reading_tools_snapshot()[0]["note"]
+    sharing_note = plugin._sharing_tools_snapshot()[0]["note"]
+    assert "\n" in reading_note
+    assert "\n" in sharing_note
+    assert "line three" in reading_note
+    assert "line three" in sharing_note
+    assert reading_note == normalized_note
+    assert sharing_note == normalized_note
+
+    too_long = "x" * (plugin._TOOL_CLASSIFICATION_NOTE_MAX_CHARS + 50)
+    assert plugin._set_reading_tool("cap_read_*", source="unknown", note=too_long)[0]
+    assert plugin._set_sharing_tool("cap_send_*", egress="gate", note=too_long)[0]
+    capped_reading = [
+        tool for tool in plugin._reading_tools_snapshot() if tool["match"] == "cap_read_*"
+    ][0]["note"]
+    capped_sharing = [
+        tool for tool in plugin._sharing_tools_snapshot() if tool["match"] == "cap_send_*"
+    ][0]["note"]
+    assert len(capped_reading) == plugin._TOOL_CLASSIFICATION_NOTE_MAX_CHARS
+    assert len(capped_sharing) == plugin._TOOL_CLASSIFICATION_NOTE_MAX_CHARS
+
+
 def test_same_match_reading_and_sharing_tools_apply_independently():
     plugin = load_plugin()
     bind_owner(plugin, session_id="s1")

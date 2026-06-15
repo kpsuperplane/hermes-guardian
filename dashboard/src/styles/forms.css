@@ -8,7 +8,8 @@
 }
 
 .hermes-guardian-input,
-.hermes-guardian-select {
+.hermes-guardian-select,
+.hermes-guardian-textarea {
   width: 100%;
   min-width: 0;
   min-height: 2.15rem;
@@ -27,8 +28,15 @@
   white-space: nowrap;
 }
 
+.hermes-guardian-textarea {
+  min-height: 6.5rem;
+  resize: vertical;
+  line-height: 1.4;
+}
+
 .hermes-guardian-input:disabled,
-.hermes-guardian-select:disabled {
+.hermes-guardian-select:disabled,
+.hermes-guardian-textarea:disabled {
   background: var(--color-muted);
   color: var(--color-muted-foreground);
   cursor: not-allowed;
@@ -39,6 +47,10 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 0.75rem;
+}
+
+.hermes-guardian-field-wide {
+  grid-column: 1 / -1;
 }
 
 .hermes-guardian-field-help {

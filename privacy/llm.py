@@ -21,6 +21,8 @@ from .. import state
 from ..runtime import activity_store
 from ..security import module as security_module
 
+_LLM_SOURCE_RATIONALE_MAX_CHARS = 2000
+
 
 def _guardian_hmac_key() -> bytes:
     try:
@@ -264,7 +266,7 @@ def _safe_arg_summary_for_llm(value: Any, *, depth: int = 0) -> Any:
     return f"<{type(value).__name__}>"
 
 
-def _sanitize_rationale(text: str) -> str:
+def _sanitize_rationale(text: str, *, limit: int = 240) -> str:
     """Strip personal data from a verdict rationale before it is shown or stored.
 
     The rationale is persisted into activity/approval rows. The verifier is also
@@ -274,7 +276,7 @@ def _sanitize_rationale(text: str) -> str:
     text = core._EMAIL_ADDRESS_RE.sub("<email>", str(text or ""))
     text = core._PHONE_RE.sub("<phone>", text)
     text = re.sub(r"\b[A-Za-z0-9_-]{24,}\b", "<token-like>", text)
-    return text.strip()[:240]
+    return text.strip()[:limit]
 
 
 def _llm_hard_deny_reason(shape: dict[str, Any], args: Any) -> str | None:
@@ -538,7 +540,7 @@ def _validated_llm_source_classification(parsed: Any) -> dict[str, Any]:
         "source": source,
         "taints": taints,
         "confidence": confidence,
-        "rationale": _sanitize_rationale(rationale),
+        "rationale": _sanitize_rationale(rationale, limit=_LLM_SOURCE_RATIONALE_MAX_CHARS),
     }
 
 

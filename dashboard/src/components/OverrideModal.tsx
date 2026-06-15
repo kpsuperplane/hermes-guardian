@@ -2,7 +2,11 @@ import { React } from "@/sdk";
 import { Button } from "@/components/Button";
 import { Field } from "@/components/Field";
 import { IconButton } from "@/components/IconButton";
-import { DEFAULT_PRIVACY_CLASSES, TOOL_EGRESS_OPTIONS } from "@/constants";
+import {
+  DEFAULT_PRIVACY_CLASSES,
+  TOOL_CLASSIFICATION_NOTE_MAX_LENGTH,
+  TOOL_EGRESS_OPTIONS,
+} from "@/constants";
 import { text } from "@/lib/format";
 import type { OverrideForm, Policy } from "@/types";
 
@@ -182,14 +186,17 @@ export function OverrideModal({
             </div>
           ) : null}
           <div className="hermes-guardian-form-grid">
-            <Field label="Note">
-              <input
-                className="hermes-guardian-input"
+            <label className="hermes-guardian-field hermes-guardian-field-wide">
+              Note
+              <textarea
+                className="hermes-guardian-textarea"
                 value={form.note}
-                placeholder="optional note"
+                placeholder="Optional note, rationale, or classifier explanation"
+                maxLength={TOOL_CLASSIFICATION_NOTE_MAX_LENGTH}
+                rows={5}
                 onChange={(event) => update("note", event.target.value)}
               />
-            </Field>
+            </label>
             <Field label="Enabled">
               <label className="hermes-guardian-check">
                 <input

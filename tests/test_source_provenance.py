@@ -325,6 +325,32 @@ def test_llm_source_classifier_private_saves_rule_taints_and_does_not_repeat():
     assert len(plugin.state._PLUGIN_LLM.calls) == 1
 
 
+def test_llm_source_classifier_persists_long_rationale_in_tool_note():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    rationale = " ".join(f"metadata-signal-{index}" for index in range(90))
+    assert len(rationale) > 1000
+    plugin.state._PLUGIN_LLM = SourceFakeLLM(
+        {
+            "source": "private",
+            "taints": ["memory"],
+            "confidence": "high",
+            "rationale": rationale,
+        }
+    )
+
+    plugin._on_transform_tool_result(
+        tool_name="fetch_personal_note",
+        result=_SIGNALLESS_PROSE,
+        session_id="llm-long-rationale",
+    )
+
+    note = plugin._reading_tools()[0]["note"]
+    assert note.startswith("LLM source classifier: metadata-signal-0")
+    assert "metadata-signal-89" in note
+    assert len(note) > 1000
+
+
 def test_llm_source_classifier_reference_saves_rule_and_relaxes_mcp_read():
     plugin = load_plugin()
     bind_owner(plugin)

@@ -65,6 +65,7 @@ _SHARING_TOOL_EGRESS_VALUES = {"ignore", "gate"} | _SHARING_TOOL_EGRESS_FAMILIES
 # conservative for undeclared MCP doc-reads). For an MCP server, declare the whole server
 # at once with a prefix match (e.g. match = "crm_*").
 _READING_TOOL_SOURCES = {"reference", "private", "public", "unknown"}
+_TOOL_CLASSIFICATION_NOTE_MAX_CHARS = 2000
 # Env vars that override the named `retention` / `dashboard` config blocks (doc 03
 # §1.2). The document is the source of truth; these env vars remain readable as ops
 # overrides and are surfaced in `/guardian status` so they are never invisible.
@@ -321,6 +322,13 @@ def _normalize_tool_match(value: Any) -> str:
     return f"{base}*" if star else base
 
 
+def _normalize_tool_note(value: Any) -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [re.sub(r"[ \t\f\v]+", " ", line).strip() for line in text.split("\n")]
+    text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    return text[:_TOOL_CLASSIFICATION_NOTE_MAX_CHARS].rstrip()
+
+
 def _normalize_reading_tool(entry: Any) -> dict[str, Any] | None:
     if not isinstance(entry, dict):
         return None
@@ -345,7 +353,7 @@ def _normalize_reading_tool(entry: Any) -> dict[str, Any] | None:
             core._PLUGIN_NAME, match,
         )
         return None
-    note = re.sub(r"\s+", " ", str(entry.get("note") or "")).strip()[:200]
+    note = _normalize_tool_note(entry.get("note"))
     override_id = str(entry.get("id") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", override_id):
         override_id = f"source_tool_{secrets.token_hex(4)}"
@@ -374,7 +382,7 @@ def _normalize_sharing_tool(entry: Any) -> dict[str, Any] | None:
         if entry.get("destination")
         else ""
     )
-    note = re.sub(r"\s+", " ", str(entry.get("note") or "")).strip()[:200]
+    note = _normalize_tool_note(entry.get("note"))
     override_id = str(entry.get("id") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", override_id):
         override_id = f"sharing_tool_{secrets.token_hex(4)}"
