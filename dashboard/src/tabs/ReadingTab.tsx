@@ -2,7 +2,7 @@ import { React, useEffect } from "@/sdk";
 import { Button } from "@/components/Button";
 import { IconButton } from "@/components/IconButton";
 import { Mono } from "@/components/Mono";
-import { text, timeText } from "@/lib/format";
+import { text } from "@/lib/format";
 import type { Policy, ReadingTool, SourceSuggestion, ToolInventoryRow } from "@/types";
 
 const TAINT_CLASSIFICATION_MODES = ["balanced", "strict", "relaxed"];
@@ -69,8 +69,6 @@ function ToolClassification(props: {
             <thead>
               <tr>
                 <th>Tool</th>
-                <th>Seen</th>
-                <th>Last seen</th>
                 <th>Source</th>
                 <th>Taints</th>
                 <th>Policy</th>
@@ -90,7 +88,6 @@ function ToolClassification(props: {
                   policy && policy.enabled === false ? "hermes-guardian-rule-disabled" : "",
                 ].filter(Boolean).join(" ");
                 const match = rowMatch(row);
-                const seen = Number(row.seen_count || 0);
                 const label = isGroup
                   ? match + " (" + Number(row.child_count || 0) + ")"
                   : match;
@@ -107,8 +104,6 @@ function ToolClassification(props: {
                         {observed ? <span className="hermes-guardian-muted">{observed}</span> : null}
                       </div>
                     </td>
-                    <td>{seen || "policy"}</td>
-                    <td>{timeText(row.last_seen)}</td>
                     <td><span className="hermes-guardian-pill">{source}</span></td>
                     <td>{taints}</td>
                     <td>

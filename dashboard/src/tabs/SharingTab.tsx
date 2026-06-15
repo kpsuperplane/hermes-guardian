@@ -6,7 +6,7 @@ import { Mono } from "@/components/Mono";
 import { PreviewSend } from "@/components/PreviewSend";
 import { TrustPill } from "@/components/TrustPill";
 import { TrustedDestinationModal } from "@/components/TrustedDestinationModal";
-import { classesText, displayText, expiryPillText, ruleScopeText, text, timeText } from "@/lib/format";
+import { classesText, displayText, expiryPillText, ruleScopeText, text } from "@/lib/format";
 import type { DestinationsController } from "@/hooks/useDestinations";
 import type { ImpactPreview as ImpactPreviewData, Rule, SharingTool, ToolInventoryRow } from "@/types";
 
@@ -133,8 +133,6 @@ function EgressToolClassification(props: {
             <thead>
               <tr>
                 <th>Tool</th>
-                <th>Seen</th>
-                <th>Last seen</th>
                 <th>Egress</th>
                 <th>Destination</th>
                 <th>Observed action</th>
@@ -167,8 +165,6 @@ function EgressToolClassification(props: {
                         <Mono>{label}</Mono>
                       </div>
                     </td>
-                    <td>{Number(row.seen_count || 0) || "policy"}</td>
-                    <td>{timeText(row.last_seen)}</td>
                     <td>
                       <span className="hermes-guardian-pill">
                         {egress === "ignore" ? "No egress" : egress}
