@@ -118,36 +118,39 @@ function ToolClassification(props: {
               <span className="hermes-guardian-pill">{props.taintClassification}</span>
             </div>
           </div>
-          <div className="hermes-guardian-actions">
-            <label className="hermes-guardian-checkbox">
-              <input
-                type="checkbox"
-                checked={props.llmSourceClassification}
-                disabled={props.llmSourceClassificationSaving}
-                onChange={(event) => props.onChangeLlmSourceClassification(event.target.checked)}
-              />
-              LLM source classifier
-            </label>
-            <select
-              className="hermes-guardian-select"
-              value={props.taintClassification}
-              disabled={props.taintClassificationSaving}
-              aria-label="Default for unknown reads"
-              onChange={(event) => props.onChangeTaintClassification(event.target.value)}
-            >
-              {TAINT_CLASSIFICATION_MODES.map((mode) => (
-                <option key={mode} value={mode}>
-                  {mode}
-                </option>
-              ))}
-            </select>
-          </div>
+          <select
+            className="hermes-guardian-select"
+            value={props.taintClassification}
+            disabled={props.taintClassificationSaving}
+            aria-label="Default for unknown reads"
+            onChange={(event) => props.onChangeTaintClassification(event.target.value)}
+          >
+            {TAINT_CLASSIFICATION_MODES.map((mode) => (
+              <option key={mode} value={mode}>
+                {mode}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="hermes-guardian-muted">
           Balanced uses recognized sources, declarations, and content signals. Strict also treats
           otherwise-unknown read results as documents. Relaxed keeps balanced read inference and
-          allows unrecognized non-MCP tools under taint. The LLM source classifier uses metadata
-          only and saves reference, private, or unknown source rules for future reads.
+          allows unrecognized non-MCP tools under taint.
+        </div>
+        <div className="hermes-guardian-field">
+          <label className="hermes-guardian-checkbox">
+            <input
+              type="checkbox"
+              checked={props.llmSourceClassification}
+              disabled={props.llmSourceClassificationSaving}
+              onChange={(event) => props.onChangeLlmSourceClassification(event.target.checked)}
+            />
+            LLM source classifier
+          </label>
+          <div className="hermes-guardian-muted">
+            Uses metadata only to save reference, private, or unknown source rules for future
+            reads. Result content and raw argument values are not sent.
+          </div>
         </div>
       </div>
     </div>
