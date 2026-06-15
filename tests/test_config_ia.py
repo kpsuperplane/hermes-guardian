@@ -1,7 +1,7 @@
 """Config IA v4 loader tests (refactor doc 04 §5).
 
 The policy file is reshaped into the IA concepts, in `decide` order
-(`whats_yours` / `reading` / `sharing` / `review` / `protection`, plus
+(`whats_yours` / `reading` / `sharing` / `protection`, plus
 `version`/meta). This
 file proves the loader front-end parses that v4 schema directly into the SAME
 internal structure the engine already consumes — `decide` never notices the
@@ -55,6 +55,10 @@ def _full_v4_document() -> dict:
             ],
         },
         "sharing": {
+            "egress_safety": "llm",
+            "owner_context": True,
+            "cron_context": True,
+            "verifier_model": "gpt-5.4-mini",
             "trusted_recipients": [
                 {"identity": "ally@example.com", "classes": ["communications"], "note": "team"},
             ],
@@ -71,12 +75,6 @@ def _full_v4_document() -> dict:
             "tools": [
                 {"match": "crm_*", "destination": "store:crm", "egress": "ignore"},
             ],
-        },
-        "review": {
-            "egress_safety": "llm",
-            "owner_context": True,
-            "cron_context": True,
-            "verifier_model": "gpt-5.4-mini",
         },
         "protection": {
             "security": {"sensitive_links": False},
@@ -120,7 +118,7 @@ def test_full_v4_file_parses_to_internal_structure():
     assert [t["match"] for t in config["privacy"]["sharing_tools"]] == ["crm_*"]
     assert config["privacy"]["sharing_tools"][0]["egress"] == "ignore"
 
-    # review.* -> internal privacy.{egress_safety,llm_*}.
+    # sharing.* egress controls -> internal privacy.{egress_safety,llm_*}.
     assert config["privacy"]["egress_safety"] == "llm"
     assert config["privacy"]["llm_user_context"] is True
     assert config["privacy"]["llm_cron_context"] is True
@@ -157,8 +155,8 @@ def _replay_old_outcome_bucket(decision: str) -> str:
 
 
 def _v4_file_for_mode(mode: str) -> dict:
-    """A minimal valid v4 file pinning only review.egress_safety; all else safe defaults."""
-    return {"version": 4, "review": {"egress_safety": mode}}
+    """A minimal valid v4 file pinning only sharing.egress_safety; all else safe defaults."""
+    return {"version": 4, "sharing": {"egress_safety": mode}}
 
 
 def test_corpus_parity_through_v4_loader_zero_floor_breaches():
@@ -305,13 +303,40 @@ def test_public_source_with_taints_is_dropped_from_v4():
     assert plugin.state._PERSISTENT_RULES_ERROR is False
 
 
-def test_obsolete_review_mode_fails_closed_to_strict():
+def test_obsolete_review_block_fails_closed_to_strict():
     plugin = load_plugin()
-    _write_file(plugin, {"version": 4, "review": {"mode": "llm"}})
+    _write_file(plugin, {"version": 4, "review": {"egress_safety": "llm"}})
 
     config = plugin._load_privacy_config()
 
     assert config["privacy"]["egress_safety"] == "strict"
+    assert plugin.state._PERSISTENT_RULES_ERROR is True
+
+
+def test_invalid_sharing_egress_safety_fails_closed_to_strict():
+    plugin = load_plugin()
+    _write_file(plugin, {"version": 4, "sharing": {"egress_safety": "banana"}})
+
+    config = plugin._load_privacy_config()
+
+    assert config["privacy"]["egress_safety"] == "strict"
+    assert plugin.state._PERSISTENT_RULES_ERROR is True
+
+
+def test_invalid_sharing_context_value_fails_closed_to_strict():
+    plugin = load_plugin()
+    _write_file(
+        plugin,
+        {
+            "version": 4,
+            "sharing": {"egress_safety": "llm", "cron_context": {"unexpected": "object"}},
+        },
+    )
+
+    config = plugin._load_privacy_config()
+
+    assert config["privacy"]["egress_safety"] == "strict"
+    assert config["privacy"]["llm_cron_context"] is False
     assert plugin.state._PERSISTENT_RULES_ERROR is True
 
 
@@ -362,8 +387,7 @@ def test_malformed_sharing_rules_drop_to_empty_and_log(caplog):
         plugin,
         {
             "version": 4,
-            "review": {"egress_safety": "llm"},
-            "sharing": {"rules": "not-a-list"},  # malformed
+            "sharing": {"egress_safety": "llm", "rules": "not-a-list"},  # malformed
         },
     )
     config = plugin._load_privacy_config()
@@ -427,8 +451,11 @@ def test_mutation_persists_v4_and_reloads_to_same_internal_structure(tmp_path):
 
     # The on-disk file is the v4 IA schema, not the old keys.
     on_disk = json.loads((tmp_path / "rules.json").read_text())
-    assert set(on_disk) == {"version", "whats_yours", "reading", "sharing", "review", "protection"}
-    assert on_disk["review"]["egress_safety"] == "read-only"
+    assert set(on_disk) == {"version", "whats_yours", "reading", "sharing", "protection"}
+    assert on_disk["sharing"]["egress_safety"] == "read-only"
+    assert on_disk["sharing"]["owner_context"] is True
+    assert on_disk["sharing"]["cron_context"] is False
+    assert on_disk["sharing"]["verifier_model"] == ""
     assert "store:crm" in on_disk["whats_yours"]["stores"]
     assert on_disk["protection"]["security"]["sensitive_links"] is False
     assert "unknown_tools" not in on_disk["protection"]

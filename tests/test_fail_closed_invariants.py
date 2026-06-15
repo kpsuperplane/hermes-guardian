@@ -74,8 +74,8 @@ def test_corrupt_egress_safety_file_forces_strict_without_llm_auto_allow(tmp_pat
 def test_malformed_egress_safety_file_forces_strict(tmp_path):
     plugin = load_plugin()
     rules_path = tmp_path / "guardian-rules.json"
-    # An invalid v4 review.egress_safety is rejected at validation, forcing fail-closed strict.
-    rules_path.write_text(json.dumps({"version": 4, "review": {"egress_safety": "auto-approve"}}))
+    # An invalid v4 sharing.egress_safety is rejected at validation, forcing fail-closed strict.
+    rules_path.write_text(json.dumps({"version": 4, "sharing": {"egress_safety": "auto-approve"}}))
     _use_rules_path(plugin, rules_path)
 
     assert plugin._egress_safety_policy() == "strict"

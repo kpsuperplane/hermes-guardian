@@ -244,15 +244,16 @@ def test_guardian_dashboard_is_not_a_chat_command():
     help_text = plugin._handle_guardian_command("help")
     assert "dashboard" not in help_text
     assert help_text.startswith("/guardian — privacy firewall for your agent")
-    # The five concepts appear in `decide` order, with status/why on top.
+    # The concepts appear in `decide` order, with status/why on top.
     assert help_text.index("status") < help_text.index("ACTIVITY")
-    for heading in ("ACTIVITY", "WHAT'S YOURS", "SHARING", "REVIEW", "PROTECTION"):
+    for heading in ("ACTIVITY", "WHAT'S YOURS", "READING", "SHARING", "PROTECTION"):
         assert heading in help_text
+    assert "REVIEW" not in help_text
     assert (
         help_text.index("ACTIVITY")
         < help_text.index("WHAT'S YOURS")
+        < help_text.index("READING")
         < help_text.index("SHARING")
-        < help_text.index("REVIEW")
         < help_text.index("PROTECTION")
     )
     assert plugin._handle_guardian_command("dashboard status") == "Invalid /guardian command. Try /guardian help."

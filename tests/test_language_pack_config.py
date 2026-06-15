@@ -42,8 +42,7 @@ def test_language_pack_can_be_disabled_by_direct_json_edit(tmp_path):
     # v4 IA schema: only English enabled in protection.language_packs.
     (tmp_path / "rules.json").write_text(json.dumps({
         "version": 4,
-        "review": {"egress_safety": "strict"},
-        "sharing": {"rules": []},
+        "sharing": {"egress_safety": "strict", "rules": []},
         "protection": {
             "language_packs": {"en": True, "es": False},
         },
@@ -67,7 +66,7 @@ def test_privacy_and_security_saves_preserve_language_pack_config(tmp_path):
 
     data = json.loads((tmp_path / "rules.json").read_text())
 
-    assert data["review"]["egress_safety"] == "read-only"
+    assert data["sharing"]["egress_safety"] == "read-only"
     enabled = {pack_id for pack_id, on in data["protection"]["language_packs"].items() if on}
     assert enabled == {"en", "es"}
 

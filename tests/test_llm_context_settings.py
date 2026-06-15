@@ -3,7 +3,7 @@
 Two privacy-level booleans gate the authorization-evidence channels:
 `llm_user_context` (default on) and `llm_cron_context` (default off). These tests
 cover defaults, JSON normalization/preservation, the `/guardian privacy
-user-context|cron-context` commands with owner checks, the dashboard adapters and
+user-context|cron-context` command handlers with owner checks, the dashboard adapters and
 policy snapshot, and the cron-context confirmation guard.
 """
 
@@ -38,13 +38,13 @@ def test_settings_persist_and_preserve_other_privacy_config(tmp_path):
     assert plugin._set_egress_safety_mode("strict")[0]
 
     data = json.loads((tmp_path / "rules.json").read_text())
-    # v4 on-disk: the review block carries Egress Safety + context flags; source/sink
+    # v4 on-disk: the sharing block carries Egress Safety + context flags; source/sink
     # fallback lives in the reading block.
-    review = data["review"]
-    assert review["owner_context"] is False
-    assert review["cron_context"] is True
+    sharing = data["sharing"]
+    assert sharing["owner_context"] is False
+    assert sharing["cron_context"] is True
     assert data["reading"]["taint_classification"] == "relaxed"
-    assert review["egress_safety"] == "strict"
+    assert sharing["egress_safety"] == "strict"
     assert plugin._llm_user_context_enabled() is False
     assert plugin._llm_cron_context_enabled() is True
 
@@ -52,10 +52,10 @@ def test_settings_persist_and_preserve_other_privacy_config(tmp_path):
 def test_normalization_coerces_loose_values(tmp_path):
     plugin = load_plugin()
     path = tmp_path / "rules.json"
-    # v4 review block; loose string booleans normalize via _config_bool.
+    # v4 sharing block; loose string booleans normalize via _config_bool.
     path.write_text(json.dumps({
         "version": 4,
-        "review": {"egress_safety": "llm", "owner_context": "off", "cron_context": "yes"},
+        "sharing": {"egress_safety": "llm", "owner_context": "off", "cron_context": "yes"},
     }))
     plugin.state._PERSISTENT_RULES_PATH = path
     plugin.state._PERSISTENT_RULES_CACHE = None
@@ -68,11 +68,11 @@ def test_normalization_coerces_loose_values(tmp_path):
 def test_invalid_context_value_is_rejected_to_fail_closed(tmp_path):
     plugin = load_plugin()
     path = tmp_path / "rules.json"
-    # A hard-typed review.cron_context (an object) is rejected at validation so the
+    # A hard-typed sharing.cron_context (an object) is rejected at validation so the
     # whole document fails closed to strict rather than silently coercing.
     path.write_text(json.dumps({
         "version": 4,
-        "review": {"egress_safety": "llm", "cron_context": {"unexpected": "object"}},
+        "sharing": {"egress_safety": "llm", "cron_context": {"unexpected": "object"}},
     }))
     plugin.state._PERSISTENT_RULES_PATH = path
     plugin.state._PERSISTENT_RULES_CACHE = None
@@ -97,9 +97,9 @@ def test_policy_snapshot_exposes_both_flags():
 def test_slash_toggles_contexts_as_owner():
     plugin = load_plugin()
 
-    assert "off" in plugin._handle_guardian_command("review owner-context off")
+    assert "off" in plugin._handle_guardian_command("sharing owner-context off")
     assert plugin._llm_user_context_enabled() is False
-    assert "on" in plugin._handle_guardian_command("review cron-context on")
+    assert "on" in plugin._handle_guardian_command("sharing cron-context on")
     assert plugin._llm_cron_context_enabled() is True
 
 
@@ -113,16 +113,16 @@ def test_slash_status_surfaces_context_flags():
 
 def test_slash_invalid_value_returns_usage():
     plugin = load_plugin()
-    response = plugin._handle_guardian_command("review cron-context maybe")
-    assert "Usage: /guardian review cron-context on|off" in response
+    response = plugin._handle_guardian_command("sharing cron-context maybe")
+    assert "Usage: /guardian sharing cron-context on|off" in response
     assert plugin._llm_cron_context_enabled() is False
 
 
 def test_non_owner_cannot_toggle_contexts():
     plugin = load_plugin()
 
-    plugin._on_pre_gateway_dispatch(gateway_event("/guardian review cron-context on", user_id="attacker"))
-    response = plugin._handle_guardian_command("review cron-context on")
+    plugin._on_pre_gateway_dispatch(gateway_event("/guardian sharing cron-context on", user_id="attacker"))
+    response = plugin._handle_guardian_command("sharing cron-context on")
 
     assert "Permission denied" in response
     assert plugin._llm_cron_context_enabled() is False

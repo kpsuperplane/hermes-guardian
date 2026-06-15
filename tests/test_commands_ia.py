@@ -128,23 +128,26 @@ def test_protection_language_packs_replaces_language_packs_and_reuses_handler():
     assert "Disabled language pack es" in disabled
 
 
-def test_review_maps_privacy_setters_and_old_privacy_name_is_gone():
+def test_sharing_maps_egress_setters_and_old_privacy_review_names_are_gone():
     plugin = load_plugin()
-    # The old `privacy` group name is removed.
+    # The old `privacy` and `review` group names are removed.
     assert plugin._handle_guardian_command("privacy mode off") == (
         "Invalid /guardian command. Try /guardian help."
     )
-    # Each review verb reuses the review/egress setter.
-    plugin._remember_command_owner("review egress-safety read-only", plugin._CLI_OWNER_HASH)
-    assert "read-only" in plugin._handle_guardian_command("review egress-safety read-only")
+    assert plugin._handle_guardian_command("review egress-safety read-only") == (
+        "Invalid /guardian command. Try /guardian help."
+    )
+    # Each Sharing verb updates the egress settings.
+    plugin._remember_command_owner("sharing egress-safety read-only", plugin._CLI_OWNER_HASH)
+    assert "read-only" in plugin._handle_guardian_command("sharing egress-safety read-only")
     assert plugin._egress_safety_policy() == "read-only"
-    assert "Usage" in plugin._handle_guardian_command("review mode strict")
+    assert "Usage" in plugin._handle_guardian_command("sharing mode strict")
     assert plugin._egress_safety_policy() == "read-only"
-    plugin._remember_command_owner("review owner-context off", plugin._CLI_OWNER_HASH)
-    plugin._handle_guardian_command("review owner-context off")
+    plugin._remember_command_owner("sharing owner-context off", plugin._CLI_OWNER_HASH)
+    plugin._handle_guardian_command("sharing owner-context off")
     assert plugin._llm_user_context_enabled() is False
-    plugin._remember_command_owner("review cron-context on", plugin._CLI_OWNER_HASH)
-    plugin._handle_guardian_command("review cron-context on")
+    plugin._remember_command_owner("sharing cron-context on", plugin._CLI_OWNER_HASH)
+    plugin._handle_guardian_command("sharing cron-context on")
     assert plugin._llm_cron_context_enabled() is True
     assert "Usage" in plugin._handle_guardian_command("protection taint-classification relaxed")
     plugin._remember_command_owner("reading taint-classification relaxed", plugin._CLI_OWNER_HASH)
@@ -159,7 +162,7 @@ def test_review_maps_privacy_setters_and_old_privacy_name_is_gone():
     plugin._remember_command_owner("reading tool set clock_* source=public", plugin._CLI_OWNER_HASH)
     assert "Saved Reading tool" in plugin._handle_guardian_command("reading tool set clock_* source=public")
     assert plugin._reading_tool_for("clock_now")["source"] == "public"
-    review_out = plugin._handle_guardian_command("review unknown-tools gate")
+    review_out = plugin._handle_guardian_command("sharing unknown-tools gate")
     assert plugin._taint_classification_mode() == "relaxed"
     assert "unknown-tools" not in review_out
 
@@ -179,21 +182,23 @@ def test_clear_taint_stays_under_activity():
     assert "Cleared Guardian taint" in out
 
 
-# --- §6.2 Grouped help lists the five concepts in order with status/why on top.-
-def test_grouped_help_lists_five_concepts_in_decide_order():
+# --- §6.2 Grouped help lists the concepts in order with status/why on top. -----
+def test_grouped_help_lists_concepts_in_decide_order():
     plugin = load_plugin()
     help_text = plugin._handle_guardian_command("help")
     assert help_text.startswith("/guardian — privacy firewall for your agent")
     # status/why are the everyday commands, above the groups.
     assert help_text.index("status") < help_text.index("ACTIVITY")
     assert help_text.index("why <id>") < help_text.index("ACTIVITY")
-    # The five concepts appear in `decide` order.
-    order = ["ACTIVITY", "WHAT'S YOURS", "SHARING", "REVIEW", "PROTECTION"]
+    # The concepts appear in `decide` order.
+    order = ["ACTIVITY", "WHAT'S YOURS", "READING", "SHARING", "PROTECTION"]
     positions = [help_text.index(name) for name in order]
     assert positions == sorted(positions)
+    assert "REVIEW" not in help_text
     # No removed top-level names are advertised.
     for removed in ("/guardian self", "/guardian rules", "/guardian security",
-                    "/guardian tools", "/guardian language-packs", "/guardian privacy"):
+                    "/guardian tools", "/guardian language-packs", "/guardian privacy",
+                    "/guardian review"):
         assert removed not in help_text
 
 
@@ -297,13 +302,13 @@ def test_mine_delegates_to_self_handler_identically():
     assert "store:crm" in via_group
 
 
-def test_review_egress_safety_delegates_to_setter_identically():
+def test_sharing_egress_safety_delegates_to_setter_identically():
     plugin_a = load_plugin()
     plugin_b = load_plugin()
-    plugin_a._remember_command_owner("review egress-safety strict", plugin_a._CLI_OWNER_HASH)
-    via_group = plugin_a._handle_guardian_command("review egress-safety strict")
-    via_handler = plugin_b._guardian_privacy_command(
-        plugin_b._CLI_OWNER_HASH, ["privacy", "egress-safety", "strict"]
+    plugin_a._remember_command_owner("sharing egress-safety strict", plugin_a._CLI_OWNER_HASH)
+    via_group = plugin_a._handle_guardian_command("sharing egress-safety strict")
+    via_helper = plugin_b._guardian_sharing_egress_settings_command(
+        plugin_b._CLI_OWNER_HASH, ["sharing", "egress-safety", "strict"]
     )
-    assert via_group == via_handler
+    assert via_group == via_helper
     assert plugin_a._egress_safety_policy() == plugin_b._egress_safety_policy() == "strict"

@@ -6,12 +6,49 @@ import { Mono } from "@/components/Mono";
 import { PreviewSend } from "@/components/PreviewSend";
 import { TrustPill } from "@/components/TrustPill";
 import { TrustedDestinationModal } from "@/components/TrustedDestinationModal";
-import { classesText, displayText, expiryPillText, ruleScopeText, text } from "@/lib/format";
+import { classesText, displayText, expiryPillText, ruleScopeText, text, timeText } from "@/lib/format";
 import type { DestinationsController } from "@/hooks/useDestinations";
-import type { ImpactPreview as ImpactPreviewData, Rule, SharingTool, ToolInventoryRow } from "@/types";
+import type { ImpactPreview as ImpactPreviewData, Performance, Policy, Rule, SharingTool, ToolInventoryRow } from "@/types";
+
+const MODE_OPTIONS: Array<{ value: string; label: string; consequence: string }> = [
+  {
+    value: "llm",
+    label: "LLM pre-screen (llm)",
+    consequence: "The verifier pre-screens; you see only genuine boundary crossings.",
+  },
+  {
+    value: "strict",
+    label: "Manual review (strict)",
+    consequence: "You review every outbound action yourself.",
+  },
+  {
+    value: "read-only",
+    label: "Read-only preset",
+    consequence: "Nothing outward is auto-allowed.",
+  },
+  {
+    value: "off",
+    label: "off",
+    consequence: "Kill switch; privacy egress checks off. Security filtering still runs.",
+  },
+];
 
 export interface SharingTabProps {
   controller: DestinationsController;
+  policy: Policy | null;
+  egressSafety: string;
+  modeSaving: boolean;
+  onChangeEgressSafety: (mode: string) => void;
+  llmUserContext: boolean;
+  llmCronContext: boolean;
+  userContextSaving: boolean;
+  cronContextSaving: boolean;
+  onChangeUserContext: (enabled: boolean) => void;
+  onChangeCronContext: (enabled: boolean) => void;
+  llmVerifierModel: string;
+  verifierModelSaving: boolean;
+  onChangeVerifierModel: (model: string) => void;
+  performance: Performance | null;
   rules: Rule[];
   sharingTools: SharingTool[];
   toolInventory: ToolInventoryRow[];
@@ -24,6 +61,130 @@ export interface SharingTabProps {
   onEditTool: (tool: SharingTool) => void;
   onToggleTool: (tool: SharingTool) => void;
   onDeleteTool: (tool: SharingTool) => void;
+}
+
+function ms(value: number): string {
+  return (Number(value) || 0).toFixed(0) + " ms";
+}
+
+function EgressSafetySettings(props: {
+  policy: Policy | null;
+  egressSafety: string;
+  modeSaving: boolean;
+  onChangeEgressSafety: (mode: string) => void;
+  llmUserContext: boolean;
+  llmCronContext: boolean;
+  userContextSaving: boolean;
+  cronContextSaving: boolean;
+  onChangeUserContext: (enabled: boolean) => void;
+  onChangeCronContext: (enabled: boolean) => void;
+  llmVerifierModel: string;
+  verifierModelSaving: boolean;
+  onChangeVerifierModel: (model: string) => void;
+  performance: Performance | null;
+}) {
+  const verifierModelOptions = (props.policy && props.policy.llm_verifier_model_options) || [];
+  const llmStats = props.performance && props.performance.llm;
+  const llmCount = llmStats ? Number(llmStats.count || 0) : 0;
+  const llmMedian = llmStats ? llmStats.p50_ms : 0;
+
+  return (
+    <div className="hermes-guardian-card">
+      <div className="hermes-guardian-card-title">Egress Safety</div>
+      <div className="hermes-guardian-muted hermes-guardian-section-description">
+        Controls how Guardian handles tainted private data when it is about to leave.
+      </div>
+      <div className="hermes-guardian-sharing-egress-control">
+        <select
+          className="hermes-guardian-select"
+          value={props.egressSafety}
+          disabled={props.modeSaving}
+          onChange={(event) => props.onChangeEgressSafety(event.target.value)}
+        >
+          {MODE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label + " - " + option.consequence}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {props.egressSafety === "llm" ? (
+        <div className="hermes-guardian-sharing-egress-llm">
+          <div className="hermes-guardian-card-title">Authorization context</div>
+          <div className="hermes-guardian-muted hermes-guardian-section-description">
+            In llm mode the verifier reads the real action payload to check content against
+            intent. These toggles feed it extra authorization evidence.
+          </div>
+          <div className="hermes-guardian-grid">
+            <label className="hermes-guardian-check hermes-guardian-security-check">
+              <input
+                type="checkbox"
+                checked={props.llmUserContext}
+                disabled={props.userContextSaving}
+                onChange={(event) => props.onChangeUserContext(event.target.checked)}
+              />
+              <span className="hermes-guardian-security-rule-text">
+                <span>Owner context</span>
+                <span className="hermes-guardian-muted">
+                  Give the verifier your recent request as authorization evidence for
+                  owner-initiated egress.
+                </span>
+              </span>
+            </label>
+            <label className="hermes-guardian-check hermes-guardian-security-check">
+              <input
+                type="checkbox"
+                checked={props.llmCronContext}
+                disabled={props.cronContextSaving}
+                onChange={(event) => props.onChangeCronContext(event.target.checked)}
+              />
+              <span className="hermes-guardian-security-rule-text">
+                <span>Unattended (cron) context</span>
+                <span className="hermes-guardian-muted">
+                  Include a cron job's own stored instruction as evidence for that job's egress.
+                  High-risk unattended actions always require manual approval.
+                </span>
+              </span>
+            </label>
+          </div>
+          <div className="hermes-guardian-card-title">Verifier model</div>
+          <div className="hermes-guardian-muted">
+            Run the verifier on a faster model than the agent's. Options come from this
+            plugin's <Mono>allowed_models</Mono>; grant{" "}
+            <Mono>plugins.entries.hermes-guardian.llm.allow_model_override</Mono> to populate
+            them. Guardian falls back to the default model if an override is rejected.
+          </div>
+          <div className="hermes-guardian-sharing-egress-control">
+            <select
+              className="hermes-guardian-select"
+              value={props.llmVerifierModel || ""}
+              disabled={props.verifierModelSaving}
+              onChange={(event) => props.onChangeVerifierModel(event.target.value)}
+            >
+              <option value="">Default (agent model)</option>
+              {verifierModelOptions.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="hermes-guardian-sharing-egress-scoreboard">
+        <div className="hermes-guardian-card-title">Verifier scoreboard</div>
+        <div className="hermes-guardian-rule-meta">
+          <span>{"Verifier-consulted checks: " + llmCount}</span>
+          <span>{"Median verifier latency: " + ms(llmMedian)}</span>
+          {props.performance ? (
+            <span>{"Window: last " + text(props.performance.window_size) + " checks"}</span>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // --- Trusted destinations: identities + commands you've consented to share with --
@@ -477,6 +638,20 @@ function OutwardSharing(props: { controller: DestinationsController }) {
 export function SharingTab(props: SharingTabProps) {
   const {
     controller,
+    policy,
+    egressSafety,
+    modeSaving,
+    onChangeEgressSafety,
+    llmUserContext,
+    llmCronContext,
+    userContextSaving,
+    cronContextSaving,
+    onChangeUserContext,
+    onChangeCronContext,
+    llmVerifierModel,
+    verifierModelSaving,
+    onChangeVerifierModel,
+    performance,
     rules,
     sharingTools,
     toolInventory,
@@ -497,6 +672,23 @@ export function SharingTab(props: SharingTabProps) {
 
   return (
     <div className="hermes-guardian-grid">
+      <EgressSafetySettings
+        policy={policy}
+        egressSafety={egressSafety}
+        modeSaving={modeSaving}
+        onChangeEgressSafety={onChangeEgressSafety}
+        llmUserContext={llmUserContext}
+        llmCronContext={llmCronContext}
+        userContextSaving={userContextSaving}
+        cronContextSaving={cronContextSaving}
+        onChangeUserContext={onChangeUserContext}
+        onChangeCronContext={onChangeCronContext}
+        llmVerifierModel={llmVerifierModel}
+        verifierModelSaving={verifierModelSaving}
+        onChangeVerifierModel={onChangeVerifierModel}
+        performance={performance}
+      />
+
       <TrustedDestinations controller={controller} />
 
       <EgressToolClassification

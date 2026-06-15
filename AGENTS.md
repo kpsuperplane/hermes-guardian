@@ -233,7 +233,7 @@ the tests/docs are updated accordingly:
 ## Policy And State Files
 
 `guardian-rules.json` is organized into the IA concepts, in `decide` order —
-`whats_yours` → `reading` → `sharing` → `review` → `protection`, plus
+`whats_yours` → `reading` → `sharing` → `protection`, plus
 `version`/meta (Activity is pure output, so it has no config block). The on-disk
 **v4 schema** is the only
 shape the loader accepts: there is no version detection and the loader does NOT
@@ -263,6 +263,10 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
     ]
   },
   "sharing": {
+    "egress_safety": "strict",
+    "owner_context": true,
+    "cron_context": false,
+    "verifier_model": "",
     "trusted_recipients": [
       {"identity": "ally@example.com", "classes": ["communications"], "note": ""}
     ],
@@ -278,12 +282,6 @@ clear log line (`"unrecognized config shape — re-author per the v4 schema"`).
         "note": "acme read tools are not sinks"
       }
     ]
-  },
-  "review": {
-    "egress_safety": "strict",
-    "owner_context": true,
-    "cron_context": false,
-    "verifier_model": ""
   },
   "protection": {
     "security": {
@@ -317,7 +315,7 @@ The file→internal map (doc 04 §3): `whats_yours.stores/.identities/.hosts`
 `trusted_recipients.entries`; `sharing.rules` → `privacy.rules`;
 `sharing.tools` → `privacy.sharing_tools`;
 `sharing.outward.extra` → `outward_sharing.extra` (builtin subtypes are code-owned and
-never read from / written to config); `review.egress_safety/.owner_context/.cron_context/
+never read from / written to config); `sharing.egress_safety/.owner_context/.cron_context/
 .verifier_model` → `privacy.egress_safety/.llm_user_context/.llm_cron_context/
 .llm_verifier_model`; `protection.security` (a `{id: bool}` toggle map)
 → `security.rules`; `protection.language_packs`
@@ -465,8 +463,8 @@ Keep `dashboard/plugin_api.py` as a thin adapter:
   `POST /sharing/tools`, `PATCH /sharing/tools/{id}`, `DELETE /sharing/tools/{id}`,
   `POST /reading/taint-classification`,
   `GET /reading/source-suggestions`, `POST /reading/source-classification`,
-  `POST /privacy/user-context`, `POST /privacy/cron-context`,
-  `POST /privacy/verifier-model`) are thin adapters over the `privacy/rules.py`
+  `POST /sharing/egress-safety`, `POST /sharing/owner-context`,
+  `POST /sharing/cron-context`, `POST /sharing/verifier-model`) are thin adapters over the `privacy/rules.py`
   mutators, like the other `_dashboard_*` actions.
 
 The dashboard is a React + TypeScript app. Source lives in `dashboard/src/`;
@@ -496,7 +494,7 @@ When adding or changing a pack:
 
 Slash command behavior lives in `ui/commands.py`. Commands are grouped into the
 IA concepts in `decide` order
-(`activity`/`mine`/`reading`/`sharing`/`review`/`protection`), with `status`/`why` on top.
+(`activity`/`mine`/`reading`/`sharing`/`protection`), with `status`/`why` on top.
 The full command reference lives in `README.md` (Slash Commands) — keep it in
 sync with `ui/commands.py` when commands change; do not duplicate the list here.
 `hermes guardian dashboard status|url|prune` is the CLI surface.

@@ -193,11 +193,11 @@ The default Egress Safety setting is `llm`.
 Set the mode from a Hermes gateway:
 
 ```text
-/guardian review egress-safety llm
+/guardian sharing egress-safety llm
 ```
 
 Or edit `guardian-rules.json`. The file is organized into the IA concepts,
-in `decide` order — `whats_yours` → `reading` → `sharing` → `review` →
+in `decide` order — `whats_yours` → `reading` → `sharing` →
 `protection` (Activity is pure output, so it has no config block) — so reading
 the file is reading the decision:
 
@@ -215,16 +215,14 @@ the file is reading the decision:
     "tools": []
   },
   "sharing": {
+    "egress_safety": "llm",
+    "owner_context": true,
+    "cron_context": false,
+    "verifier_model": "",
     "trusted_recipients": [],
     "rules": [],
     "outward": { "extra": [] },
     "tools": []
-  },
-  "review": {
-    "egress_safety": "llm",
-    "owner_context": true,
-    "cron_context": false,
-    "verifier_model": ""
   },
   "protection": {
     "security": {
@@ -244,7 +242,7 @@ the file is reading the decision:
 This v4 schema is the only shape the loader accepts: there is no version
 detection, and a file that does not match it (including a wholly corrupt one)
 fails closed to `strict` with a clear log line — never to anything permissive.
-Any block may be omitted; missing blocks fill from safe defaults (`review.egress_safety`
+Any block may be omitted; missing blocks fill from safe defaults (`sharing.egress_safety`
 defaults to `llm`, `reading.taint_classification` defaults to `balanced`,
 `reading.llm_source_classification` defaults to `true`,
 `whats_yours.stores` seeds the single-operator stores,
@@ -326,8 +324,8 @@ the dashboard Settings tab (Verifier model) — no need to type model ids. You c
 also set it by slash command:
 
 ```text
-/guardian review verifier-model gpt-5.4-mini
-/guardian review verifier-model default          # back to the Hermes default
+/guardian sharing verifier-model gpt-5.4-mini
+/guardian sharing verifier-model default          # back to the Hermes default
 ```
 
 Guardian is fail-safe: if the override is rejected (grant missing) or the model is
@@ -336,19 +334,19 @@ smaller model is faster but less sharp on subtle content/intent calls, so prefer
 capable "mini"/"flash"-class model over the smallest. Guardian also caches *deny*
 verdicts briefly per session, so a retried blocked action does not re-pay the
 verifier latency (denials only — a cached deny can never become a false allow).
-Watch the effect in the verifier scoreboard on the **Review** tab and the
+Watch the effect in the verifier scoreboard on the **Sharing** tab and the
 per-check timing table on the **Protection** tab.
 
-Both context channels are toggleable, in the dashboard Review tab, by slash
-command, or directly in `guardian-rules.json` under `review`:
+Both context channels are toggleable, in the dashboard Sharing tab, by slash
+command, or directly in `guardian-rules.json` under `sharing`:
 
 ```text
-/guardian review owner-context on|off   # default on
-/guardian review cron-context on|off    # default off
+/guardian sharing owner-context on|off   # default on
+/guardian sharing cron-context on|off    # default off
 ```
 
 ```json
-{ "review": { "owner_context": true, "cron_context": false } }
+{ "sharing": { "owner_context": true, "cron_context": false } }
 ```
 
 `llm_user_context` (default on) gates the owner channel above. `llm_cron_context`
@@ -814,6 +812,10 @@ sit on top as the everyday commands.
 
 # SHARING — what you've authorized to leave you
 /guardian sharing
+/guardian sharing egress-safety strict|read-only|llm|off
+/guardian sharing owner-context on|off
+/guardian sharing cron-context on|off
+/guardian sharing verifier-model <model_id|default>
 /guardian sharing destination add|remove <identity> [classes=<class+class>] [note=<text>]
 /guardian sharing destination suggest        list trusted-command suggestions
 /guardian sharing destination trust <n> [classes=<class+class>] [note=<text>]
@@ -826,13 +828,6 @@ sit on top as the everyday commands.
 /guardian sharing rule move <rule_id> before|after <other_rule_id>
 /guardian sharing outward add|remove <subtype>
 /guardian sharing preview <action> <destination> <class>
-
-# REVIEW — who judges everything else
-/guardian review
-/guardian review egress-safety strict|read-only|llm|off
-/guardian review owner-context on|off
-/guardian review cron-context on|off
-/guardian review verifier-model <model_id|default>
 
 # PROTECTION — the floor that always holds
 /guardian protection
@@ -863,7 +858,7 @@ Guardian appears in the main Hermes dashboard at `/guardian` via
 
 Dashboard tabs follow the IA, in `decide` order — reading the nav
 left-to-right is reading the decision pipeline top-to-bottom (what happened → is it
-mine → what was read → is it covered by a grant → who judges the rest → the floor):
+mine → what was read → is it covered by a grant → the floor):
 
 - **Activity**: the decided stream as **turn cards** — each card is one turn (one user
   prompt and the checks it drove), paginated by turn, with its checks nested inside and
@@ -884,17 +879,17 @@ mine → what was read → is it covered by a grant → who judges the rest → 
   table showing observed tools plus exact/inherited source policy, Taint
   Classification, the LLM source classifier, and *Sources seen* for undeclared MCP
   document-read servers.
-- **Sharing**: the standing authorization you've granted — trusted recipients, the
-  egress tool inventory table, ordered allow/deny rules
+- **Sharing**: outbound private-data behavior and the standing authorization
+  you've granted — **Egress Safety** (each option written as a who-reviews
+  sentence), the owner/cron authorization context toggles, the verifier model,
+  a verifier **scoreboard** (consulted checks + median latency), trusted
+  recipients, the egress tool inventory table, ordered allow/deny rules
   (add/edit/delete/enable/disable/**reorder**), the outward-sharing action names
   (verbs such as share/invite/publish that are always external even on your own
   stores, with builtin read-only names plus editable extras), a *Preview a send*
   widget, and an *Impact preview* that replays a candidate rule against recent
   activity before you commit it. Trust/sharing edits are admin-token + confirmation
   gated.
-- **Review**: case-by-case judgment — **Egress Safety** (each option written as a
-  who-reviews sentence), the owner/cron authorization context toggles, the verifier
-  model, and a verifier **scoreboard** (consulted checks + median latency).
 - **Protection**: the floor + machinery + diagnostics — Security Module hard-block
   rules, language packs, retention, a **Debugging** card with the
   opt-in *Persist prompts* toggle (default off, confirmation-gated — writes the
@@ -916,12 +911,12 @@ GET /api/plugins/hermes-guardian/destinations/suggestions
 GET /api/plugins/hermes-guardian/reading/source-suggestions
 GET /api/plugins/hermes-guardian/sharing/preview
 POST /api/plugins/hermes-guardian/sharing/impact
-POST /api/plugins/hermes-guardian/privacy/egress-safety
+POST /api/plugins/hermes-guardian/sharing/egress-safety
 POST /api/plugins/hermes-guardian/privacy/clear-taint
 POST /api/plugins/hermes-guardian/reading/taint-classification
-POST /api/plugins/hermes-guardian/privacy/user-context
-POST /api/plugins/hermes-guardian/privacy/cron-context
-POST /api/plugins/hermes-guardian/privacy/verifier-model
+POST /api/plugins/hermes-guardian/sharing/owner-context
+POST /api/plugins/hermes-guardian/sharing/cron-context
+POST /api/plugins/hermes-guardian/sharing/verifier-model
 PATCH /api/plugins/hermes-guardian/security/rules/{rule_id}
 PATCH /api/plugins/hermes-guardian/language-packs/{pack_id}
 POST /api/plugins/hermes-guardian/rules

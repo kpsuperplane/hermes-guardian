@@ -30,10 +30,8 @@ def test_v4_partial_config_fills_defaults():
         plugin,
         {
             "version": 4,
-            "review": {
-                "egress_safety": "strict",
-            },
             "sharing": {
+                "egress_safety": "strict",
                 "rules": [privacy_rule(rule_id="rule_allow", effect="allow")],
             },
         },
@@ -61,9 +59,8 @@ def test_malformed_self_block_drops_to_safe_subset():
         plugin,
         {
             "version": 4,
-            "review": {"egress_safety": "strict"},
+            "sharing": {"egress_safety": "strict", "outward": 12345},
             "whats_yours": "not-a-dict",  # wholly malformed block
-            "sharing": {"outward": 12345},  # malformed outward block
         },
     )
     config = plugin._load_privacy_config()
@@ -82,9 +79,8 @@ def test_outward_sharing_builtin_is_not_narrowable():
         plugin,
         {
             "version": 4,
-            "review": {"egress_safety": "strict"},
             # operator tries to drop "share" and keep only "invite"; add an extra.
-            "sharing": {"outward": {"builtin": ["invite"], "extra": ["crosspost"]}},
+            "sharing": {"egress_safety": "strict", "outward": {"builtin": ["invite"], "extra": ["crosspost"]}},
         },
     )
     config = plugin._load_privacy_config()

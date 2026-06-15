@@ -306,7 +306,7 @@ async def activity_turns(request: Request) -> dict[str, Any]:
     return payload
 
 
-@router.post("/privacy/egress-safety")
+@router.post("/sharing/egress-safety")
 async def set_egress_safety(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("egress_safety", body)
@@ -387,7 +387,7 @@ async def set_taint_classification(request: Request, body: dict[str, Any]) -> JS
     )
 
 
-@router.post("/privacy/user-context")
+@router.post("/sharing/owner-context")
 async def set_user_context(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     return _json_mutation_result(
@@ -395,7 +395,7 @@ async def set_user_context(request: Request, body: dict[str, Any]) -> JSONRespon
     )
 
 
-@router.post("/privacy/cron-context")
+@router.post("/sharing/cron-context")
 async def set_cron_context(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     _require_dashboard_confirmation("llm_cron_context", body)
@@ -404,7 +404,7 @@ async def set_cron_context(request: Request, body: dict[str, Any]) -> JSONRespon
     )
 
 
-@router.post("/privacy/verifier-model")
+@router.post("/sharing/verifier-model")
 async def set_verifier_model(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)
     return _json_mutation_result(

@@ -46,7 +46,7 @@ def test_local_direct_command_does_not_use_telegram_rich_output(monkeypatch):
     plugin = load_plugin()
     monkeypatch.setattr(plugin._m_commands, "_telegram_rich_slash_supported", lambda: True)
 
-    output = plugin._handle_guardian_command("review")
+    output = plugin._handle_guardian_command("sharing")
 
     assert output.startswith("Egress Safety:")
     assert "| Setting | Value |" not in output

@@ -721,7 +721,7 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
 
 # --- v4 IA schema (refactor doc 04) ------------------------------------------
 # The ON-DISK policy file is organized into the IA concepts, in `decide` order:
-# `whats_yours`, `reading`, `sharing`, `review`, `protection`, plus `version`/meta.
+# `whats_yours`, `reading`, `sharing`, `protection`, plus `version`/meta.
 # (Activity has no configuration.) The loader parses these blocks DIRECTLY into
 # the unchanged internal in-memory structure the engine already consumes — only
 # this parsing front-end is aware of the file shape. There is no back-compat:
@@ -730,22 +730,22 @@ def _normalize_privacy_rule(rule: Any) -> dict[str, Any] | None:
 # The conceptual correspondence (doc 04 §3), file block -> internal key:
 #   whats_yours.stores/.identities/.hosts -> self.destinations/.identities/.hosts
 #   reading.taint_classification          -> privacy.taint_classification
+#   reading.llm_source_classification     -> privacy.llm_source_classification
 #   reading.tools                         -> privacy.reading_tools
 #   sharing.trusted_recipients            -> trusted_recipients.entries
 #   sharing.rules                         -> privacy.rules
 #   sharing.tools                         -> privacy.sharing_tools
 #   sharing.outward.extra                 -> outward_sharing.extra (builtin code-owned)
-#   review.egress_safety/.owner_context/.cron_context/.verifier_model
+#   sharing.egress_safety/.owner_context/.cron_context/.verifier_model
 #                                         -> privacy.egress_safety/.llm_user_context/...
 #   protection.security                   -> security.rules
 #   protection.language_packs             -> language_packs.enabled
 #   protection.retention                  -> retention
 #   protection.runtime                    -> dashboard
 #
-# `review.allow_model_override` is accepted (and ignored) for forward-compat: the
-# model-override grant lives host-side in config.yaml, not in this document, so it
-# has no internal consumer. The loader never branches on `version`.
-_V4_TOP_LEVEL_BLOCKS = ("whats_yours", "reading", "sharing", "review", "protection")
+# The model-override grant lives host-side in config.yaml, not in this document.
+# The loader never branches on `version`.
+_V4_TOP_LEVEL_BLOCKS = ("whats_yours", "reading", "sharing", "protection")
 
 
 def _looks_like_v4_config(parsed: Any) -> bool:
@@ -865,18 +865,17 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
     if not _looks_like_v4_config(parsed):
         raise ValueError(
             "unrecognized config shape — re-author per the v4 schema "
-            "(whats_yours / reading / sharing / review / protection)"
+            "(whats_yours / reading / sharing / protection)"
         )
     whats_yours = parsed.get("whats_yours")
     reading = parsed.get("reading") if isinstance(parsed.get("reading"), dict) else {}
     sharing = parsed.get("sharing") if isinstance(parsed.get("sharing"), dict) else {}
-    review = parsed.get("review") if isinstance(parsed.get("review"), dict) else {}
     protection = parsed.get("protection") if isinstance(parsed.get("protection"), dict) else {}
     return {
         "version": _PRIVACY_RULE_FILE_VERSION,
-        # 4 — REVIEW: case-by-case judgment (decide step 6).
         "privacy": {
-            "egress_safety": _normalize_egress_safety(review.get("egress_safety")),
+            # 3 — SHARING: case-by-case egress judgment (decide step 6).
+            "egress_safety": _normalize_egress_safety(sharing.get("egress_safety")),
             # 2.5 — READING: source/sink fallback classification.
             "taint_classification": _normalize_taint_classification(
                 reading.get("taint_classification")
@@ -886,12 +885,12 @@ def _normalize_privacy_config(parsed: Any) -> dict[str, Any]:
                 default=_DEFAULT_LLM_SOURCE_CLASSIFICATION,
             ),
             "llm_user_context": _config_bool(
-                review.get("owner_context"), default=_DEFAULT_LLM_USER_CONTEXT
+                sharing.get("owner_context"), default=_DEFAULT_LLM_USER_CONTEXT
             ),
             "llm_cron_context": _config_bool(
-                review.get("cron_context"), default=_DEFAULT_LLM_CRON_CONTEXT
+                sharing.get("cron_context"), default=_DEFAULT_LLM_CRON_CONTEXT
             ),
-            "llm_verifier_model": _normalize_verifier_model(review.get("verifier_model")),
+            "llm_verifier_model": _normalize_verifier_model(sharing.get("verifier_model")),
             # 3 — SHARING: standing authorization (decide step 5).
             "rules": _v4_sharing_rules(sharing.get("rules")),
             # 2.5 — READING: source classification.
@@ -922,31 +921,20 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
     Block-level malformations (e.g. a non-list ``sharing.rules``) are NOT fatal here —
     they drop to their safe default in the normalizer (doc 04 §5.3). This validator
     only rejects shapes that signal a wholly wrong document: a non-object top level, a
-    non-recognizable (old-shape) file, an invalid ``review.egress_safety``, or a hard-typed
-    ``review`` context flag — each of which must fail closed rather than half-load.
+    non-recognizable (old-shape) file, an obsolete ``review`` block, an invalid
+    ``sharing.egress_safety``, or a hard-typed ``sharing`` context flag — each of
+    which must fail closed rather than half-load.
     """
     if not isinstance(parsed, dict):
         raise ValueError("privacy rule file must be a JSON object")
     if not _looks_like_v4_config(parsed):
         raise ValueError(
             "unrecognized config shape — re-author per the v4 schema "
-            "(whats_yours / reading / sharing / review / protection)"
+            "(whats_yours / reading / sharing / protection)"
         )
     review = parsed.get("review")
-    if review is not None and not isinstance(review, dict):
-        raise ValueError("privacy rule file review must be an object")
-    if isinstance(review, dict):
-        if "mode" in review:
-            raise ValueError("privacy rule file has obsolete review.mode")
-        if "egress_safety" in review:
-            raw_mode = str(review.get("egress_safety") or "").strip().lower().replace("_", "-")
-            if raw_mode not in _EGRESS_SAFETY_MODES:
-                raise ValueError("privacy rule file has invalid review.egress_safety")
-        for context_key in ("owner_context", "cron_context"):
-            if context_key in review and not isinstance(review.get(context_key), (bool, int, str)):
-                raise ValueError(f"privacy rule file has invalid review.{context_key}")
-        if "verifier_model" in review and not isinstance(review.get("verifier_model"), str):
-            raise ValueError("privacy rule file has invalid review.verifier_model")
+    if review is not None:
+        raise ValueError("privacy rule file has obsolete review block")
     for block_name in ("reading", "sharing", "protection"):
         block = parsed.get(block_name)
         if block is not None and not isinstance(block, dict):
@@ -964,6 +952,15 @@ def _validate_persistent_privacy_config(parsed: Any) -> None:
                         raise ValueError(f"privacy rule file has invalid reading.tools[{index}].{mixed_key}")
     sharing = parsed.get("sharing")
     if isinstance(sharing, dict):
+        if "egress_safety" in sharing:
+            raw_mode = str(sharing.get("egress_safety") or "").strip().lower().replace("_", "-")
+            if raw_mode not in _EGRESS_SAFETY_MODES:
+                raise ValueError("privacy rule file has invalid sharing.egress_safety")
+        for context_key in ("owner_context", "cron_context"):
+            if context_key in sharing and not isinstance(sharing.get(context_key), (bool, int, str)):
+                raise ValueError(f"privacy rule file has invalid sharing.{context_key}")
+        if "verifier_model" in sharing and not isinstance(sharing.get("verifier_model"), str):
+            raise ValueError("privacy rule file has invalid sharing.verifier_model")
         for index, entry in enumerate(sharing.get("tools") or []):
             if isinstance(entry, dict):
                 for mixed_key in ("taints", "taint", "source", "direction"):
@@ -1103,6 +1100,14 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
             "tools": list(privacy.get("reading_tools") or []),
         },
         "sharing": {
+            "egress_safety": _normalize_egress_safety(privacy.get("egress_safety")),
+            "owner_context": _config_bool(
+                privacy.get("llm_user_context"), default=_DEFAULT_LLM_USER_CONTEXT
+            ),
+            "cron_context": _config_bool(
+                privacy.get("llm_cron_context"), default=_DEFAULT_LLM_CRON_CONTEXT
+            ),
+            "verifier_model": _normalize_verifier_model(privacy.get("llm_verifier_model")),
             "trusted_recipients": [
                 {
                     "kind": str(entry.get("kind") or "identity"),
@@ -1116,16 +1121,6 @@ def _serialize_config_to_v4(internal: dict[str, Any]) -> dict[str, Any]:
             "rules": list(privacy.get("rules") or []),
             "tools": list(privacy.get("sharing_tools") or []),
             "outward": {"extra": list(outward.get("extra") or [])},
-        },
-        "review": {
-            "egress_safety": _normalize_egress_safety(privacy.get("egress_safety")),
-            "owner_context": _config_bool(
-                privacy.get("llm_user_context"), default=_DEFAULT_LLM_USER_CONTEXT
-            ),
-            "cron_context": _config_bool(
-                privacy.get("llm_cron_context"), default=_DEFAULT_LLM_CRON_CONTEXT
-            ),
-            "verifier_model": _normalize_verifier_model(privacy.get("llm_verifier_model")),
         },
         "protection": {
             "security": {

@@ -46,8 +46,8 @@ def test_guardian_rule_delete_slash_alias_removes_persistent_rule(tmp_path):
 def test_non_owner_slash_cannot_change_global_egress_safety_mode():
     plugin = load_plugin()
 
-    plugin._on_pre_gateway_dispatch(gateway_event("/guardian review egress-safety off", user_id="attacker"))
-    response = plugin._handle_guardian_command("review egress-safety off")
+    plugin._on_pre_gateway_dispatch(gateway_event("/guardian sharing egress-safety off", user_id="attacker"))
+    response = plugin._handle_guardian_command("sharing egress-safety off")
 
     assert "Permission denied" in response
     assert plugin._egress_safety_policy() == "llm"

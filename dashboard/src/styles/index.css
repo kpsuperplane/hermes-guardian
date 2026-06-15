@@ -1,7 +1,7 @@
 /* Aggregated entry for the Guardian dashboard stylesheet. Built to
    dist/style.css. Co-located component/tab CSS is imported here in cascade
    order: shared shell + form primitives first, then component and tab chrome.
-   The six tabs (Activity · What's Yours · Reading · Sharing · Review · Protection)
+   The tabs (Activity · What's Yours · Reading · Sharing · Protection)
    mirror the IA in doc 02; shared classnames (cards, pills, dest lists, the
    history table) live in whichever tab CSS first defined them and are reused
    across tabs since the bundle is one global stylesheet. */
@@ -16,5 +16,4 @@
 @import "../tabs/WhatsYoursTab.css";
 @import "../tabs/ReadingTab.css";
 @import "../tabs/SharingTab.css";
-@import "../tabs/ReviewTab.css";
 @import "../tabs/ProtectionTab.css";

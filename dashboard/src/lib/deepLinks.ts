@@ -6,7 +6,7 @@
 // either plain text or a link carrying a target tab id. Unknown clauses render
 // as plain text (resilient by design — a future step never breaks the row).
 
-export type TabId = "activity" | "whats-yours" | "reading" | "sharing" | "review" | "protection";
+export type TabId = "activity" | "whats-yours" | "reading" | "sharing" | "protection";
 
 export interface DeepLinkSegment {
   text: string;
@@ -45,14 +45,14 @@ function segmentsForStep(base: string): DeepLinkSegment[] | null {
     return [
       { text: "destination = external", tab: "whats-yours" },
       { text: " → no matching rule", tab: "sharing" },
-      { text: " → approval required", tab: "review" },
+      { text: " → approval required", tab: "sharing" },
     ];
   }
   if (base === "step6_approve_unknown_as_external") {
     return [
       { text: "destination = unknown (treated as external)", tab: "whats-yours" },
       { text: " → no matching rule", tab: "sharing" },
-      { text: " → approval required", tab: "review" },
+      { text: " → approval required", tab: "sharing" },
     ];
   }
   if (base === "source_default") {

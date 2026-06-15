@@ -3,10 +3,10 @@
 import { expect, test } from "bun:test";
 import { decisionStepSegments } from "./deepLinks";
 
-test("step6 external maps clauses to What's Yours, Sharing, Review", () => {
+test("step6 external maps clauses to What's Yours and Sharing", () => {
   const segments = decisionStepSegments("step6_approve_external");
   const tabs = segments.filter((s) => s.tab).map((s) => s.tab);
-  expect(tabs).toEqual(["whats-yours", "sharing", "review"]);
+  expect(tabs).toEqual(["whats-yours", "sharing", "sharing"]);
 });
 
 test("step6 unknown-as-external also deep-links the three governing tabs", () => {
@@ -14,7 +14,7 @@ test("step6 unknown-as-external also deep-links the three governing tabs", () =>
   expect(segments.filter((s) => s.tab).map((s) => s.tab)).toEqual([
     "whats-yours",
     "sharing",
-    "review",
+    "sharing",
   ]);
   expect(segments[0].text).toContain("unknown");
 });

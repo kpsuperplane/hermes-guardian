@@ -28,11 +28,11 @@ def test_security_rule_can_be_saved_in_json(tmp_path):
     assert ok is True
     assert "Disabled security rule account_security_content" in message
     data = json.loads((tmp_path / "rules.json").read_text())
-    # v4 on-disk: protection.security is a {rule_id: bool} toggle map; review
+    # v4 on-disk: protection.security is a {rule_id: bool} toggle map; sharing
     # carries Egress Safety.
     configured = data["protection"]["security"]
     assert configured["account_security_content"] is False
-    assert data["review"]["egress_safety"] == "llm"
+    assert data["sharing"]["egress_safety"] == "llm"
 
 
 def test_security_rule_can_be_disabled_by_direct_json_edit(tmp_path):
@@ -40,11 +40,10 @@ def test_security_rule_can_be_disabled_by_direct_json_edit(tmp_path):
     plugin.state._PERSISTENT_RULES_PATH = tmp_path / "rules.json"
     plugin.state._PERSISTENT_RULES_CACHE = None
     plugin.state._PERSISTENT_RULES_MTIME = None
-    # v4 IA schema: review.egress_safety + protection.security toggle map.
+    # v4 IA schema: sharing.egress_safety + protection.security toggle map.
     (tmp_path / "rules.json").write_text(json.dumps({
         "version": 4,
-        "review": {"egress_safety": "strict"},
-        "sharing": {"rules": []},
+        "sharing": {"egress_safety": "strict", "rules": []},
         "protection": {
             "security": {
                 "credential_content": "false",
@@ -70,7 +69,7 @@ def test_privacy_saves_preserve_security_rules(tmp_path):
     data = json.loads((tmp_path / "rules.json").read_text())
     configured = data["protection"]["security"]
     assert configured["sensitive_links"] is False
-    assert data["review"]["egress_safety"] == "read-only"
+    assert data["sharing"]["egress_safety"] == "read-only"
 
 
 def test_disabling_account_security_content_allows_semantic_auth_code_but_not_credentials():

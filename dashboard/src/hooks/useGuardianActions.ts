@@ -109,7 +109,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     }
     setEgressSafety(mode);
     setModeSaving(true);
-    api("/privacy/egress-safety", { method: "POST", body: JSON.stringify(body) })
+    api("/sharing/egress-safety", { method: "POST", body: JSON.stringify(body) })
       .then((payload) => {
         showToast(payload.message || "Saved.");
         return load();
@@ -175,7 +175,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     const previous = llmUserContext;
     setLlmUserContext(enabled);
     setUserContextSaving(true);
-    api("/privacy/user-context", { method: "POST", body: JSON.stringify({ enabled }) })
+    api("/sharing/owner-context", { method: "POST", body: JSON.stringify({ enabled }) })
       .then((payload) => {
         showToast(payload.message || "Saved.");
         return load();
@@ -203,7 +203,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     }
     setLlmCronContext(enabled);
     setCronContextSaving(true);
-    api("/privacy/cron-context", { method: "POST", body: JSON.stringify(body) })
+    api("/sharing/cron-context", { method: "POST", body: JSON.stringify(body) })
       .then((payload) => {
         showToast(payload.message || "Saved.");
         return load();
@@ -249,7 +249,7 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     const previous = llmVerifierModel;
     setLlmVerifierModel(model);
     setVerifierModelSaving(true);
-    api("/privacy/verifier-model", { method: "POST", body: JSON.stringify({ model }) })
+    api("/sharing/verifier-model", { method: "POST", body: JSON.stringify({ model }) })
       .then((payload) => {
         showToast(payload.message || "Saved.");
         return load();

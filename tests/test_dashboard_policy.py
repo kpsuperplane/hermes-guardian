@@ -35,6 +35,10 @@ def test_reading_and_sharing_routes_replace_old_tool_and_taint_routes():
     source = (Path(__file__).resolve().parents[1] / "dashboard" / "plugin_api.py").read_text()
 
     for path in {
+        "/sharing/egress-safety",
+        "/sharing/owner-context",
+        "/sharing/cron-context",
+        "/sharing/verifier-model",
         "/reading/taint-classification",
         "/reading/tools",
         "/reading/tools/{override_id}",
@@ -50,6 +54,10 @@ def test_reading_and_sharing_routes_replace_old_tool_and_taint_routes():
         "/tools/{override_id}",
         "/tools/source-suggestions",
         "/tools/source",
+        "/privacy/egress-safety",
+        "/privacy/user-context",
+        "/privacy/cron-context",
+        "/privacy/verifier-model",
     }:
         assert f'"{path}"' not in source
 

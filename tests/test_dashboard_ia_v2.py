@@ -171,14 +171,15 @@ def test_impact_preview_narrow_candidate_excludes_unrelated_rows():
 
 
 # --- The new read endpoints need no admin guard (they only compute) ------------------
-# --- Static bundle: six tabs + deep links wired (doc 02 §nav, §Deep links) ----------
-def test_static_bundle_renders_six_tabs_and_deeplinks():
+# --- Static bundle: five tabs + deep links wired (doc 02 §nav, §Deep links) ----------
+def test_static_bundle_renders_five_tabs_and_deeplinks():
     static_js = (
         Path(__file__).resolve().parents[1] / "dashboard" / "dist" / "index.js"
     ).read_text()
-    # The six tab labels are present in the bundle, the old junk-drawer labels are gone.
-    for label in ("Activity", "What's Yours", "Reading", "Sharing", "Review", "Protection"):
+    # The five tab labels are present in the bundle, the old junk-drawer labels are gone.
+    for label in ("Activity", "What's Yours", "Reading", "Sharing", "Protection"):
         assert label in static_js, f"missing tab label {label!r}"
+    assert '"Review"' not in static_js
     assert "Destinations & Trust" not in static_js
     assert "Connectors" not in static_js
     # Deep-link affordance + the new widgets are bundled.

@@ -1,5 +1,23 @@
 /* --- Sharing tab (doc 02 §Tab3): impact preview chrome. Lists, rules, and form
    primitives reuse the shared card/pill/dest classes from the other tab CSS. --- */
+.hermes-guardian-sharing-egress-control {
+  margin-top: 0.6rem;
+}
+
+.hermes-guardian-sharing-egress-control .hermes-guardian-select {
+  display: block;
+  width: auto;
+  min-width: 14rem;
+  max-width: 100%;
+}
+
+.hermes-guardian-sharing-egress-llm,
+.hermes-guardian-sharing-egress-scoreboard {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
 .hermes-guardian-sharing-tile-track {
   display: flex;
   gap: 0.5rem;

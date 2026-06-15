@@ -15,20 +15,18 @@ import type { TabId } from "@/lib/deepLinks";
 import { ActivityTab } from "@/tabs/ActivityTab";
 import { ProtectionTab } from "@/tabs/ProtectionTab";
 import { ReadingTab } from "@/tabs/ReadingTab";
-import { ReviewTab } from "@/tabs/ReviewTab";
 import { SharingTab } from "@/tabs/SharingTab";
 import { WhatsYoursTab } from "@/tabs/WhatsYoursTab";
 import type { PendingApproval } from "@/types";
 
-// The six-tab IA (charter §1, doc 02). Order is fixed: it mirrors decide().
+// The dashboard IA (charter §1, doc 02). Order is fixed: it mirrors decide().
 // Reading left-to-right is reading decide() top-to-bottom: what happened ->
-// is it mine -> is it covered by a grant -> who judges the rest -> the floor.
+// is it mine -> what was read -> what may leave and how it is judged -> the floor.
 const TABS: Array<[TabId, string]> = [
   ["activity", "Activity"],
   ["whats-yours", "What's Yours"],
   ["reading", "Reading"],
   ["sharing", "Sharing"],
-  ["review", "Review"],
   ["protection", "Protection"],
 ];
 
@@ -95,7 +93,7 @@ export function GuardianPage() {
       history.loadHistory(history.page, history.pageSize);
       approvals.loadApprovals();
     }
-    if (tab === "review" || tab === "protection") performance.loadPerformance();
+    if (tab === "sharing" || tab === "protection") performance.loadPerformance();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, history.page, history.pageSize]);
 
@@ -117,7 +115,7 @@ export function GuardianPage() {
       history.loadHistory(history.page, history.pageSize);
       approvals.loadApprovals();
     }
-    if (tab === "review" || tab === "protection") performance.loadPerformance();
+    if (tab === "sharing" || tab === "protection") performance.loadPerformance();
     if (tab === "whats-yours" || tab === "sharing") destinations.refetch();
   }
 
@@ -204,23 +202,6 @@ export function GuardianPage() {
       {tab === "sharing" ? (
         <SharingTab
           controller={destinations}
-          rules={rules}
-          sharingTools={(policy && policy.sharing_tools) || []}
-          toolInventory={(policy && policy.sharing_tool_inventory) || []}
-          onNewRule={actions.openCreate}
-          onEditRule={actions.openEdit}
-          onPatchRule={actions.patchRule}
-          onDeleteRule={actions.deleteRule}
-          onMoveRule={actions.moveRule}
-          onNewTool={actions.openCreateSharingTool}
-          onEditTool={actions.openEditSharingTool}
-          onToggleTool={actions.toggleSharingTool}
-          onDeleteTool={actions.deleteSharingTool}
-        />
-      ) : null}
-
-      {tab === "review" ? (
-        <ReviewTab
           policy={policy}
           egressSafety={egressSafety}
           modeSaving={actions.modeSaving}
@@ -235,6 +216,18 @@ export function GuardianPage() {
           verifierModelSaving={actions.verifierModelSaving}
           onChangeVerifierModel={actions.saveVerifierModel}
           performance={performance.performance}
+          rules={rules}
+          sharingTools={(policy && policy.sharing_tools) || []}
+          toolInventory={(policy && policy.sharing_tool_inventory) || []}
+          onNewRule={actions.openCreate}
+          onEditRule={actions.openEdit}
+          onPatchRule={actions.patchRule}
+          onDeleteRule={actions.deleteRule}
+          onMoveRule={actions.moveRule}
+          onNewTool={actions.openCreateSharingTool}
+          onEditTool={actions.openEditSharingTool}
+          onToggleTool={actions.toggleSharingTool}
+          onDeleteTool={actions.deleteSharingTool}
         />
       ) : null}
 

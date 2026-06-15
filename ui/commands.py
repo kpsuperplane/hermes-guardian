@@ -55,7 +55,11 @@ _GUARDIAN_HELP_LINES = [
     "- `/guardian reading source suggest|set <server> reference|private|public|unknown`",
     "",
     "SHARING — what you've authorized to leave you",
-    "- `/guardian sharing` — show trusted destinations + rules + outward-sharing",
+    "- `/guardian sharing` — show Egress Safety + trusted destinations + rules + outward-sharing",
+    "- `/guardian sharing egress-safety strict|read-only|llm|off`",
+    "- `/guardian sharing owner-context on|off`",
+    "- `/guardian sharing cron-context on|off`",
+    "- `/guardian sharing verifier-model <model_id|default>`",
     "- `/guardian sharing destination add|remove <identity> [classes=<class+class>]`",
     "- `/guardian sharing destination suggest | trust <n>` — pick a trusted command",
     "- `/guardian sharing tool set|delete|enable|disable <match> ...`",
@@ -63,13 +67,6 @@ _GUARDIAN_HELP_LINES = [
     "- `/guardian sharing rule add|delete|enable|disable|move ...`",
     "- `/guardian sharing outward add|remove <subtype>`",
     "- `/guardian sharing preview <action> <destination> <class>` — which step fires",
-    "",
-    "REVIEW — who judges everything else",
-    "- `/guardian review` — show Egress Safety, contexts, verifier model",
-    "- `/guardian review egress-safety strict|read-only|llm|off`",
-    "- `/guardian review owner-context on|off`",
-    "- `/guardian review cron-context on|off`",
-    "- `/guardian review verifier-model <model_id|default>`",
     "",
     "PROTECTION — the floor that always holds",
     "- `/guardian protection` — show security, language packs, runtime diagnostics",
@@ -849,22 +846,6 @@ def _guardian_mine_telegram(owner_hash: str) -> str:
     return "\n".join(lines)
 
 
-def _guardian_review_telegram(owner_hash: str) -> str:
-    return "\n\n".join([
-        "## Review",
-        _md_table(
-            ["Setting", "Value"],
-            [
-                ["Egress Safety", core._egress_safety_policy()],
-                ["LLM user-prompt context", "on" if rules_mod._llm_user_context_enabled() else "off"],
-                ["LLM cron context", "on" if rules_mod._llm_cron_context_enabled() else "off"],
-                ["LLM verifier model", rules_mod._llm_verifier_model() or "default"],
-            ],
-        ),
-        "`/guardian review egress-safety strict|read-only|llm|off`\n`/guardian review owner-context on|off`\n`/guardian review cron-context on|off`\n`/guardian review verifier-model <model_id|default>`",
-    ])
-
-
 def _guardian_sharing_group_command_telegram(owner_hash: str, tokens: list[str]) -> str:
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     if sub:
@@ -893,6 +874,19 @@ def _guardian_sharing_group_command_telegram(owner_hash: str, tokens: list[str])
             ",".join(match.get("data_classes") or []) or "*",
         ])
     lines = ["## Sharing"]
+    lines.extend([
+        "",
+        "### Egress Safety",
+        _md_table(
+            ["Setting", "Value"],
+            [
+                ["Egress Safety", core._egress_safety_policy()],
+                ["LLM user-prompt context", "on" if rules_mod._llm_user_context_enabled() else "off"],
+                ["LLM cron context", "on" if rules_mod._llm_cron_context_enabled() else "off"],
+                ["LLM verifier model", rules_mod._llm_verifier_model() or "default"],
+            ],
+        ),
+    ])
     lines.extend(["", "### Trusted Destinations", _md_table(["Kind", "Value", "Classes", "Note"], trusted_rows) if trusted_rows else "No trusted destinations configured."])
     lines.extend([
         "",
@@ -1012,10 +1006,6 @@ def _handle_guardian_command(raw_args: str = "") -> str:
             if rich:
                 return rich
         return _guardian_sharing_group_command(owner_hash, tokens)
-    if command == "review":
-        if _telegram_command_enabled(command_context) and len(tokens) == 1:
-            return _guardian_review_telegram(owner_hash)
-        return _guardian_review_command(owner_hash, tokens)
     if command == "protection":
         if _telegram_command_enabled(command_context):
             rich = _guardian_protection_command_telegram(owner_hash, tokens)
@@ -1103,10 +1093,25 @@ def _guardian_sharing_group_command(owner_hash: str, tokens: list[str]) -> str:
         return _guardian_sharing_command(owner_hash, ["sharing", *tokens[2:]])
     if sub == "preview":
         return _guardian_sharing_preview_command(tokens[2:])
+    if sub in {
+        "egress-safety",
+        "egress_safety",
+        "owner-context",
+        "owner_context",
+        "cron-context",
+        "cron_context",
+        "verifier-model",
+        "verifier_model",
+    }:
+        return _guardian_sharing_egress_settings_command(owner_hash, tokens)
     if not sub:
         return _guardian_sharing_overview(owner_hash)
     return (
         "Usage: `/guardian sharing` | "
+        "`/guardian sharing egress-safety strict|read-only|llm|off` | "
+        "`/guardian sharing owner-context on|off` | "
+        "`/guardian sharing cron-context on|off` | "
+        "`/guardian sharing verifier-model <model_id|default>` | "
         "`/guardian sharing trusted add|remove <identity> [classes=<class+class>]` | "
         "`/guardian sharing tool set|delete|enable|disable ...` | "
         "`/guardian sharing tools` | "
@@ -1117,9 +1122,10 @@ def _guardian_sharing_group_command(owner_hash: str, tokens: list[str]) -> str:
 
 
 def _guardian_sharing_overview(owner_hash: str) -> str:
-    """The SHARING parent screen: trusted recipients + egress tools + rules + outward-sharing."""
+    """The SHARING parent screen: Egress Safety + trusted recipients + egress tools + rules + outward-sharing."""
     return "\n\n".join(
         [
+            _guardian_sharing_egress_settings_command(owner_hash, ["sharing"]),
             _guardian_trusted_command(owner_hash, ["trusted"]),
             _guardian_sharing_tools_command(),
             _guardian_rules(owner_hash),
@@ -1128,35 +1134,48 @@ def _guardian_sharing_overview(owner_hash: str) -> str:
     )
 
 
-def _guardian_review_command(owner_hash: str, tokens: list[str]) -> str:
-    """REVIEW group: mode, contexts, verifier model.
-
-    Maps the new review verbs onto the existing `privacy` handler's subcommands;
-    the underlying setters/guards are unchanged.
-    """
+def _guardian_sharing_egress_settings_command(owner_hash: str, tokens: list[str]) -> str:
+    """SHARING egress controls: Egress Safety, context channels, verifier model."""
     sub = tokens[1].lower() if len(tokens) > 1 else ""
     if not sub:
-        return _guardian_privacy_command(owner_hash, ["privacy"])
-    # Rename review verbs to the privacy handler's expected tokens.
-    rename = {
-        "egress-safety": "egress-safety",
-        "egress_safety": "egress-safety",
-        "owner-context": "user-context",
-        "owner_context": "user-context",
-        "cron-context": "cron-context",
-        "cron_context": "cron-context",
-        "verifier-model": "verifier-model",
-        "verifier_model": "verifier-model",
-    }
-    if sub not in rename:
         return (
-            "Usage: `/guardian review` | "
-            "`/guardian review egress-safety strict|read-only|llm|off` | "
-            "`/guardian review owner-context on|off` | "
-            "`/guardian review cron-context on|off` | "
-            "`/guardian review verifier-model <model_id|default>`"
+            f"Egress Safety: {core._egress_safety_policy()}\n"
+            f"LLM user-prompt context: {'on' if rules_mod._llm_user_context_enabled() else 'off'}\n"
+            f"LLM cron context: {'on' if rules_mod._llm_cron_context_enabled() else 'off'}\n"
+            f"LLM verifier model: {rules_mod._llm_verifier_model() or 'default'}"
         )
-    return _guardian_privacy_command(owner_hash, ["privacy", rename[sub], *tokens[2:]])
+    if len(tokens) == 3 and sub in {"egress-safety", "egress_safety"}:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        ok, message = rules_mod._set_egress_safety_mode(tokens[2])
+        return message
+    if len(tokens) == 3 and sub in {"owner-context", "owner_context"}:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        enabled = _parse_on_off(tokens[2])
+        if enabled is None:
+            return "Usage: /guardian sharing owner-context on|off"
+        ok, message = rules_mod._set_llm_user_context(enabled)
+        return message
+    if len(tokens) == 3 and sub in {"cron-context", "cron_context"}:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        enabled = _parse_on_off(tokens[2])
+        if enabled is None:
+            return "Usage: /guardian sharing cron-context on|off"
+        ok, message = rules_mod._set_llm_cron_context(enabled)
+        return message
+    if len(tokens) >= 3 and sub in {"verifier-model", "verifier_model"}:
+        if not _slash_admin_allowed(owner_hash):
+            return _global_mutation_denied_message()
+        ok, message = rules_mod._set_llm_verifier_model(" ".join(tokens[2:]))
+        return message
+    return (
+        "Usage: /guardian sharing egress-safety strict|read-only|llm|off | "
+        "/guardian sharing owner-context on|off | "
+        "/guardian sharing cron-context on|off | "
+        "`/guardian sharing verifier-model <model_id|default>`"
+    )
 
 
 def _guardian_reading_command(owner_hash: str, tokens: list[str]) -> str:
@@ -1366,54 +1385,6 @@ def _parse_on_off(token: str) -> bool | None:
     if text in {"off", "false", "no", "disable", "disabled", "0"}:
         return False
     return None
-
-
-def _guardian_privacy_command(owner_hash: str, tokens: list[str]) -> str:
-    if len(tokens) == 1:
-        return (
-            f"Egress Safety: {core._egress_safety_policy()}\n"
-            f"Taint Classification: {rules_mod._taint_classification_mode()}\n"
-            f"LLM user-prompt context: {'on' if rules_mod._llm_user_context_enabled() else 'off'}\n"
-            f"LLM cron context: {'on' if rules_mod._llm_cron_context_enabled() else 'off'}\n"
-            f"LLM verifier model: {rules_mod._llm_verifier_model() or 'default'}"
-        )
-    if len(tokens) == 3 and tokens[1].lower() in {"egress-safety", "egress_safety"}:
-        if not _slash_admin_allowed(owner_hash):
-            return _global_mutation_denied_message()
-        ok, message = rules_mod._set_egress_safety_mode(tokens[2])
-        return message
-    if len(tokens) == 3 and tokens[1].lower() in {"taint-classification", "taint_classification"}:
-        if not _slash_admin_allowed(owner_hash):
-            return _global_mutation_denied_message()
-        ok, message = rules_mod._set_taint_classification_mode(tokens[2])
-        return message
-    if len(tokens) == 3 and tokens[1].lower() in {"user-context", "user_context"}:
-        if not _slash_admin_allowed(owner_hash):
-            return _global_mutation_denied_message()
-        enabled = _parse_on_off(tokens[2])
-        if enabled is None:
-            return "Usage: /guardian review owner-context on|off"
-        ok, message = rules_mod._set_llm_user_context(enabled)
-        return message
-    if len(tokens) == 3 and tokens[1].lower() in {"cron-context", "cron_context"}:
-        if not _slash_admin_allowed(owner_hash):
-            return _global_mutation_denied_message()
-        enabled = _parse_on_off(tokens[2])
-        if enabled is None:
-            return "Usage: /guardian review cron-context on|off"
-        ok, message = rules_mod._set_llm_cron_context(enabled)
-        return message
-    if len(tokens) >= 3 and tokens[1].lower() in {"verifier-model", "verifier_model"}:
-        if not _slash_admin_allowed(owner_hash):
-            return _global_mutation_denied_message()
-        ok, message = rules_mod._set_llm_verifier_model(" ".join(tokens[2:]))
-        return message
-    return (
-        "Usage: /guardian review egress-safety strict|read-only|llm|off | "
-        "/guardian review owner-context on|off | "
-        "/guardian review cron-context on|off | "
-        "`/guardian review verifier-model <model_id|default>`"
-    )
 
 
 def _guardian_tools_command() -> str:
