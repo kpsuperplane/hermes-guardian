@@ -138,6 +138,7 @@ function ToolClassification(props: {
           allows unrecognized non-MCP tools under taint.
         </div>
         <div className="hermes-guardian-field">
+          <div className="hermes-guardian-rule-title">LLM source classifier</div>
           <label className="hermes-guardian-checkbox">
             <input
               type="checkbox"
@@ -145,7 +146,7 @@ function ToolClassification(props: {
               disabled={props.llmSourceClassificationSaving}
               onChange={(event) => props.onChangeLlmSourceClassification(event.target.checked)}
             />
-            LLM source classifier
+            Enabled
           </label>
           <div className="hermes-guardian-muted">
             Uses metadata only to save reference, private, or unknown source rules for future
