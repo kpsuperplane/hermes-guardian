@@ -33,13 +33,16 @@ export function OverrideModal({
   const matchSuggestions =
     policy.tool_name_suggestions || (policy.suggestions && policy.suggestions.tool_names) || [];
   const taintSet = new Set(form.taints || []);
-  const concreteEgress = form.egress && form.egress !== "ignore" && form.egress !== "gate";
+  const concreteEgress = !isReading && Boolean(form.egress && form.egress !== "ignore" && form.egress !== "gate");
   const publicSource = isReading && form.source === "public";
 
   function update<K extends keyof OverrideForm>(key: K, value: OverrideForm[K]) {
     const next = Object.assign({}, form, { [key]: value });
     if (key === "source" && value === "public") {
       next.taints = [];
+    }
+    if (key === "egress" && (!value || value === "ignore" || value === "gate")) {
+      next.destination = "";
     }
     setForm(next);
   }
@@ -121,14 +124,20 @@ export function OverrideModal({
                 </select>
               </Field>
             ) : null}
-            {!isReading && concreteEgress ? (
+            {!isReading ? (
               <Field label="Destination">
                 <input
                   className="hermes-guardian-input"
                   value={form.destination}
-                  placeholder="optional"
+                  placeholder={concreteEgress ? "optional destination, e.g. store:crm" : "select a concrete egress type first"}
+                  disabled={!concreteEgress}
                   onChange={(event) => update("destination", event.target.value)}
                 />
+                <div className="hermes-guardian-muted">
+                  {concreteEgress
+                    ? "Optional. Blank uses Guardian's default destination for this tool."
+                    : "Only applies to specific action families, not Default, No egress, or Gate."}
+                </div>
               </Field>
             ) : null}
             {isReading ? (
