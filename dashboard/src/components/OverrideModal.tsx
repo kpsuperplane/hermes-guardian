@@ -129,15 +129,10 @@ export function OverrideModal({
                 <input
                   className="hermes-guardian-input"
                   value={form.destination}
-                  placeholder={concreteEgress ? "optional destination, e.g. store:crm" : "select a concrete egress type first"}
+                  placeholder={concreteEgress ? "optional, e.g. store:crm" : "select an egress type"}
                   disabled={!concreteEgress}
                   onChange={(event) => update("destination", event.target.value)}
                 />
-                <div className="hermes-guardian-muted">
-                  {concreteEgress
-                    ? "Optional. Blank uses Guardian's default destination for this tool."
-                    : "Only applies to specific action families, not Default, No egress, or Gate."}
-                </div>
               </Field>
             ) : null}
             {isReading ? (
@@ -156,6 +151,13 @@ export function OverrideModal({
               </Field>
             ) : null}
           </div>
+          {!isReading ? (
+            <div className="hermes-guardian-field-help">
+              {concreteEgress
+                ? "Destination is optional. Blank uses Guardian's default destination for this tool."
+                : "Destination applies to specific action families, not Default, No egress, or Gate."}
+            </div>
+          ) : null}
           {isReading ? (
             <div className="hermes-guardian-field">
               Taints applied when this tool's results are read

@@ -41,6 +41,13 @@
   gap: 0.75rem;
 }
 
+.hermes-guardian-field-help {
+  color: var(--color-muted-foreground);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  margin-top: -0.35rem;
+}
+
 .hermes-guardian-check-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
