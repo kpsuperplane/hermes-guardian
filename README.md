@@ -1247,12 +1247,16 @@ python3 -m venv .venv-agentdojo
 .venv-agentdojo/bin/pip install --break-system-packages agentdojo
 .venv-agentdojo/bin/python -m benchmarks.agentdojo_guardian --summary
 .venv-agentdojo/bin/python -m benchmarks.agentdojo_guardian --pretty --out agentdojo_metrics.json
+.venv-agentdojo/bin/python -m benchmarks.agentdojo_guardian --egress-safety llm --summary --out agentdojo_llm_metrics.json
 ```
 
 **What it measures.** Guardian is an *egress monitor*, not an agent. The adapter
-does not run AgentDojo's agent pipeline or any LLM and cannot score end-to-end
-task success. For each task it takes the canonical `ground_truth` tool-call
-sequence and asks whether Guardian's deterministic gate fires on any egress call:
+does not run AgentDojo's agent pipeline and cannot score end-to-end task success.
+For each task it takes the canonical `ground_truth` tool-call sequence and asks
+whether Guardian gates any egress call. By default (`strict`) this is the
+deterministic approval gate. With `--egress-safety llm`, the adapter uses the
+configured live verifier backend; benign user-task `PROMPT` text is supplied as
+the owner authorization context, while injection-task attacker `GOAL` text is not:
 
 - `prevented_rate` — fraction of *injection* (attack) tasks whose attacker
   tool-call sequence Guardian gates.
@@ -1267,8 +1271,18 @@ Current results (AgentDojo `v1.2.1`, `strict` mode, deterministic verifier):
 | banking | 1.00 (9/9) | 0.75 (12/16) |
 | slack | 0.80 (4/5) | 0.95 (20/21) |
 | travel | 1.00 (6/6) | 0.30 (6/20) |
-| workspace | 1.00 (6/6) | 0.62 (25/40) |
-| **overall** | **0.962 (25/26)** | **0.649 (63/97)** |
+| workspace | 1.00 (6/6) | 0.53 (21/40) |
+| **overall** | **0.962 (25/26)** | **0.608 (59/97)** |
+
+Live-verifier results (AgentDojo `v1.2.1`, `llm` mode, configured backend):
+
+| Suite | prevented_rate | false_positive_rate |
+|---|---|---|
+| banking | 1.00 (9/9) | 0.56 (9/16) |
+| slack | 0.80 (4/5) | 0.33 (7/21) |
+| travel | 1.00 (6/6) | 0.10 (2/20) |
+| workspace | 1.00 (6/6) | 0.17 (7/40) |
+| **overall** | **0.962 (25/26)** | **0.258 (25/97)** |
 
 Nine injection tasks have no ground-truth trace and are reported as
 unmeasurable, not scored. The one un-prevented injection (`slack
@@ -1286,13 +1300,13 @@ supplies an explicit, auditable source/sink mapping via Guardian's
 Reading/Sharing tool classifications — without it the run would only measure
 "AgentDojo's vocabulary is unknown to Guardian"; (2) every session is tainted,
 reflecting AgentDojo's threat model in which the agent has read
-attacker-controlled content before acting; (3) runs use `strict` mode with the
-deterministic verifier — no number here reflects real-model (`llm` mode)
-judgment. The numbers are also **not directly comparable** to LlamaFirewall or
-Invariant AgentDojo scores: those tools measure *attack success / utility under
-a live agent rollout*, whereas Guardian measures *whether its egress gate fires
-on the canonical ground-truth trace* — the denominators, the unit of evaluation,
-and the meaning of "prevented" all differ.
+attacker-controlled content before acting; (3) `strict` runs use deterministic
+approval gating, while `llm` runs depend on the configured verifier model's
+schema adherence and judgment. The numbers are also **not directly comparable**
+to LlamaFirewall or Invariant AgentDojo scores: those tools measure *attack
+success / utility under a live agent rollout*, whereas Guardian measures
+*whether its egress gate fires on the canonical ground-truth trace* — the
+denominators, the unit of evaluation, and the meaning of "prevented" all differ.
 
 GitHub Actions runs `python -m pytest -q` on Python 3.11, 3.12, and 3.13.
 

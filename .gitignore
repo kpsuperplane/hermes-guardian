@@ -4,6 +4,7 @@ __pycache__/
 .coverage
 .venv*/
 agentdojo_metrics.json
+agentdojo_llm_metrics.json
 .unsafe-diagnostics
 .guardian-hmac-key
 .env

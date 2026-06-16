@@ -7,10 +7,13 @@ installed. The mapping/degradation tests run with the standard library only.
 from __future__ import annotations
 
 import importlib.util
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from benchmarks import agentdojo_guardian as adapter
+from benchmarks.guardian_adversarial import _load_plugin
 
 
 def _agentdojo_available() -> bool:
@@ -54,6 +57,25 @@ def test_classification_summary_partitions_tools():
     # Canonical egress sinks are classified as sinks, not reads.
     for tool in ("send_email", "send_money", "post_webpage", "share_file"):
         assert tool in sinks
+
+
+def test_adapter_overrides_mutate_live_state_cache(tmp_path):
+    plugin = _load_plugin(Path(tmp_path))
+    cache = plugin.state._PERSISTENT_RULES_CACHE
+    assert cache is not None
+
+    cache["privacy"]["egress_safety"] = "strict"
+    cache["privacy"]["taint_classification"] = "strict"
+    cache["privacy"]["reading_tools"] = plugin._normalize_reading_tools(adapter._reading_tools())
+    cache["privacy"]["sharing_tools"] = plugin._normalize_sharing_tools(adapter._sharing_tools())
+
+    assert plugin._sharing_tool_for("get_webpage")["egress"] == "ignore"
+    assert plugin._reading_tool_for("get_webpage")["taints"] == ["documents"]
+
+
+def test_task_context_uses_owner_prompt_not_attacker_goal():
+    assert adapter._task_context(SimpleNamespace(PROMPT="owner request", GOAL="attack")) == "owner request"
+    assert adapter._task_context(SimpleNamespace(GOAL="attack")) == ""
 
 
 def test_missing_agentdojo_degrades_without_fabricating(monkeypatch):

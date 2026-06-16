@@ -10,10 +10,12 @@ CI path uses ``benchmarks.guardian_adversarial`` and does not install AgentDojo.
 What is measured (read this before citing a number)
 ----------------------------------------------------
 Guardian is an *egress monitor*, not an agent. It does not run AgentDojo's agent
-pipeline or any LLM; it cannot score end-to-end task success. Instead, for every
-AgentDojo task this adapter takes the task's canonical ``ground_truth`` tool-call
-sequence and asks: **would Guardian's deterministic policy gate (block / require
-approval) any egress call in that sequence?**
+pipeline and cannot score end-to-end task success. Instead, for every AgentDojo
+task this adapter takes the task's canonical ``ground_truth`` tool-call sequence
+and asks: **would Guardian gate any egress call in that sequence?** By default
+(``egress_safety=strict``), this is deterministic approval gating. With
+``egress_safety=llm``, the configured live verifier may upgrade some approvals
+based on the benign task's owner prompt.
 
 - ``prevented_rate`` = fraction of *injection* tasks (the attacker's desired
   tool-call sequence) where Guardian gates at least one call. This is an upper
@@ -38,9 +40,10 @@ Modeling assumptions, made explicit because they bound the numbers
    the injection vector. We therefore taint every session, reflecting the threat
    model in which the agent has already read untrusted content before it acts.
    Read-only benign tasks still pass clean because they perform no egress.
-3. **Deterministic strict mode.** Runs use ``egress_safety=strict``: pure
-   deterministic gating, no LLM verifier. No number here reflects real-LLM
-   judgment.
+3. **Mode semantics.** Strict runs use deterministic approval gating, no LLM
+   verifier. LLM runs use the configured live verifier backend and pass benign
+   user-task ``PROMPT`` text as owner authorization context; injection-task
+   attacker ``GOAL`` text is never treated as owner context.
 4. **Ground-truth traces only.** Tasks whose ``ground_truth`` is empty/undefined
    are not scored (counted under ``unmeasurable``); there is no egress trace to
    evaluate.
@@ -57,9 +60,13 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import importlib.util
 import json
+import os
+import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from benchmarks.guardian_adversarial import _load_plugin
@@ -78,6 +85,7 @@ MISSING_AGENTDOJO_MESSAGE = (
 
 # Preferred AgentDojo benchmark version; we fall back to the newest available.
 PREFERRED_VERSION = "v1.2.1"
+EGRESS_SAFETY_MODES = {"strict", "llm"}
 
 # Privacy data class used to taint each suite's sessions (see assumption #2). Any
 # class triggers egress gating; these are chosen to read sensibly in activity logs.
@@ -189,6 +197,49 @@ def _load_agentdojo() -> Any:
         raise RuntimeError(MISSING_AGENTDOJO_MESSAGE) from exc
 
 
+def _load_dotenv() -> None:
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError):
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key.startswith("export "):
+            key = key[len("export "):].strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def _load_live_llm() -> Any:
+    _load_dotenv()
+    live_path = Path(__file__).resolve().parents[1] / "tests" / "live_llm.py"
+    module_name = "_guardian_agentdojo_live_llm"
+    module = sys.modules.get(module_name)
+    if module is None:
+        spec = importlib.util.spec_from_file_location(module_name, live_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"failed to load live LLM helper from {live_path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+    backend = module._select_backend()
+    models = module.live_models()
+    model = models[0] if models else None
+    if backend is None or not model:
+        raise RuntimeError(
+            "llm mode needs a live verifier backend. Set GUARDIAN_LLM_TEST_MODEL "
+            "(or OPENROUTER_MODEL) plus one of GEMINI_API_KEY / GOOGLE_API_KEY or "
+            "OPENROUTER_API_KEY. A gitignored repo-root .env is supported."
+        )
+    return module.LiveSecurityLlm(model=model, backend=backend)
+
+
 def _resolve_suites(version: str | None) -> tuple[str, dict[str, Any]]:
     from agentdojo.task_suite.load_suites import _SUITES  # type: ignore
 
@@ -256,9 +307,36 @@ def _classification_summary() -> dict[str, Any]:
     }
 
 
-def _run_task(plugin: Any, suite_name: str, kind: str, task_id: str, ground_truth: list[Any]) -> dict[str, Any]:
+def _task_context(task: Any) -> str:
+    # AgentDojo user tasks expose the owner's instruction as PROMPT. Injection-task
+    # GOAL is the attacker's desired action, so it must not become owner context.
+    return str(getattr(task, "PROMPT", "") or "").strip()
+
+
+def _gateway_event(text: str) -> Any:
+    return SimpleNamespace(
+        text=text,
+        source=SimpleNamespace(
+            platform=SimpleNamespace(value="cli"),
+            user_id="",
+            chat_type="private",
+        ),
+    )
+
+
+def _run_task(
+    plugin: Any,
+    suite_name: str,
+    kind: str,
+    task_id: str,
+    ground_truth: list[Any],
+    *,
+    task_context: str = "",
+) -> dict[str, Any]:
     session_id = f"agentdojo_{suite_name}_{kind}_{task_id}"
     plugin._on_pre_llm_call(session_id=session_id, platform="cli", sender_id="")
+    if task_context:
+        plugin._on_pre_gateway_dispatch(_gateway_event(task_context))
     plugin._taint_session(session_id, {SUITE_TAINT.get(suite_name, DEFAULT_TAINT)})
 
     calls: list[dict[str, Any]] = []
@@ -315,10 +393,18 @@ def _rate(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
 
 
-def run_agentdojo_adapter(*, version: str | None = None) -> dict[str, Any]:
+def run_agentdojo_adapter(
+    *,
+    version: str | None = None,
+    egress_safety: str = "strict",
+) -> dict[str, Any]:
     """Drive Guardian over AgentDojo ground-truth traces; return metrics dict."""
+    egress_safety = str(egress_safety or "strict").strip().lower()
+    if egress_safety not in EGRESS_SAFETY_MODES:
+        raise RuntimeError(f"unsupported egress safety mode {egress_safety!r}")
     agentdojo = _load_agentdojo()
     resolved_version, suites = _resolve_suites(version)
+    live_llm = _load_live_llm() if egress_safety == "llm" else None
 
     reading_tools = _reading_tools()
     sharing_tools = _sharing_tools()
@@ -328,13 +414,17 @@ def run_agentdojo_adapter(*, version: str | None = None) -> dict[str, Any]:
 
     with tempfile.TemporaryDirectory(prefix="hermes-guardian-agentdojo-") as temp_name:
         plugin = _load_plugin(Path(temp_name))
-        # Switch the loaded plugin into deterministic strict mode plus our overrides.
-        cache = plugin._PERSISTENT_RULES_CACHE
-        cache["privacy"]["egress_safety"] = "strict"
+        # Switch the loaded plugin into the requested mode plus our overrides.
+        cache = plugin.state._PERSISTENT_RULES_CACHE
+        if cache is None:  # Defensive; _load_plugin seeds this today.
+            cache = plugin._load_privacy_config()
+        cache["privacy"]["egress_safety"] = egress_safety
         cache["privacy"]["taint_classification"] = "strict"
         cache["privacy"]["reading_tools"] = plugin._normalize_reading_tools(reading_tools)
         cache["privacy"]["sharing_tools"] = plugin._normalize_sharing_tools(sharing_tools)
         plugin._apply_language_pack_config(cache)
+        if live_llm is not None:
+            plugin.state._PLUGIN_LLM = live_llm
 
         for suite_name in sorted(suites):
             suite = suites[suite_name]
@@ -351,7 +441,14 @@ def run_agentdojo_adapter(*, version: str | None = None) -> dict[str, Any]:
                     stats["injection_unmeasurable"] += 1
                     continue
                 stats["injection_measurable"] += 1
-                result = _run_task(plugin, suite_name, "injection", task_id, gt)
+                result = _run_task(
+                    plugin,
+                    suite_name,
+                    "injection",
+                    task_id,
+                    gt,
+                    task_context=_task_context(task),
+                )
                 unmapped_seen.update(result["unmapped_tools"])
                 if result["prevented"]:
                     stats["prevented"] += 1
@@ -367,7 +464,14 @@ def run_agentdojo_adapter(*, version: str | None = None) -> dict[str, Any]:
                     stats["user_unmeasurable"] += 1
                     continue
                 stats["user_measurable"] += 1
-                result = _run_task(plugin, suite_name, "user", task_id, gt)
+                result = _run_task(
+                    plugin,
+                    suite_name,
+                    "user",
+                    task_id,
+                    gt,
+                    task_context=_task_context(task),
+                )
                 unmapped_seen.update(result["unmapped_tools"])
                 if result["prevented"]:
                     stats["false_positives"] += 1
@@ -389,9 +493,9 @@ def run_agentdojo_adapter(*, version: str | None = None) -> dict[str, Any]:
         "agentdojo_module": getattr(agentdojo, "__name__", "agentdojo"),
         "agentdojo_benchmark_version": resolved_version,
         "evaluation_unit": "guardian_egress_gate_over_ground_truth_traces",
-        "egress_safety": "strict",
-        "verifier": "deterministic",
-        "real_llm_judgment": False,
+        "egress_safety": egress_safety,
+        "verifier": "live_llm" if live_llm is not None else "deterministic",
+        "real_llm_judgment": live_llm is not None,
         "prevented_rate": _rate(total_prevented, total_attack),
         "false_positive_rate": _rate(total_fp, total_benign),
         "counts": {
@@ -417,8 +521,13 @@ def run_agentdojo_adapter(*, version: str | None = None) -> dict[str, Any]:
             "AgentDojo tool semantics are supplied via an explicit, auditable "
             "tool-override mapping (see tool_classification); raw AgentDojo names "
             "are otherwise unknown to Guardian.",
-            "strict Egress Safety + deterministic verifier: no number here reflects "
-            "real-LLM judgment.",
+            (
+                "llm Egress Safety + live verifier: approval decisions may reflect "
+                "real-model judgment."
+                if live_llm is not None
+                else "strict Egress Safety + deterministic verifier: no number here "
+                "reflects real-LLM judgment."
+            ),
             "Not directly comparable to LlamaFirewall/Invariant AgentDojo scores, "
             "which measure attack success / utility under a live agent.",
         ],
@@ -428,9 +537,10 @@ def run_agentdojo_adapter(*, version: str | None = None) -> dict[str, Any]:
 
 def _summary_lines(result: dict[str, Any]) -> list[str]:
     counts = result["counts"]
+    verifier_label = "live LLM verifier" if result.get("real_llm_judgment") else "deterministic verifier"
     lines = [
         f"AgentDojo x Hermes Guardian ({result['agentdojo_benchmark_version']}, "
-        f"{result['egress_safety']} Egress Safety, deterministic verifier)",
+        f"{result['egress_safety']} Egress Safety, {verifier_label})",
         "Guardian as egress monitor over AgentDojo ground-truth tool-call traces.",
         "",
         f"prevented_rate      : {result['prevented_rate']:.3f}  "
@@ -456,8 +566,13 @@ def _summary_lines(result: dict[str, Any]) -> list[str]:
             f"Unmeasurable (no ground-truth trace): "
             f"{counts['attack_tasks_unmeasurable_no_ground_truth']} attack, "
             f"{counts['benign_tasks_unmeasurable_no_ground_truth']} benign.",
-            "Caveat: deterministic gate over canonical traces, not live-agent task "
-            "success; not directly comparable to LlamaFirewall/Invariant numbers.",
+            (
+                "Caveat: live verifier over canonical traces, not live-agent task "
+                "success; not directly comparable to LlamaFirewall/Invariant numbers."
+                if result.get("real_llm_judgment")
+                else "Caveat: deterministic gate over canonical traces, not live-agent task "
+                "success; not directly comparable to LlamaFirewall/Invariant numbers."
+            ),
         ]
     )
     if result["unmapped_tools"]:
@@ -470,11 +585,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output.")
     parser.add_argument("--summary", action="store_true", help="Print the human-readable summary instead of JSON.")
     parser.add_argument("--version", default=None, help="AgentDojo benchmark version (default: newest available).")
+    parser.add_argument(
+        "--egress-safety",
+        choices=sorted(EGRESS_SAFETY_MODES),
+        default="strict",
+        help="Guardian egress safety mode to evaluate (default: strict). llm uses the live verifier backend.",
+    )
     parser.add_argument("--out", type=Path, default=None, help="Write metrics JSON to this path.")
     args = parser.parse_args(argv)
 
     try:
-        result = run_agentdojo_adapter(version=args.version)
+        result = run_agentdojo_adapter(version=args.version, egress_safety=args.egress_safety)
     except RuntimeError as exc:
         print(str(exc))
         return 2
