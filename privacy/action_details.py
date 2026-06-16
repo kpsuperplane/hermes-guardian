@@ -54,6 +54,8 @@ def _activity_action_detail(tool_name: str, args: Any, action_family: str = "", 
     if isinstance(args, dict):
         if lower_action == "terminal_exec" or lower_tool in {"terminal", "shell"}:
             command = str(args.get("command") or args.get("cmd") or "")
+            if tool_policy._classes_from_content(command):
+                return f"command: {_redacted_content_note(command)}"
             return _redact_action_detail_text(command)
         if lower_tool in {"execute_code", "code_execution"}:
             code = str(args.get("code") or args.get("script") or "")

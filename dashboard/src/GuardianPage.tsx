@@ -118,8 +118,10 @@ export function GuardianPage() {
     if (tab === "activity") {
       history.loadHistory(history.page, history.pageSize);
       approvals.loadApprovals();
+      actions.loadSourceSuggestions();
     }
     if (tab === "sharing" || tab === "protection") performance.loadPerformance();
+    if (tab === "reading") actions.loadSourceSuggestions();
     if (tab === "whats-yours" || tab === "sharing") destinations.refetch();
   }
 
@@ -141,7 +143,7 @@ export function GuardianPage() {
         </div>
       </div>
       {error ? <div className="hermes-guardian-banner">{error}</div> : null}
-      <RiskBanners banners={riskBanners} />
+      {tab === "activity" ? null : <RiskBanners banners={riskBanners} />}
       <ToastRegion toasts={toasts} onDismiss={dismissToast} />
       <div className="hermes-guardian-tabs" role="tablist">
         {TABS.map((item) => (
@@ -167,6 +169,14 @@ export function GuardianPage() {
           onApprovalAction={(approval: PendingApproval, action) =>
             actions.approvalAction(approval, action)
           }
+          policy={policy}
+          sourceSuggestions={actions.sourceSuggestions}
+          onLoadSourceSuggestions={actions.loadSourceSuggestions}
+          onClassifySource={(server, mode) => actions.classifySource(server, mode)}
+          onOpenReadingTool={actions.openCreateReadingTool}
+          onOpenSharingTool={actions.openCreateSharingTool}
+          onDismissAttention={actions.dismissAttention}
+          onRestoreAttention={actions.restoreAttention}
           turns={history.turns}
           loading={history.loading}
           error={history.error}

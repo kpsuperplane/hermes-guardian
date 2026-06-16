@@ -64,6 +64,8 @@ def test_activity_rows_and_datatables_include_contextual_metadata():
         recipient_identity=recipient_identity,
         data_classes={"communications"},
         reason="requires approval",
+        destination_trust="external",
+        decision_step="step6_approve",
     )
 
     row = plugin._activity_rows({}, limit=1)[0]
@@ -77,9 +79,14 @@ def test_activity_rows_and_datatables_include_contextual_metadata():
 
     assert row["purpose"] == "support"
     assert row["recipient_identity"] == recipient_identity
+    assert row["flow_boundary"] == "outward"
+    assert row["flow_boundary_label"] == "Outward"
+    assert row["flow_boundary_detail"] == "The action would move data outside your boundary."
     assert payload["recordsFiltered"] == 1
     assert payload["data"][0]["purpose"] == "support"
     assert payload["data"][0]["recipient_identity"] == recipient_identity
+    assert payload["data"][0]["flow_boundary"] == "outward"
+    assert payload["data"][0]["flow_boundary_label"] == "Outward"
 
 
 def test_datatables_payload_paginates_and_counts(monkeypatch):

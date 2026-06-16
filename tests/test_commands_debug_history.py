@@ -127,6 +127,8 @@ def test_guardian_history_command_lists_recent_sanitized_activity():
         data_classes={"communications"},
         reason="requires approval",
         approval_id="peg_test",
+        destination_trust="external",
+        decision_step="step6_approve",
     )
     plugin._emit_activity(
         "allowed",
@@ -146,7 +148,7 @@ def test_guardian_history_command_lists_recent_sanitized_activity():
     assert "2 checks" in response
     assert "- ✅ `mcp_notion_update_page` · `documents`" in response
     assert "allowed · matched allow rule (env)" in response
-    assert "- ❌ `send_message` · `communications`" in response
+    assert "- ❌ `send_message` · `communications` · Outward" in response
     assert "blocked · requires approval (peg_test)" in response
     assert response.index("mcp_notion_update_page") < response.index("send_message")
 

@@ -179,7 +179,6 @@ def test_static_bundle_renders_five_tabs_and_deeplinks():
     # The five tab labels are present in the bundle, the old junk-drawer labels are gone.
     for label in ("Activity", "What's Yours", "Reading", "Sharing", "Protection"):
         assert label in static_js, f"missing tab label {label!r}"
-    assert '"Review"' not in static_js
     assert "Destinations & Trust" not in static_js
     assert "Connectors" not in static_js
     # Deep-link affordance + the new widgets are bundled.

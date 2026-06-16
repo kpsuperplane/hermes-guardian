@@ -72,4 +72,5 @@ addopts = "-q"
 # `pytest --run-llm` (or GUARDIAN_RUN_LLM=1) — which is what the dedicated CI job passes.
 markers = [
     "llm: live tests that call a real model; skipped unless --run-llm / GUARDIAN_RUN_LLM",
+    "hermes_cli: direct Hermes CLI probes; skipped unless HERMES_GUARDIAN_RUN_CLI_E2E=1",
 ]

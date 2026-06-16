@@ -394,6 +394,21 @@ def _dashboard_pending_approvals() -> list[dict[str, Any]]:
     return list(activity_rows._policy_snapshot().get("pending") or [])
 
 
+def _dashboard_attention_dismiss_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    ok, message = activity_store._dismiss_attention_item(
+        (payload or {}).get("kind"),
+        (payload or {}).get("dismiss_key"),
+        (payload or {}).get("item_id"),
+    )
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, 200 if ok else 400
+
+
+def _dashboard_attention_restore_action(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    ok, message = activity_store._restore_attention_dismissal((payload or {}).get("dismiss_key", ""))
+    status = 200 if ok else (404 if message.startswith("No matching") else 400)
+    return {"ok": ok, "message": message, "policy": activity_rows._policy_snapshot()}, status
+
+
 # --- Pure-function widgets (charter §5; doc 02 §Tab2/§Tab3) ------------------
 # All three widgets call the existing pure engine functions with hypothetical
 # inputs. They compute and return; they never mutate state and add no decision

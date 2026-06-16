@@ -244,10 +244,13 @@ def _guardian_history_command(
                 icon = icon + "🤖"
             tool = dashboard_mod._clip_text(dashboard_mod._activity_display_tool(check), 48, ellipsis="...", fallback="n/a")
             classes = _compact_activity_classes(check)
+            boundary_label = _compact_flow_boundary_label(check)
             latency_label = _latency_label(check.get("latency_ms"))
             check_parts = [f"  - {icon} {_history_code(tool, fallback='n/a')}"]
             if classes:
                 check_parts.append(_history_code(classes))
+            if boundary_label:
+                check_parts.append(boundary_label)
             if latency_label:
                 check_parts.append(latency_label)
             lines.append(" · ".join(check_parts))
@@ -288,6 +291,13 @@ def _compact_activity_classes(row: dict[str, Any]) -> str:
     if not classes:
         return ""
     return dashboard_mod._clip_text(", ".join(classes), 80, ellipsis="...", fallback="")
+
+
+def _compact_flow_boundary_label(row: dict[str, Any]) -> str:
+    label = str(row.get("flow_boundary_label") or "").strip()
+    if not label:
+        label = activity_store._flow_boundary_fields(row).get("flow_boundary_label", "")
+    return dashboard_mod._clip_text(label, 48, ellipsis="...", fallback="")
 
 
 def _compact_activity_status(decision: str) -> str:
@@ -772,16 +782,18 @@ def _guardian_history_command_telegram(
             icon = dashboard_mod._activity_status_icon(decision)
             tool = dashboard_mod._clip_text(dashboard_mod._activity_display_tool(check), 48, ellipsis="...", fallback="n/a")
             classes = _compact_activity_classes(check) or "none"
+            boundary_label = _compact_flow_boundary_label(check)
             latency_label = _latency_label(check.get("latency_ms"))
             reason_text = _compact_activity_reason_line(check)
             llm_mark = " · LLM" if decision == "auto_approved" or "llm" in str(check.get("reason") or "").lower() else ""
             timing = f" · {latency_label}" if latency_label else ""
+            boundary = f" · Boundary: `{_md_inline(boundary_label)}`" if boundary_label else ""
             if index:
                 turn_lines.append("")
             turn_lines.append(f"**{icon} {_md_inline(tool)}**")
             turn_lines.append(
                 f"Decision: `{_md_inline(decision or 'unknown')}` "
-                f"· Classes: `{_md_inline(classes)}`{llm_mark}{timing}"
+                f"· Classes: `{_md_inline(classes)}`{boundary}{llm_mark}{timing}"
             )
             if reason_text:
                 turn_lines.append(f"Reason: {_md_inline(reason_text)}")
@@ -806,6 +818,8 @@ def _guardian_why_telegram(identifier: str) -> str:
     direction = "read" if decision in {"read", "tainted"} else "write"
     classes = activity_rows._activity_data_classes_list(row.get("data_classes"))
     reason = str(row.get("reason") or "").strip()
+    flow = activity_store._flow_boundary_fields(row)
+    why_now = activity_store._why_now(row)
     lines = [
         f"## Guardian Decision {identifier}",
         _md_table(
@@ -813,6 +827,7 @@ def _guardian_why_telegram(identifier: str) -> str:
             [
                 ["Outcome", decision or "unknown"],
                 ["Direction", direction],
+                ["Boundary", flow["flow_boundary_label"]],
                 ["Destination", f"{row.get('destination') or '(none)'} (trust={row.get('destination_trust') or 'unknown'})"],
                 ["Classes", ", ".join(classes) if classes else "none"],
                 ["Action family", row.get("action_family") or "(none)"],
@@ -824,6 +839,15 @@ def _guardian_why_telegram(identifier: str) -> str:
     ]
     if reason:
         lines.extend(["", _md_details("Reason", [reason])])
+    if why_now.get("summary") or why_now.get("bullets"):
+        lines.extend([
+            "",
+            _md_details(
+                "Why now",
+                [str(why_now.get("summary") or "")]
+                + [f"- {bullet}" for bullet in (why_now.get("bullets") or [])],
+            ),
+        ])
     return "\n".join(lines)
 
 
@@ -1715,9 +1739,12 @@ def _guardian_why(identifier: str) -> str:
     step = str(row.get("decision_step") or "")
     classes = activity_rows._activity_data_classes_list(row.get("data_classes"))
     direction = "read" if decision in {"read", "tainted"} else "write"
+    flow = activity_store._flow_boundary_fields(row)
+    why_now = activity_store._why_now(row)
     lines = [
         f"Guardian decision for {identifier}",
         f"Outcome: {decision or 'unknown'}",
+        f"Boundary: {flow['flow_boundary_label']}",
         "Resolved Capability:",
         f"  direction: {direction}",
         f"  destination: {destination or '(none)'} (trust={trust})",
@@ -1730,6 +1757,10 @@ def _guardian_why(identifier: str) -> str:
     reason = str(row.get("reason") or "").strip()
     if reason:
         lines.append(f"Reason: {reason}")
+    if why_now.get("summary") or why_now.get("bullets"):
+        lines.append(f"Why now: {why_now.get('summary') or ''}")
+        for bullet in why_now.get("bullets") or []:
+            lines.append(f"  - {bullet}")
     return "\n".join(lines)
 
 

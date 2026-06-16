@@ -71,6 +71,7 @@ class DeterministicHermesLlm:
         planned = payload.get("planned_action") if isinstance(payload, dict) else {}
         args = payload.get("action_arguments") if isinstance(payload, dict) else {}
         privacy_context = payload.get("privacy_context") if isinstance(payload, dict) else {}
+        user_request = str((payload or {}).get("user_request_context") or "").lower()
 
         action = str((planned or {}).get("action_family") or "")
         destination = str((planned or {}).get("destination") or "")
@@ -87,6 +88,15 @@ class DeterministicHermesLlm:
             or "me@myown.example" in arg_text
         ):
             verdict = _allow("medium", "explicit", "offline deterministic owner-authorized self send")
+        elif has_owner_request and action == "mcp_write" and destination == "mcp:calendar" and "calendar" in user_request:
+            verdict = _allow("low", "explicit", "offline deterministic owner-authorized calendar write")
+        elif (
+            has_owner_request
+            and action == "browser_type"
+            and any(token in user_request for token in ("update", "fill", "enter"))
+            and any(token in user_request for token in ("portal", "form", "profile"))
+        ):
+            verdict = _allow("low", "explicit", "offline deterministic owner-authorized form fill")
         elif classes:
             verdict = _deny("high", "private data would leave the authorized boundary")
         else:

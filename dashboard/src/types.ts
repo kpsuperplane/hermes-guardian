@@ -144,6 +144,8 @@ export interface RecentBlock {
   recipient_identity?: string;
   created_at?: number;
   reason?: string;
+  why_now?: string;
+  flow_boundary_label?: string;
 }
 
 export interface ActivityRow {
@@ -166,12 +168,19 @@ export interface ActivityRow {
   action_detail?: string;
   reason?: string;
   reason_short?: string;
+  why_now?: WhyNow | string;
+  flow_boundary_label?: string;
   turn_id?: string;
   user_prompt?: string;
   latency_us?: number;
   latency_ms?: number;
   latency_hook?: string;
   latency_llm_invoked?: boolean;
+}
+
+export interface WhyNow {
+  summary?: string;
+  bullets?: string[];
 }
 
 export interface CronJob {
@@ -198,6 +207,14 @@ export interface RiskBanner {
   id?: string;
   severity?: string;
   message?: string;
+}
+
+export interface AttentionDismissal {
+  dismiss_key?: string;
+  kind?: string;
+  item_id?: string;
+  created_at?: number;
+  expires_at?: number;
 }
 
 export interface Suggestions {
@@ -239,6 +256,7 @@ export interface Policy {
   activity_max_rows?: number;
   activity_retention_days?: number;
   activity_group_seconds?: number;
+  attention_dismissals?: AttentionDismissal[];
 }
 
 export interface HistoryResponse {
@@ -286,6 +304,8 @@ export interface PendingApproval {
   recipient_identity?: string;
   data_classes?: string[];
   reason?: string;
+  why_now?: WhyNow | string;
+  flow_boundary_label?: string;
   created_at?: number;
   expires_at?: number;
   covered_by_rule?: boolean;

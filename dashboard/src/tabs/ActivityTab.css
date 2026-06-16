@@ -101,17 +101,120 @@
   overflow-wrap: anywhere;
 }
 
-/* --- Activity tab (doc 02 §Tab1): taint strip, pinned approvals, deep links. --- */
+/* --- Activity tab (doc 02 §Tab1): attention, taint strip, deep links. --- */
+.hermes-guardian-attention-section {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.hermes-guardian-attention-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.hermes-guardian-attention-loading {
+  white-space: nowrap;
+}
+
+.hermes-guardian-attention-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.hermes-guardian-attention-count {
+  font-size: 0.72rem;
+}
+
+.hermes-guardian-attention-stack {
+  position: relative;
+  display: grid;
+  padding: 0;
+  isolation: isolate;
+}
+
+.hermes-guardian-attention-stack-layered {
+  padding: 0 0 0.38rem;
+}
+
+.hermes-guardian-attention-stack-card {
+  position: relative;
+  z-index: 3;
+  min-width: 0;
+}
+
+.hermes-guardian-attention-stack-card > .hermes-guardian-card {
+  min-height: 7rem;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.hermes-guardian-attention-stack-layered .hermes-guardian-attention-stack-card > .hermes-guardian-card {
+  box-shadow:
+    0 0.7rem 1.8rem rgba(15, 23, 42, 0.09),
+    0 0.08rem 0.18rem rgba(15, 23, 42, 0.08);
+}
+
+.hermes-guardian-attention-stack-layered .hermes-guardian-attention-stack-card > .hermes-guardian-card:hover {
+  transform: translateY(-1px);
+}
+
+.hermes-guardian-attention-stack-shadow {
+  position: absolute;
+  inset: 0;
+  border: 1px solid color-mix(in srgb, var(--color-border) 82%, var(--color-ring));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-card) 94%, var(--color-ring));
+  transform-origin: top center;
+  pointer-events: none;
+}
+
+.hermes-guardian-attention-stack-shadow-1 {
+  z-index: 2;
+  transform: translateY(0.12rem) scale(0.995);
+}
+
+.hermes-guardian-attention-stack-shadow-2 {
+  z-index: 1;
+  transform: translateY(0.28rem) scale(0.99);
+  opacity: 0.72;
+}
+
+.hermes-guardian-attention-card {
+  border-color: color-mix(in srgb, var(--color-ring) 26%, var(--color-border));
+}
+
+.hermes-guardian-attention-risk {
+  border-color: color-mix(in srgb, #f59e0b 55%, var(--color-border));
+  background: color-mix(in srgb, #f59e0b 8%, var(--color-card));
+}
+
+.hermes-guardian-attention-info {
+  background: color-mix(in srgb, var(--color-muted) 18%, var(--color-card));
+}
+
+.hermes-guardian-attention-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  flex: 0 1 25rem;
+  flex-wrap: wrap;
+}
+
+.hermes-guardian-attention-empty {
+  padding: 0.8rem 1rem;
+}
+
 .hermes-guardian-taint-strip {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
   flex-wrap: wrap;
-}
-
-.hermes-guardian-approvals-section .hermes-guardian-card-title {
-  margin-bottom: 0.2rem;
 }
 
 .hermes-guardian-approval-card {
@@ -180,6 +283,15 @@
 
   .hermes-guardian-approval-actions .hermes-guardian-approval-select {
     flex-basis: 11.5rem;
+  }
+
+  .hermes-guardian-attention-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .hermes-guardian-attention-actions .hermes-guardian-secondary {
+    flex: 1 1 8rem;
   }
 }
 
@@ -275,6 +387,11 @@
 .hermes-guardian-check-latency {
   font-size: 0.76rem;
   white-space: nowrap;
+}
+
+.hermes-guardian-flow-boundary {
+  max-width: min(100%, 18rem);
+  overflow-wrap: anywhere;
 }
 
 .hermes-guardian-check-target {

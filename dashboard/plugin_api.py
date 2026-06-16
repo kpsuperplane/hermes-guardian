@@ -378,6 +378,18 @@ async def clear_taint(request: Request) -> JSONResponse:
     return _json_mutation_result(_guardian()._dashboard_clear_taint_action())
 
 
+@router.post("/attention/dismiss")
+async def dismiss_attention(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    return _json_mutation_result(_guardian()._dashboard_attention_dismiss_action(body))
+
+
+@router.post("/attention/restore")
+async def restore_attention(request: Request, body: dict[str, Any]) -> JSONResponse:
+    _require_dashboard_admin(request)
+    return _json_mutation_result(_guardian()._dashboard_attention_restore_action(body))
+
+
 @router.post("/reading/taint-classification")
 async def set_taint_classification(request: Request, body: dict[str, Any]) -> JSONResponse:
     _require_dashboard_admin(request)

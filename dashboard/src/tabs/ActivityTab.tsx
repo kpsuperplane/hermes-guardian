@@ -1,12 +1,20 @@
-import { React, useState } from "@/sdk";
+import { React, useEffect, useState } from "@/sdk";
 import { Button } from "@/components/Button";
 import { DecisionStep } from "@/components/DecisionStep";
 import { IconButton } from "@/components/IconButton";
 import { TrustPill } from "@/components/TrustPill";
 import { HISTORY_PAGE_SIZES } from "@/constants";
+import { buildAttentionItems, type AttentionItem } from "@/lib/attention";
 import { activityTimeNoYearText, classesText, latencyText, text, timeText } from "@/lib/format";
 import type { TabId } from "@/lib/deepLinks";
-import type { ActivityRow, ActivityTurn, PendingApproval, PermitOption } from "@/types";
+import type {
+  ActivityRow,
+  ActivityTurn,
+  PendingApproval,
+  PermitOption,
+  Policy,
+  SourceSuggestion,
+} from "@/types";
 import type { ApprovalAction } from "@/hooks/useGuardianActions";
 
 export interface ActivityTabProps {
@@ -17,6 +25,14 @@ export interface ActivityTabProps {
   approvals: PendingApproval[];
   approvalsLoading: boolean;
   onApprovalAction: (approval: PendingApproval, action: ApprovalAction) => void;
+  policy: Policy | null;
+  sourceSuggestions: SourceSuggestion[];
+  onLoadSourceSuggestions: () => void;
+  onClassifySource: (server: string, mode: "private" | "unknown") => void;
+  onOpenReadingTool: (match?: string) => void;
+  onOpenSharingTool: (match?: string) => void;
+  onDismissAttention: (item: AttentionItem) => void;
+  onRestoreAttention: () => void;
   // History grouped by turn (server-paginated by turn)
   turns: ActivityTurn[];
   loading: boolean;
@@ -32,6 +48,31 @@ export interface ActivityTabProps {
   onChangePersistPrompts: (enabled: boolean) => void;
   // Deep-link navigation to the governing tab
   onNavigate: (tab: TabId) => void;
+}
+
+function OptionalFlowMeta(props: { whyNow?: unknown; flowBoundaryLabel?: unknown }) {
+  const boundary = text(props.flowBoundaryLabel);
+  const whyNow = whyNowSummary(props.whyNow);
+  return (
+    <>
+      {boundary ? <span>{"Boundary " + boundary}</span> : null}
+      {whyNow ? <span>{"Why now " + whyNow}</span> : null}
+    </>
+  );
+}
+
+function whyNowSummary(value: unknown): string {
+  if (value && typeof value === "object" && "summary" in value) {
+    return text((value as { summary?: unknown }).summary);
+  }
+  return text(value);
+}
+
+function activeAttentionDismissalCount(policy: Policy | null): number {
+  const now = Math.floor(Date.now() / 1000);
+  return ((policy && policy.attention_dismissals) || []).filter(
+    (item) => Number(item.expires_at || 0) > now,
+  ).length;
 }
 
 // --- Debugging: opt-in prompt persistence (controls the turn-header prompt) ----
@@ -174,9 +215,185 @@ function ApprovalCard(props: {
             <DecisionStep step={approval.decision_step} onNavigate={onNavigate} />
           </span>
         ) : null}
+        <OptionalFlowMeta
+          flowBoundaryLabel={approval.flow_boundary_label}
+          whyNow={approval.why_now}
+        />
         {approval.reason ? <span>{"Reason " + text(approval.reason)}</span> : null}
       </div>
     </div>
+  );
+}
+
+function AttentionSuggestionCard(props: {
+  item: AttentionItem;
+  onNavigate: (tab: TabId) => void;
+  onClassifySource: (server: string, mode: "private" | "unknown") => void;
+  onOpenReadingTool: (match?: string) => void;
+  onOpenSharingTool: (match?: string) => void;
+  onDismiss: (item: AttentionItem) => void;
+}) {
+  const { item, onNavigate, onClassifySource, onOpenReadingTool, onOpenSharingTool, onDismiss } = props;
+  const meta = (item.meta || []).filter(Boolean);
+  const hasTarget = Boolean(item.targetTab);
+  return (
+    <div className={"hermes-guardian-card hermes-guardian-attention-card hermes-guardian-attention-" + item.kind}>
+      <div className="hermes-guardian-block-head">
+        <div className="hermes-guardian-rule-main">
+          <div className="hermes-guardian-block-title">{item.title}</div>
+          {item.detail ? <div className="hermes-guardian-muted">{item.detail}</div> : null}
+          {meta.length ? (
+            <div className="hermes-guardian-block-meta">
+              {meta.map((entry) => (
+                <span key={entry} className="hermes-guardian-pill">
+                  {entry}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <div className="hermes-guardian-attention-actions">
+          {item.kind === "source" ? (
+            <>
+              <Button variant="secondary" onClick={() => onClassifySource(item.server, "private")}>
+                Personal data
+              </Button>
+              <Button variant="secondary" onClick={() => onClassifySource(item.server, "unknown")}>
+                Unknown
+              </Button>
+              <Button variant="secondary" onClick={() => onNavigate("reading")}>
+                Review
+              </Button>
+            </>
+          ) : null}
+          {item.kind === "egress-tool" ? (
+            <>
+              <Button variant="secondary" onClick={() => onOpenSharingTool(item.match)}>
+                Set policy
+              </Button>
+              <Button variant="secondary" onClick={() => onNavigate("sharing")}>
+                Review
+              </Button>
+            </>
+          ) : null}
+          {item.kind === "read-tool" ? (
+            <>
+              <Button variant="secondary" onClick={() => onOpenReadingTool(item.match)}>
+                Set policy
+              </Button>
+              <Button variant="secondary" onClick={() => onNavigate("reading")}>
+                Review
+              </Button>
+            </>
+          ) : null}
+          {(item.kind === "risk" || item.kind === "info") && hasTarget ? (
+            <Button variant="secondary" onClick={() => onNavigate(item.targetTab as TabId)}>
+              Review
+            </Button>
+          ) : null}
+          {item.dismissKey ? (
+            <IconButton
+              icon="x"
+              label={"Dismiss Attention item " + item.title}
+              onClick={() => onDismiss(item)}
+            />
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AttentionSection(props: {
+  items: AttentionItem[];
+  approvalsLoading: boolean;
+  onApprovalAction: (approval: PendingApproval, action: ApprovalAction) => void;
+  onNavigate: (tab: TabId) => void;
+  onClassifySource: (server: string, mode: "private" | "unknown") => void;
+  onOpenReadingTool: (match?: string) => void;
+  onOpenSharingTool: (match?: string) => void;
+  onDismissAttention: (item: AttentionItem) => void;
+  onRestoreAttention: () => void;
+  snoozedCount: number;
+}) {
+  const topItem = props.items[0];
+  const itemCount = props.items.length;
+  const hasStack = itemCount > 1;
+  const hiddenCardCount = Math.min(itemCount - 1, 2);
+  const renderTopCard = (item: AttentionItem) =>
+    item.kind === "approval" ? (
+      <ApprovalCard
+        key={item.id}
+        approval={item.approval}
+        onAction={props.onApprovalAction}
+        onNavigate={props.onNavigate}
+      />
+    ) : (
+      <AttentionSuggestionCard
+        key={item.id}
+        item={item}
+        onNavigate={props.onNavigate}
+        onClassifySource={props.onClassifySource}
+        onOpenReadingTool={props.onOpenReadingTool}
+        onOpenSharingTool={props.onOpenSharingTool}
+        onDismiss={props.onDismissAttention}
+      />
+    );
+
+  return (
+    <section className="hermes-guardian-attention-section" aria-labelledby="hermes-guardian-attention-title">
+      <div className="hermes-guardian-attention-head">
+        <div>
+          <div className="hermes-guardian-attention-title-row">
+            <div id="hermes-guardian-attention-title" className="hermes-guardian-card-title">
+              Attention
+            </div>
+            {itemCount ? (
+              <span className="hermes-guardian-pill hermes-guardian-attention-count">
+                {"1 of " + itemCount}
+              </span>
+            ) : null}
+          </div>
+          <div className="hermes-guardian-muted">
+            Pending decisions and setup suggestions from current dashboard metadata.
+          </div>
+        </div>
+        {props.approvalsLoading ? (
+          <span className="hermes-guardian-muted hermes-guardian-attention-loading">
+            Refreshing approvals...
+          </span>
+        ) : null}
+        {props.snoozedCount ? (
+          <Button variant="secondary" onClick={props.onRestoreAttention}>
+            {"Restore snoozed (" + props.snoozedCount + ")"}
+          </Button>
+        ) : null}
+      </div>
+      {topItem ? (
+        <div
+          className={
+            "hermes-guardian-attention-stack" +
+            (hasStack ? " hermes-guardian-attention-stack-layered" : "")
+          }
+        >
+          {hasStack ? (
+            <>
+              {hiddenCardCount > 1 ? (
+                <div className="hermes-guardian-attention-stack-shadow hermes-guardian-attention-stack-shadow-2" />
+              ) : null}
+              <div className="hermes-guardian-attention-stack-shadow hermes-guardian-attention-stack-shadow-1" />
+            </>
+          ) : null}
+          <div className="hermes-guardian-attention-stack-card">
+            {renderTopCard(topItem)}
+          </div>
+        </div>
+      ) : (
+        <div className="hermes-guardian-card hermes-guardian-muted hermes-guardian-attention-empty">
+          No approvals or dashboard suggestions need attention.
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -207,6 +424,8 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
   const route = direction === "read" && !text(row.destination) ? action : action + " → " + destination;
   const latency = latencyText(row.latency_ms);
   const isRead = direction === "read";
+  const flowBoundary = text(row.flow_boundary_label);
+  const whyNow = whyNowSummary(row.why_now);
   // data_classes can arrive as an array or a delimiter-joined string; one chip per taint.
   const taints = (
     Array.isArray(row.data_classes) ? row.data_classes : text(row.data_classes).split(/[,]/)
@@ -237,6 +456,8 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
     },
     { label: "Decision", value: text(row.decision) },
   ];
+  if (flowBoundary) detailPairs.push({ label: "Boundary", value: flowBoundary });
+  if (whyNow) detailPairs.push({ label: "Why now", value: whyNow });
   if (latency) detailPairs.push({ label: "Latency", value: latency });
   if (row.action_detail) detailPairs.push({ label: "Action", value: text(row.action_detail) });
   if (row.reason) detailPairs.push({ label: "Reason", value: text(row.reason) });
@@ -264,6 +485,11 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
         {!isRead && taints.length > 0 && row.destination_trust ? (
           <TrustPill trust={row.destination_trust} />
         ) : null}
+        {flowBoundary ? (
+          <span className="hermes-guardian-pill hermes-guardian-flow-boundary">
+            {flowBoundary}
+          </span>
+        ) : null}
         {taints.length ? (
           <span className="hermes-guardian-chips hermes-guardian-history-taint-chips">
             {taints.map((cls) => (
@@ -285,6 +511,11 @@ function CheckItem(props: { row: ActivityRow; onNavigate: (tab: TabId) => void }
       {row.decision_step ? (
         <div className="hermes-guardian-check-step hermes-guardian-muted">
           <DecisionStep step={row.decision_step} onNavigate={onNavigate} />
+        </div>
+      ) : null}
+      {whyNow ? (
+        <div className="hermes-guardian-check-step hermes-guardian-muted">
+          {"Why now: " + whyNow}
         </div>
       ) : null}
       {open ? (
@@ -355,7 +586,16 @@ export function ActivityTab(props: ActivityTabProps) {
     taint,
     onClearTaint,
     approvals,
+    approvalsLoading,
     onApprovalAction,
+    policy,
+    sourceSuggestions,
+    onLoadSourceSuggestions,
+    onClassifySource,
+    onOpenReadingTool,
+    onOpenSharingTool,
+    onDismissAttention,
+    onRestoreAttention,
     turns,
     loading,
     error,
@@ -373,29 +613,30 @@ export function ActivityTab(props: ActivityTabProps) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const currentPage = Math.min(page, totalPages - 1);
   const showPagination = totalPages > 1;
+  const attentionItems = buildAttentionItems({ approvals, policy, sourceSuggestions });
+  const snoozedCount = activeAttentionDismissalCount(policy);
+
+  useEffect(() => {
+    onLoadSourceSuggestions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="hermes-guardian-grid">
-      <TaintStrip taint={taint} onClear={onClearTaint} />
+      <AttentionSection
+        items={attentionItems}
+        approvalsLoading={approvalsLoading}
+        onApprovalAction={onApprovalAction}
+        onNavigate={onNavigate}
+        onClassifySource={onClassifySource}
+        onOpenReadingTool={onOpenReadingTool}
+        onOpenSharingTool={onOpenSharingTool}
+        onDismissAttention={onDismissAttention}
+        onRestoreAttention={onRestoreAttention}
+        snoozedCount={snoozedCount}
+      />
 
-      {approvals.length ? (
-        <div className="hermes-guardian-card hermes-guardian-approvals-section">
-          <div className="hermes-guardian-card-title">Pending approvals</div>
-          <div className="hermes-guardian-muted">
-            Actions paused until you approve or dismiss them.
-          </div>
-          <div className="hermes-guardian-grid">
-            {approvals.map((approval) => (
-              <ApprovalCard
-                key={text(approval.id)}
-                approval={approval}
-                onAction={onApprovalAction}
-                onNavigate={onNavigate}
-              />
-            ))}
-          </div>
-        </div>
-      ) : null}
+      <TaintStrip taint={taint} onClear={onClearTaint} />
 
       <Debugging
         persistPrompts={persistPrompts}

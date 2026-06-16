@@ -277,6 +277,18 @@ def _ensure_activity_db() -> None:
                     """
                 )
                 conn.execute("CREATE INDEX IF NOT EXISTS suggestions_ts_idx ON suggestions(last_ts)")
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS attention_dismissals (
+                        dismiss_key TEXT PRIMARY KEY,
+                        kind TEXT NOT NULL,
+                        item_id TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        expires_at INTEGER NOT NULL
+                    )
+                    """
+                )
+                conn.execute("CREATE INDEX IF NOT EXISTS attention_dismissals_expires_idx ON attention_dismissals(expires_at)")
                 conn.execute("DROP TABLE IF EXISTS command_suggestions")
             state._ACTIVITY_DB_INITIALIZED = True
         except Exception as exc:
@@ -297,6 +309,167 @@ _DESTINATION_TRUST_LABELS = {
 }
 
 _PSEUDO_TOOL_NAMES = {"", "*", "llm_output", "gateway_message"}
+_FLOW_BOUNDARIES = frozenset({"read", "inside_boundary", "outward", "outward_trusted", "unknown"})
+_FLOW_BOUNDARY_LABELS = {
+    "read": "Read (no egress)",
+    "inside_boundary": "Stays with you",
+    "outward": "Outward",
+    "outward_trusted": "Outward to trusted",
+    "unknown": "Boundary unknown",
+}
+_FLOW_READ_ACTION_FAMILIES = frozenset({"browser_read", "mcp_read_query", "message_list", "web_read"})
+_FLOW_INSIDE_TRUSTS = frozenset({"self", "local_system", "model_provider"})
+_FLOW_TRUSTED_TRUSTS = frozenset({"trusted", "trusted_recipient"})
+_FLOW_OUTWARD_TRUSTS = frozenset({"external", "public"})
+_FLOW_READ_HOOKS = frozenset({"transform_tool_result", "pre_gateway_dispatch"})
+_FLOW_WRITE_HOOKS = frozenset({"pre_tool_call", "transform_llm_output"})
+_WHY_TEXT_RE = re.compile(r"[^A-Za-z0-9_.,:;()/?@%+= \-]+")
+_ATTENTION_DISMISS_KINDS = frozenset({"risk", "info", "source", "egress-tool", "read-tool"})
+_ATTENTION_DISMISS_TTL_SECONDS = {
+    "risk": 7 * 24 * 60 * 60,
+    "info": 30 * 24 * 60 * 60,
+    "source": 30 * 24 * 60 * 60,
+    "egress-tool": 30 * 24 * 60 * 60,
+    "read-tool": 30 * 24 * 60 * 60,
+}
+_ATTENTION_DISMISS_KEY_RE = re.compile(r"[^A-Za-z0-9_.,:@|=-]+")
+
+
+def _safe_metadata_text(value: Any, *, limit: int = 120, fallback: str = "") -> str:
+    text = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or "")).strip() or fallback
+    text = _WHY_TEXT_RE.sub("", text)
+    text = " ".join(text.split())
+    return text[: max(0, int(limit))]
+
+
+def _safe_attention_dismiss_key(value: Any) -> str:
+    text = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or "")).strip()
+    text = _ATTENTION_DISMISS_KEY_RE.sub("_", text)
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text[:180]
+
+
+def _safe_attention_kind(value: Any) -> str:
+    kind = str(value or "").strip().lower()
+    return kind if kind in _ATTENTION_DISMISS_KINDS else ""
+
+
+def _flow_boundary_label(boundary: Any) -> str:
+    value = str(boundary or "").strip().lower()
+    return _FLOW_BOUNDARY_LABELS.get(value, _FLOW_BOUNDARY_LABELS["unknown"])
+
+
+def _flow_boundary_from_metadata(item: dict[str, Any]) -> str:
+    decision = str(item.get("decision") or "").strip().lower()
+    action_family = str(item.get("action_family") or "").strip().lower()
+    hook = str(item.get("latency_hook") or "").strip().lower()
+    tool_name = str(item.get("tool_name") or "").strip().lower()
+    if decision in {"read", "tainted"}:
+        return "read"
+    if action_family in _FLOW_READ_ACTION_FAMILIES:
+        return "read"
+    if hook in _FLOW_READ_HOOKS:
+        return "read"
+    if decision == "security_suppressed" and tool_name and tool_name != "llm_output":
+        return "read"
+    if decision == "security_blocked" and tool_name == "gateway_message":
+        return "read"
+
+    trust = _normalize_destination_trust_label(item.get("destination_trust"))
+    if trust in _FLOW_INSIDE_TRUSTS:
+        return "inside_boundary"
+    if trust in _FLOW_TRUSTED_TRUSTS:
+        return "outward_trusted"
+    if trust in _FLOW_OUTWARD_TRUSTS:
+        return "outward"
+    if hook in _FLOW_WRITE_HOOKS or action_family:
+        return "unknown"
+    return "unknown"
+
+
+def _flow_boundary_detail(item: dict[str, Any], boundary: str) -> str:
+    action_family = _safe_metadata_text(item.get("action_family"), limit=64)
+    trust = _normalize_destination_trust_label(item.get("destination_trust"))
+    if boundary == "read":
+        if action_family:
+            return f"{action_family} is classified as read/no-egress metadata."
+        return "This check observed data without an outward egress."
+    if boundary == "inside_boundary":
+        if trust == "self":
+            return "The destination resolved to something configured as yours."
+        if trust == "local_system":
+            return "The destination resolved to the local system boundary."
+        if trust == "model_provider":
+            return "The destination stays inside the configured model-provider boundary."
+        return "The destination resolved inside your boundary."
+    if boundary == "outward_trusted":
+        return "The destination resolved to a trusted recipient or trusted command."
+    if boundary == "outward":
+        if trust == "public":
+            return "The action targets a public/outward destination."
+        return "The action would move data outside your boundary."
+    return "Guardian could not prove where this egress stays."
+
+
+def _flow_boundary_fields(item: dict[str, Any]) -> dict[str, str]:
+    boundary = _flow_boundary_from_metadata(item if isinstance(item, dict) else {})
+    return {
+        "flow_boundary": boundary if boundary in _FLOW_BOUNDARIES else "unknown",
+        "flow_boundary_label": _flow_boundary_label(boundary),
+        "flow_boundary_detail": _safe_metadata_text(
+            _flow_boundary_detail(item if isinstance(item, dict) else {}, boundary),
+            limit=180,
+        ),
+    }
+
+
+def _metadata_data_classes(value: Any) -> list[str]:
+    raw = value if isinstance(value, (list, tuple, set)) else str(value or "").split(",")
+    return sorted(
+        cls
+        for cls in (str(item).strip() for item in raw)
+        if cls in core._ALL_PRIVACY_CLASSES
+    )
+
+
+def _why_now(item: dict[str, Any]) -> dict[str, Any]:
+    metadata = item if isinstance(item, dict) else {}
+    flow = _flow_boundary_fields(metadata)
+    classes = _metadata_data_classes(metadata.get("data_classes"))
+    reason = _safe_metadata_text(metadata.get("reason"), limit=140)
+    mode = _safe_metadata_text(metadata.get("mode") or metadata.get("egress_safety"), limit=40)
+    step = _normalize_decision_step_label(metadata.get("decision_step"))
+    action_family = _safe_metadata_text(metadata.get("action_family"), limit=64)
+    trust = _normalize_destination_trust_label(metadata.get("destination_trust"))
+
+    if flow["flow_boundary"] == "read":
+        summary = "Guardian classified this as a read, so no outward approval was needed."
+    elif flow["flow_boundary"] == "inside_boundary":
+        summary = "Guardian found the action stayed inside your boundary."
+    elif flow["flow_boundary"] == "outward_trusted":
+        summary = "Guardian recognized an outward flow to a trusted destination."
+    elif flow["flow_boundary"] == "outward":
+        summary = "Guardian needs approval before private data leaves your boundary."
+    else:
+        summary = "Guardian needs approval because the destination boundary is unclear."
+
+    bullets = [f"Boundary: {flow['flow_boundary_label']}"]
+    if classes:
+        bullets.append("Data classes in scope: " + ", ".join(classes))
+    if action_family:
+        bullets.append(f"Action family: {action_family}")
+    if trust != "unknown":
+        bullets.append(f"Destination trust: {trust}")
+    if step:
+        bullets.append(f"Decision step: {step}")
+    if mode:
+        bullets.append(f"Mode: {mode}")
+    if reason:
+        bullets.append(f"Reason: {reason}")
+    return {
+        "summary": _safe_metadata_text(summary, limit=160),
+        "bullets": [_safe_metadata_text(bullet, limit=180) for bullet in bullets[:6] if _safe_metadata_text(bullet, limit=180)],
+    }
 
 
 def _safe_tool_inventory_name(value: Any) -> str:
@@ -511,6 +684,104 @@ def _recent_suggestions(kind: str, limit: int = 20) -> list[dict[str, Any]]:
     except Exception as exc:
         core.logger.debug("%s: failed to read %s suggestions: %s", core._PLUGIN_NAME, kind, exc)
         return []
+
+
+def _prune_attention_dismissals() -> int:
+    _ensure_activity_db()
+    try:
+        with _activity_connect() as conn:
+            return int(conn.execute(
+                "DELETE FROM attention_dismissals WHERE expires_at <= ?",
+                (int(state._now()),),
+            ).rowcount)
+    except Exception as exc:
+        core.logger.debug("%s: failed to prune attention dismissals: %s", core._PLUGIN_NAME, exc)
+        return 0
+
+
+def _attention_dismissals(limit: int = 200) -> list[dict[str, Any]]:
+    """Active dashboard Attention snoozes, stored as sanitized metadata only."""
+    _prune_attention_dismissals()
+    try:
+        with _activity_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT dismiss_key, kind, item_id, created_at, expires_at
+                FROM attention_dismissals
+                WHERE expires_at > ?
+                ORDER BY created_at DESC, dismiss_key ASC
+                LIMIT ?
+                """,
+                (int(state._now()), max(1, min(int(limit or 200), 1000))),
+            ).fetchall()
+    except Exception as exc:
+        core.logger.debug("%s: failed to read attention dismissals: %s", core._PLUGIN_NAME, exc)
+        return []
+    return [
+        {
+            "dismiss_key": str(row["dismiss_key"] or ""),
+            "kind": _safe_attention_kind(row["kind"]),
+            "item_id": _safe_attention_dismiss_key(row["item_id"]),
+            "created_at": int(row["created_at"] or 0),
+            "expires_at": int(row["expires_at"] or 0),
+        }
+        for row in rows
+        if str(row["dismiss_key"] or "") and _safe_attention_kind(row["kind"])
+    ]
+
+
+def _dismiss_attention_item(kind: Any, dismiss_key: Any, item_id: Any = "") -> tuple[bool, str]:
+    safe_kind = _safe_attention_kind(kind)
+    if not safe_kind:
+        return False, "Unsupported Attention item kind."
+    safe_key = _safe_attention_dismiss_key(dismiss_key)
+    if not safe_key:
+        return False, "Attention dismissal key is required."
+    safe_item_id = _safe_attention_dismiss_key(item_id) or safe_key
+    now = int(state._now())
+    expires_at = now + _ATTENTION_DISMISS_TTL_SECONDS[safe_kind]
+    try:
+        _ensure_activity_db()
+        with _activity_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO attention_dismissals (dismiss_key, kind, item_id, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(dismiss_key) DO UPDATE SET
+                    kind=excluded.kind,
+                    item_id=excluded.item_id,
+                    created_at=excluded.created_at,
+                    expires_at=excluded.expires_at
+                """,
+                (safe_key, safe_kind, safe_item_id, now, expires_at),
+            )
+    except Exception as exc:
+        core.logger.debug("%s: failed to dismiss attention item: %s", core._PLUGIN_NAME, exc)
+        return False, "Failed to dismiss Attention item."
+    days = max(1, int(round(_ATTENTION_DISMISS_TTL_SECONDS[safe_kind] / 86400)))
+    return True, f"Snoozed Attention item for {days} day{'s' if days != 1 else ''}."
+
+
+def _restore_attention_dismissal(dismiss_key: Any = "") -> tuple[bool, str]:
+    safe_key = _safe_attention_dismiss_key(dismiss_key)
+    try:
+        _ensure_activity_db()
+        with _activity_connect() as conn:
+            if safe_key:
+                deleted = int(conn.execute(
+                    "DELETE FROM attention_dismissals WHERE dismiss_key = ?",
+                    (safe_key,),
+                ).rowcount)
+            else:
+                deleted = int(conn.execute("DELETE FROM attention_dismissals").rowcount)
+    except Exception as exc:
+        core.logger.debug("%s: failed to restore attention dismissal: %s", core._PLUGIN_NAME, exc)
+        return False, "Failed to restore Attention item."
+    if safe_key and not deleted:
+        return False, "No matching Attention snooze found."
+    if safe_key:
+        return True, "Restored Attention item."
+    return True, "Restored snoozed Attention items."
 
 
 def _emit_activity(

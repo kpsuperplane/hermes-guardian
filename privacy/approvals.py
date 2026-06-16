@@ -323,6 +323,11 @@ def _guardian_block_message(approval: dict[str, Any]) -> str:
     action_detail_line = f"Action detail: {action_detail}\n" if action_detail else ""
     reason = str(approval.get("reason") or "").strip()
     reason_line = f"Reason: {reason}\n" if reason else ""
+    why_now = activity_store._why_now(approval)
+    why_now_lines = [f"Why now: {why_now.get('summary') or 'Guardian needs owner approval for this egress.'}"]
+    for bullet in why_now.get("bullets") or []:
+        why_now_lines.append(f"- {bullet}")
+    why_now_block = "\n".join(why_now_lines)
     # The ways to permit are context-filtered (doc 06): expiry-based approval options plus any
     # structural option this action supports (this recipient is me, trust this host, …).
     approve_lines = []
@@ -344,6 +349,7 @@ def _guardian_block_message(approval: dict[str, Any]) -> str:
         f"{action_detail_line}"
         f"Data classes: {classes}\n"
         f"{reason_line}\n"
+        f"{why_now_block}\n\n"
         "DO NOT attempt to accomplish the same result another way. Re-trying this "
         "through a different tool, command, channel, or rephrased arguments to reach "
         "the same outcome is circumvention and will be blocked too. Stop and surface "

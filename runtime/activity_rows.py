@@ -416,7 +416,7 @@ def _dashboard_recent_blocks(pending: list[dict[str, Any]], *, limit: int = 5) -
             if pending_approval
             else _activity_data_classes_list(row.get("data_classes"))
         )
-        blocks.append({
+        block = {
             "id": block_id,
             "activity_id": int(row.get("id") or 0),
             "approval_id": approval_id if pending_approval else "",
@@ -431,6 +431,12 @@ def _dashboard_recent_blocks(pending: list[dict[str, Any]], *, limit: int = 5) -
             "tool_name": str(row.get("tool_name") or (pending_approval or {}).get("tool_name") or ""),
             "action_family": str(row.get("action_family") or (pending_approval or {}).get("action_family") or ""),
             "destination": str(row.get("destination") or (pending_approval or {}).get("destination") or ""),
+            "destination_trust": activity_store._normalize_destination_trust_label(
+                row.get("destination_trust") or (pending_approval or {}).get("destination_trust")
+            ),
+            "decision_step": activity_store._normalize_decision_step_label(
+                row.get("decision_step") or (pending_approval or {}).get("decision_step")
+            ),
             "purpose": str(row.get("purpose") or (pending_approval or {}).get("purpose") or "unknown"),
             "recipient_identity": str(row.get("recipient_identity") or (pending_approval or {}).get("recipient_identity") or "none"),
             "data_classes": sorted(data_classes),
@@ -444,7 +450,10 @@ def _dashboard_recent_blocks(pending: list[dict[str, Any]], *, limit: int = 5) -
             "covered_by_rule": bool((pending_approval or {}).get("covered_by_rule")),
             "covered_rule_id": str((pending_approval or {}).get("covered_rule_id") or ""),
             "covered_rule_source": str((pending_approval or {}).get("covered_rule_source") or ""),
-        })
+        }
+        block.update(activity_store._flow_boundary_fields(block))
+        block["why_now"] = activity_store._why_now(block)
+        blocks.append(block)
 
     for approval in pending:
         approval_id = str(approval.get("id") or "")
@@ -542,7 +551,7 @@ def _activity_count(clauses: list[str] | None = None, params: list[Any] | None =
 
 
 def _activity_row_from_sql(row: sqlite3.Row) -> dict[str, Any]:
-    return {
+    shaped = {
         "id": row["id"],
         "ts": row["ts"],
         "decision": row["decision"],
@@ -575,6 +584,8 @@ def _activity_row_from_sql(row: sqlite3.Row) -> dict[str, Any]:
         "latency_hook": _row_value(row, "latency_hook", ""),
         "latency_llm_invoked": _row_value(row, "latency_llm_invoked", 0),
     }
+    shaped.update(activity_store._flow_boundary_fields(shaped))
+    return shaped
 
 
 def _row_value(row: sqlite3.Row, column: str, default: Any) -> Any:
@@ -601,6 +612,7 @@ def _activity_plain_reason_line(row: dict[str, Any], *, limit: int = 120) -> str
 
 def _activity_datatables_row(row: dict[str, Any]) -> dict[str, Any]:
     direction = _activity_display_direction(row)
+    flow = activity_store._flow_boundary_fields(row)
     return {
         "id": int(row.get("id") or 0),
         "DT_RowId": f"activity-{int(row.get('id') or 0)}",
@@ -618,6 +630,9 @@ def _activity_datatables_row(row: dict[str, Any]) -> dict[str, Any]:
         "decision_step": str(row.get("decision_step") or ""),
         "purpose": str(row.get("purpose") or ""),
         "recipient_identity": str(row.get("recipient_identity") or ""),
+        "flow_boundary": flow["flow_boundary"],
+        "flow_boundary_label": flow["flow_boundary_label"],
+        "flow_boundary_detail": flow["flow_boundary_detail"],
         "data_classes": str(row.get("data_classes") or ""),
         "reason_short": _activity_plain_reason_line(row),
         "reason": dashboard._activity_display_reason(row),
@@ -1491,6 +1506,8 @@ def _policy_snapshot() -> dict[str, Any]:
                     # The context-filtered ways to permit this block (doc 06): expiry-based
                     # approval options plus any structural option (this recipient is me, trust this host, …).
                     "permit_options": approvals._approval_permit_options(approval),
+                    **activity_store._flow_boundary_fields(approval),
+                    "why_now": activity_store._why_now(approval),
                     **_pending_approval_rule_coverage(approval),
                 }
                 for approval in list(state._PENDING_APPROVALS.values())
@@ -1527,6 +1544,7 @@ def _policy_snapshot() -> dict[str, Any]:
         "activity_max_rows": activity_store._activity_max_rows(),
         "activity_retention_days": activity_store._activity_retention_days(),
         "activity_group_seconds": activity_store._activity_group_seconds(),
+        "attention_dismissals": activity_store._attention_dismissals(),
         "sessions": sessions,
         "pending": pending,
         "recent_blocks": recent_blocks,

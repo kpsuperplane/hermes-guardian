@@ -263,6 +263,37 @@ def test_policy_snapshot_includes_five_recent_unresolved_blocks(monkeypatch):
     assert policy["recent_blocks"][0]["pending"] is True
 
 
+def test_policy_snapshot_pending_and_recent_blocks_include_why_now_and_flow_boundary():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    canary = "RAW-CANARY-POLICY-9d7a"
+
+    plugin._on_pre_tool_call("send_message", {"to": "friend", "text": canary}, session_id="s1")
+
+    policy = plugin._policy_snapshot()
+    pending = policy["pending"][0]
+    recent = policy["recent_blocks"][0]
+    for item in (pending, recent):
+        assert item["flow_boundary"] == "outward"
+        assert item["flow_boundary_label"] == "Outward"
+        assert item["flow_boundary_detail"] == "The action would move data outside your boundary."
+        assert item["why_now"]["summary"] == "Guardian needs approval before private data leaves your boundary."
+        assert "Boundary: Outward" in item["why_now"]["bullets"]
+        assert "Data classes in scope: communications" in item["why_now"]["bullets"]
+        assert "Action family: message_send" in item["why_now"]["bullets"]
+        derived = json.dumps(
+            {
+                "why_now": item["why_now"],
+                "flow_boundary": item["flow_boundary"],
+                "flow_boundary_label": item["flow_boundary_label"],
+                "flow_boundary_detail": item["flow_boundary_detail"],
+            }
+        )
+        assert canary not in derived
+        assert "friend" not in derived
+
+
 def test_policy_snapshot_omits_final_response_pending_approval():
     plugin = load_plugin()
     bind_owner(plugin)
@@ -411,6 +442,70 @@ def test_dashboard_dismiss_action_handles_stored_expired_approval(monkeypatch):
             (approval_id,),
         ).fetchone()[0]
     assert count == 0
+
+
+def test_attention_dismissals_are_sanitized_active_and_expire(monkeypatch):
+    plugin = load_plugin()
+    now = {"value": 1000}
+    monkeypatch.setattr(plugin.state, "_now", lambda: now["value"])
+
+    payload, status = plugin._dashboard_attention_dismiss_action({
+        "kind": "source",
+        "item_id": "source:<crm private>",
+        "dismiss_key": "source:<crm private>|last=1|hits=2",
+    })
+
+    assert status == 200
+    assert payload["ok"] is True
+    dismissal = payload["policy"]["attention_dismissals"][0]
+    assert dismissal["kind"] == "source"
+    assert dismissal["dismiss_key"] == "source:_crm_private_|last=1|hits=2"
+    assert dismissal["item_id"] == "source:_crm_private"
+    assert dismissal["created_at"] == 1000
+    assert dismissal["expires_at"] == 1000 + 30 * 24 * 60 * 60
+
+    now["value"] = dismissal["expires_at"] + 1
+    assert plugin._policy_snapshot()["attention_dismissals"] == []
+
+
+def test_attention_dismissal_rejects_approval_kind():
+    plugin = load_plugin()
+
+    payload, status = plugin._dashboard_attention_dismiss_action({
+        "kind": "approval",
+        "item_id": "approval:1234",
+        "dismiss_key": "approval:1234",
+    })
+
+    assert status == 400
+    assert payload["ok"] is False
+    assert payload["policy"]["attention_dismissals"] == []
+
+
+def test_attention_restore_one_or_all():
+    plugin = load_plugin()
+    plugin._dashboard_attention_dismiss_action({
+        "kind": "risk",
+        "item_id": "risk:relaxed",
+        "dismiss_key": "risk:relaxed",
+    })
+    plugin._dashboard_attention_dismiss_action({
+        "kind": "info",
+        "item_id": "info:self",
+        "dismiss_key": "info:self",
+    })
+
+    payload, status = plugin._dashboard_attention_restore_action({"dismiss_key": "risk:relaxed"})
+
+    assert status == 200
+    assert payload["ok"] is True
+    assert [item["dismiss_key"] for item in payload["policy"]["attention_dismissals"]] == ["info:self"]
+
+    payload, status = plugin._dashboard_attention_restore_action({})
+
+    assert status == 200
+    assert payload["ok"] is True
+    assert payload["policy"]["attention_dismissals"] == []
 
 
 def test_policy_snapshot_recent_blocks_includes_hard_blocks_without_pending_approval():
@@ -871,6 +966,8 @@ def _mutation_route_invokers(api):
         "approve": lambda: api.approve(req, "1234", {"method": "rule_5m"}),
         "dismiss": lambda: api.dismiss(req, "1234"),
         "clear_taint": lambda: api.clear_taint(req),
+        "dismiss_attention": lambda: api.dismiss_attention(req, {"kind": "risk", "dismiss_key": "risk:x"}),
+        "restore_attention": lambda: api.restore_attention(req, {}),
         "set_taint_classification": lambda: api.set_taint_classification(req, {"mode": "strict"}),
         "set_llm_source_classification": lambda: api.set_llm_source_classification(req, {"enabled": False}),
         "set_source_model": lambda: api.set_source_model(req, {"model": ""}),

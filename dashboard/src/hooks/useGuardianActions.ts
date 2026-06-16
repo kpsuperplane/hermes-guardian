@@ -4,6 +4,7 @@ import { api } from "@/api/client";
 import { DEFAULT_FORM, DEFAULT_OVERRIDE_FORM } from "@/constants";
 import { text } from "@/lib/format";
 import { formToPayload, payloadIsWildcardAllow, ruleToForm } from "@/lib/rules";
+import type { AttentionItem } from "@/lib/attention";
 import type {
   OverrideForm,
   PendingApproval,
@@ -733,6 +734,39 @@ export function useGuardianActions(deps: GuardianActionDeps) {
       });
   }
 
+  function dismissAttention(item: AttentionItem) {
+    if (item.kind === "approval" || !item.dismissKey) return;
+    api("/attention/dismiss", {
+      method: "POST",
+      body: JSON.stringify({
+        kind: item.kind,
+        item_id: item.id,
+        dismiss_key: item.dismissKey,
+      }),
+    })
+      .then((result) => {
+        showToast(result.message || "Snoozed.");
+        return load();
+      })
+      .catch((err) => {
+        showToast(errText(err), "error");
+      });
+  }
+
+  function restoreAttention() {
+    api("/attention/restore", {
+      method: "POST",
+      body: JSON.stringify({}),
+    })
+      .then((result) => {
+        showToast(result.message || "Restored.");
+        return load();
+      })
+      .catch((err) => {
+        showToast(errText(err), "error");
+      });
+  }
+
   return {
     // saving flags
     modeSaving,
@@ -790,6 +824,8 @@ export function useGuardianActions(deps: GuardianActionDeps) {
     moveRule,
     // activity
     approvalAction,
+    dismissAttention,
+    restoreAttention,
     clearTaintAction,
   };
 }

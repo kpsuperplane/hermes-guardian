@@ -96,6 +96,9 @@ def test_why_prints_capability_and_step_matching_outcome():
     assert row["decision_step"] in explanation
     assert row["decision_step"].startswith("step6_approve")
     assert "Outcome: blocked" in explanation
+    assert "Boundary: Outward" in explanation
+    assert "Why now: Guardian needs approval before private data leaves your boundary." in explanation
+    assert "  - Boundary: Outward" in explanation
     # why is also reachable by approval id.
     approval_id = next(iter(plugin._PENDING_APPROVALS))
     by_approval = plugin._handle_guardian_command(f"why {approval_id}")

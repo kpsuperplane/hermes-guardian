@@ -82,6 +82,26 @@ def test_block_message_carries_metadata_plus_anti_circumvention_directive():
     assert "circumvention" in lowered
 
 
+def test_block_message_includes_metadata_only_why_now():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    canary = "RAW-CANARY-BODY-5f4e"
+
+    blocked = plugin._on_pre_tool_call("send_message", {"to": "friend", "text": canary}, session_id="s1")
+    assert blocked is not None
+    message = blocked["message"]
+    why_now = message.split("Why now:", 1)[1].split("DO NOT", 1)[0]
+
+    assert "Why now: Guardian needs approval before private data leaves your boundary." in message
+    assert "- Boundary: Outward" in why_now
+    assert "- Data classes in scope: communications" in why_now
+    assert "- Action family: message_send" in why_now
+    assert "- Destination trust: external" in why_now
+    assert canary not in why_now
+    assert "friend" not in why_now
+
+
 def test_pending_approval_id_is_four_digit_even_with_llm_available():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="strict")
