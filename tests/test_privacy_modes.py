@@ -292,10 +292,11 @@ def test_local_system_only_safe_read_is_unaffected_by_corroboration_gate():
     assert not plugin._PENDING_APPROVALS
 
 
-def test_low_risk_safe_remote_read_skips_corroboration_gate_with_private_taint():
+def test_safe_remote_read_deterministically_allows_with_private_taint():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
-    plugin.state._PLUGIN_LLM = _corroboration_llm(risk_level="low", authorization_level="weak")
+    fake_llm = _corroboration_llm(risk_level="high", authorization_level="unknown", outcome="deny")
+    plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     plugin._taint_session("s1", {"calendar", "communications", "contacts"})
 
@@ -306,16 +307,19 @@ def test_low_risk_safe_remote_read_skips_corroboration_gate_with_private_taint()
     )
 
     assert result is None
+    assert fake_llm.calls == []
     assert not plugin._PENDING_APPROVALS
     rows = plugin._activity_rows({}, limit=5)
     assert rows[0]["decision"] == "auto_approved"
-    assert "external private export lacks" not in rows[0]["reason"]
+    assert rows[0]["rule_source"] == "safe_remote_read"
+    assert rows[0]["reason"] == "safe public remote read"
 
 
-def test_low_risk_safe_execute_code_skips_corroboration_gate_with_private_taint():
+def test_safe_execute_code_remote_read_deterministically_allows_with_private_taint():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
-    plugin.state._PLUGIN_LLM = _corroboration_llm(risk_level="low", authorization_level="weak")
+    fake_llm = _corroboration_llm(risk_level="high", authorization_level="unknown", outcome="deny")
+    plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
 
@@ -327,13 +331,15 @@ def test_low_risk_safe_execute_code_skips_corroboration_gate_with_private_taint(
     result = plugin._on_pre_tool_call("execute_code", {"code": code}, session_id="s1")
 
     assert result is None
+    assert fake_llm.calls == []
     assert not plugin._PENDING_APPROVALS
 
 
-def test_medium_risk_safe_remote_read_still_needs_corroboration():
+def test_safe_remote_read_bypasses_verifier_risk_overcall():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
-    plugin.state._PLUGIN_LLM = _corroboration_llm(risk_level="medium", authorization_level="weak")
+    fake_llm = _corroboration_llm(risk_level="medium", authorization_level="weak")
+    plugin.state._PLUGIN_LLM = fake_llm
     bind_owner(plugin)
     plugin._taint_session("s1", {"contacts"})
 
@@ -343,9 +349,11 @@ def test_medium_risk_safe_remote_read_still_needs_corroboration():
         session_id="s1",
     )
 
-    assert result is not None and result["action"] == "block"
+    assert result is None
+    assert fake_llm.calls == []
     rows = plugin._activity_rows({}, limit=5)
-    assert "verifier authorization was weak" in rows[0]["reason"]
+    assert rows[0]["decision"] == "auto_approved"
+    assert rows[0]["rule_source"] == "safe_remote_read"
 
 
 def test_unsafe_remote_read_still_needs_corroboration():

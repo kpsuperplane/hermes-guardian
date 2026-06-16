@@ -310,6 +310,33 @@ def _allow_read_only_tool_call(shape: dict[str, Any], tool_name: str, args: Any)
     _record_allowed_tool_side_effects(shape.get("session_id", ""), tool_name, args)
 
 
+def _allow_safe_remote_read_tool_call(shape: dict[str, Any], tool_name: str, args: Any) -> None:
+    core.logger.info(
+        "%s: safe remote read approved Hermes Guardian %s to %s for session %s",
+        core._PLUGIN_NAME,
+        shape.get("action_family", ""),
+        shape.get("destination", ""),
+        tool_policy._normalize_session_id(shape.get("session_id", "")),
+    )
+    _emit_egress_activity(
+        "auto_approved",
+        session_id=shape.get("session_id", ""),
+        owner_hash=shape.get("owner_hash", ""),
+        tool_name=tool_name,
+        action_family=shape.get("action_family", ""),
+        destination=shape.get("destination", ""),
+        data_classes=set(shape.get("data_classes") or []),
+        reason="safe public remote read",
+        rule_source="safe_remote_read",
+        action_detail=shape.get("action_detail", ""),
+        purpose=shape.get("purpose", "unknown"),
+        recipient_identity=shape.get("recipient_identity", "none"),
+        destination_trust=shape.get("destination_trust", "unknown"),
+        decision_step=shape.get("decision_step", ""),
+    )
+    _record_allowed_tool_side_effects(shape.get("session_id", ""), tool_name, args)
+
+
 def _llm_policy_tool_call_result(
     shape: dict[str, Any], tool_name: str, args: Any
 ) -> tuple[dict[str, str] | None, str | None, Callable[[], None] | None]:
@@ -844,6 +871,15 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
         # read-only's metadata-verified low-risk auto-approve preset (doc 02 §6): a
         # read-only auto-approval that happens today must still happen.
         _allow_read_only_tool_call(shape, tool_name, args)
+        return None
+
+    if egress_safety == "llm" and not lockdown and tool_policy._tool_call_is_safe_remote_read(tool_name, args):
+        # Deterministic public GET-style remote reads pull data into the agent; they do
+        # not export the ambient private classes already in scope. The verifier still
+        # receives this same safe_remote_read fact for non-deterministic cases, but a
+        # proven safe public read should not become a manual approval because the ambient
+        # taint is broad.
+        _allow_safe_remote_read_tool_call(shape, tool_name, args)
         return None
 
     blocked_reason = _LOCKDOWN_BLOCKED_REASON if lockdown else "requires approval"

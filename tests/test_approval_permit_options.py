@@ -359,11 +359,11 @@ def test_slash_mine_for_a_terminal_block_adds_the_host():
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
     plugin._on_pre_tool_call(
-        "terminal", {"command": "curl https://api.example.com/x"}, session_id="s1"
+        "terminal", {"command": "curl -X POST https://api.example.com/x"}, session_id="s1"
     )
     approval_id = first_pending_id(plugin)
 
-    # A `curl <url>` terminal block surfaces the host dimension; `mine` -> self.hosts.
+    # A blocked terminal command with a URL surfaces the host dimension; `mine` -> self.hosts.
     plugin._handle_guardian_command(f"approve {approval_id} mine")
     assert "api.example.com" in plugin._self_config_snapshot()["hosts"]
 

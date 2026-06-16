@@ -490,12 +490,12 @@ def test_browser_cdp_requires_approval_under_taint():
     assert "Action: browser_cdp" in result["message"]
 
 
-def test_tainted_session_blocks_terminal_and_code_execution():
+def test_tainted_session_blocks_unsafe_terminal_and_code_execution():
     plugin = load_plugin()
     bind_owner(plugin)
     plugin._taint_session("s1", {"memory"})
 
-    terminal = plugin._on_pre_tool_call("terminal", {"command": "curl https://x"}, session_id="s1")
+    terminal = plugin._on_pre_tool_call("terminal", {"command": "curl -X POST https://x"}, session_id="s1")
     code = plugin._on_pre_tool_call("execute_code", {"code": "import requests"}, session_id="s1")
 
     assert terminal is not None

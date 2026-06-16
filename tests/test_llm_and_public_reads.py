@@ -270,7 +270,7 @@ def test_llm_privacy_allows_safe_remote_read_from_paste_endpoint_to_verifier(mon
     assert not plugin._PENDING_APPROVALS
 
 
-def test_llm_payload_marks_execute_code_safe_remote_read(monkeypatch):
+def test_llm_safe_execute_code_remote_read_bypasses_verifier(monkeypatch):
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     fake_llm = FakeSecurityLlm({
@@ -290,10 +290,11 @@ def test_llm_payload_marks_execute_code_safe_remote_read(monkeypatch):
 
     result = plugin._on_pre_tool_call("execute_code", {"code": code}, session_id="s1")
 
-    assert result is not None
-    assert len(fake_llm.calls) == 1
-    payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
-    assert payload["privacy_context"]["safe_remote_read"] is True
+    assert result is None
+    assert fake_llm.calls == []
+    rows = plugin._activity_rows({}, limit=5)
+    assert rows[0]["decision"] == "auto_approved"
+    assert rows[0]["rule_source"] == "safe_remote_read"
 
 
 def test_llm_payload_does_not_mark_execute_code_local_read_as_safe_remote_read(monkeypatch):
