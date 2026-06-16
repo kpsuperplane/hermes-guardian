@@ -13,6 +13,12 @@ private content a personal agent reads — an email body, a contact list, calend
 entries, a Notion page, memory, and local system output — and controls where
 that content can leave through Hermes-mediated tools.
 
+For the story behind Guardian and the thinking that motivates it, see the
+companion blog post,
+[When secrets don't look like secrets](https://kevinpei.com/posts/thoughts-on-agent-privacy).
+The post explains *why* Guardian exists; this README explains *how* to run it,
+and [THEORY.md](./THEORY.md) explains *why the design is sound*.
+
 Guardian adds two policy layers:
 
 - **Security Module**: non-approvable blocking and suppression for credentials,
@@ -29,11 +35,11 @@ Modern agents need private context to be useful, and the most useful context is
 also the least pattern-detectable. Credentials and secrets have signatures;
 scanner and DLP tools find them by shape. But the things a personal agent
 actually reads — your inbox, your contacts, your calendar, your notes — have no
-signature. They are private by *provenance*: the only thing that marks an email
-body as yours is that it came from your inbox. A tool that classifies by content
-pattern cannot see provenance-private data at all, because there is no pattern to
-match. Guardian's primary protected asset is exactly this content, tracked by
-origin rather than by shape.
+signature. These are the secrets that don't look like secrets: they are private
+because of *where they came from*, not what they look like. The only thing that
+marks an email body as yours is that it came from your inbox, so a content-pattern
+classifier cannot see this data at all. Guardian's primary protected asset is
+exactly this content, tracked by its source rather than its shape.
 
 Agents also have many outbound surfaces: messages, MCP writes, browser forms,
 URLs, search queries, terminal commands, code execution, model APIs, cron jobs,
@@ -41,11 +47,10 @@ and final responses.
 
 Guardian treats mediated actions as Privacy-module egress. Once a session has
 observed private data, the active Egress Safety setting evaluates classified outbound
-actions before they run. Some actions are auto-approved, some are blocked
-immediately, and some fall back to manual approval. Final responses are not
-privacy-gated, but the Security Module still scans them before delivery.
-Security-sensitive content is stricter: it is blocked or suppressed outright,
-even if Egress Safety is off.
+actions before they run: some are auto-approved, some blocked immediately, some
+fall back to manual approval. Final responses are not privacy-gated, but the
+Security Module still scans them before delivery. Security-sensitive content is
+stricter: it is blocked or suppressed outright, even if Egress Safety is off.
 
 Use Guardian when you want:
 
@@ -154,15 +159,14 @@ first-party store. (An explicit trusted identity that names a connector id still
 writes to that connector across action families.) Trusted entries can also be exact
 terminal commands (see the `trust` approval option and `sharing destination suggest`).
 
-The defaults are conservative and fail closed. A destination whose ownership cannot
-be *proven* is `unknown`, and `unknown` is treated exactly as `external`. Mislabeling
-an external destination as `self` is the *only* way this design leaks, so every
-ambiguity resolves toward "not self." Out of the box you get a small, floor-safe set
-of seeded self stores — your own first-party Hermes stores (files / memory / todo /
-calendar / drive) plus drafts. **Third-party MCP connectors (including Notion),
-your own messaging identities, and own-infrastructure hosts are opt-in** — you add
-them explicitly to the self allowlist. No operator is forced to configure anything to
-retain the prior safety.
+The defaults fail closed. A destination whose ownership cannot be *proven* is
+`unknown`, and `unknown` is treated exactly as `external` — mislabeling an external
+destination as `self` is the *only* way this design leaks, so every ambiguity
+resolves toward "not self." Out of the box you get a small, floor-safe set of seeded
+self stores: your own first-party Hermes stores (files / memory / todo / calendar /
+drive) plus drafts. **Third-party MCP connectors (including Notion), your own
+messaging identities, and own-infrastructure hosts are opt-in** — you add them
+explicitly to the self allowlist.
 
 ### One declarative policy document
 
@@ -243,22 +247,19 @@ the file is reading the decision:
 This v4 schema is the only shape the loader accepts: there is no version
 detection, and a file that does not match it (including a wholly corrupt one)
 fails closed to `strict` with a clear log line — never to anything permissive.
-Any block may be omitted; missing blocks fill from safe defaults (`sharing.egress_safety`
-defaults to `llm`, `reading.taint_classification` defaults to `balanced`,
-`reading.llm_source_classification` defaults to `true`,
-`whats_yours.stores` seeds the single-operator stores,
-`sharing` is empty). Outward-sharing builtin subtypes are code-owned and never
-read from config; only `sharing.outward.extra` adds to them. Mutations from the
-dashboard, the slash commands, and direct edits all persist this shape, and rule
-mutation helpers preserve every block.
+Any block may be omitted; missing blocks fill from safe defaults
+(`sharing.egress_safety` → `llm`, `reading.taint_classification` → `balanced`,
+`reading.llm_source_classification` → `true`, `whats_yours.stores` → the seeded
+single-operator stores, `sharing` → empty). Outward-sharing builtin subtypes are
+code-owned and never read from config; only `sharing.outward.extra` adds to them.
+Mutations from the dashboard, slash commands, and direct edits all persist this
+shape, and rule mutation helpers preserve every block.
 
 ### LLM mode details
 
-The `llm` verifier receives a sanitized excerpt of
-the most recent inbound message from an **authenticated** session owner, captured
-at gateway dispatch as `user_request_context`.
-
-This channel is deliberately narrow and fail-closed:
+The `llm` verifier receives a sanitized excerpt of the most recent inbound message
+from an **authenticated** session owner, captured at gateway dispatch as
+`user_request_context`. This channel is deliberately narrow and fail-closed:
 
 - It is attached only for the CLI owner or a configured gateway owner
   (`TELEGRAM_ALLOWED_USERS`, `TELEGRAM_GROUP_ALLOWED_USERS`, `DISCORD_ALLOWED_USERS`).
@@ -286,27 +287,25 @@ This channel is deliberately narrow and fail-closed:
   private exports for this gate. Intra-boundary flows (self / local system / model
   provider) never reach the verifier and are unaffected.
 - Authorization is scoped to the data actually being sent, not just the action.
-  The verifier reads the real `action_arguments` (below) alongside the ambient
-  classes the session has read, and judges the payload's content against the
-  authorized intent. A request authorizes only the data classes intrinsic to it,
-  so "subscribe me to this newsletter" cannot launder a calendar event into the
+  The verifier reads the **real action payload** (`action_arguments`, with
+  security-sensitive content and credential-shaped tokens stripped) alongside the
+  ambient classes the session has read, and judges the payload's content against
+  the authorized intent. A request authorizes only the data classes intrinsic to
+  it, so "subscribe me to this newsletter" cannot launder a calendar event into the
   form: a bare email address still auto-approves, but a calendar event in the same
   field does not, even though both ran with the calendar ambiently in scope.
 
-The verifier also receives the **real action payload** — with security-sensitive
-content and credential-shaped tokens stripped — so it can check that content
-matches the authorized intent. At-rest storage stays metadata-only apart from
-the sanitized verdict rationale (best-effort redaction, see Limitations) and the
-short-lived pending-approval permit targets described under Activity And State.
-Enabling `llm` mode assumes the verifier LLM shares the agent's trust boundary; since
-you choose which LLMs Hermes connects to, that assumption is yours to own.
-The full trust-boundary rationale is in theory's
+At-rest storage stays metadata-only apart from the sanitized verdict rationale
+(best-effort redaction, see Limitations) and the short-lived pending-approval permit
+targets described under Activity And State. Enabling `llm` mode assumes the verifier
+LLM shares the agent's trust boundary; since you choose which LLMs Hermes connects to,
+that assumption is yours to own. The full trust-boundary rationale is in theory's
 [Coarse declassification context](./THEORY.md#coarse-declassification-context).
 
 **Verifier and classifier latency.** By default the egress verifier and the LLM
-source classifier run on the agent's own model. If that is a large or reasoning
-model, each judgment can take several seconds. These classification verdicts do
-not need a frontier model, so you can point either path at a faster one.
+source classifier run on the agent's own model; if that is a large or reasoning
+model, each judgment can take several seconds. These verdicts do not need a frontier
+model, so you can point either path at a faster one.
 
 Because Hermes gates per-plugin model selection, you first grant Guardian an
 allowlist in `~/.hermes/config.yaml` (one-time):
@@ -335,10 +334,10 @@ Guardian is fail-safe: if the override is rejected (grant missing) or the model 
 unavailable, it retries once on the default model rather than denying everything. A
 smaller model is faster but less sharp on subtle content/intent calls, so prefer a
 capable "mini"/"flash"-class model over the smallest. Guardian also caches *deny*
-verdicts briefly per session, so a retried blocked action does not re-pay the
-verifier latency (denials only — a cached deny can never become a false allow).
-Watch the effect in the verifier scoreboard on the **Sharing** tab and the
-per-check timing table on the **Protection** tab.
+verdicts briefly per session, so a retried blocked action does not re-pay verifier
+latency (denials only — a cached deny can never become a false allow). Watch the
+effect in the verifier scoreboard on the **Sharing** tab and the per-check timing
+table on the **Protection** tab.
 
 Both context channels are toggleable, in the dashboard Sharing tab, by slash
 command, or directly in `guardian-rules.json` under `sharing`:
@@ -355,12 +354,12 @@ command, or directly in `guardian-rules.json` under `sharing`:
 `llm_user_context` (default on) gates the owner channel above. `llm_cron_context`
 (default on) gates a parallel channel for cron runs: when on, the verifier also
 receives `cron_context`, a sanitized excerpt of the cron job's own stored
-instruction (sourced from the job record, redacted the same way). Because cron
-runs unattended with no human to catch a bad auto-approval, a cron job can **never
-self-authorize high-risk egress** — high-risk cron actions always fall back to
-manual approval even with cron context on. The cron-context state is surfaced in
-the policy snapshot, and enabling it from the dashboard requires explicit
-confirmation.
+instruction (from the job record, redacted the same way). Because cron runs
+unattended with no human to catch a bad
+auto-approval, a cron job can **never self-authorize high-risk egress** — high-risk
+cron actions always fall back to manual approval even with cron context on. The
+cron-context state is surfaced in the policy snapshot, and enabling it from the
+dashboard requires explicit confirmation.
 
 ## Approvals
 
@@ -373,6 +372,11 @@ Approval ID: 4827
 Action: browser_type
 Destination: example.com
 Data classes: communications, contacts
+Why now: Guardian needs approval before private data leaves your boundary.
+- Boundary: Outward
+- Data classes in scope: communications, contacts
+- Action family: browser_type
+- Destination trust: external
 
 The owner can approve with:
 /guardian approve 4827 5m
@@ -398,6 +402,12 @@ the recipient identity, a store write offers the destination, a terminal block
 offers the host or exact command), so not every option appears on every block.
 The structural `trust`/`mine` options are admin-gated — they require the CLI
 owner or a configured gateway owner.
+
+The `Why now` section is metadata-only: it is derived from data classes,
+destination trust, decision step, mode/reason, and action family. It does not
+include raw tool arguments, message bodies, typed text, permit targets, or action
+detail. The same derived `why_now` object appears on pending approvals and recent
+blocks in the policy snapshot.
 
 Blocked tool calls are not paused and resumed. After approval, the agent must
 retry the action.
@@ -498,17 +508,16 @@ reads sent with `fetch` or `sendBeacon`, CDP `Runtime.evaluate` exfiltration,
 and MCP private-source tools paired with webhook/share sinks.
 
 `credential_content` is asymmetric by direction. On **egress** surfaces — tool
-arguments, gateway messages, and the final response — every credential shape
-above is blocked or suppressed. On the **inbound** tool-result path, API/service
+arguments, gateway messages, and the final response — every credential shape above
+is blocked or suppressed. On the **inbound** tool-result path, API/service
 authentication tokens (OAuth/cloud/bearer tokens, JWTs, session cookies, and
 `.env`-style `*_API_KEY=` / `*_TOKEN=` / `*_SECRET=` assignments) are read into
-context rather than suppressed: integrations such as MCP servers routinely
-surface their own tokens, and stripping them at read-time breaks the integration
-without preventing any leak — the token is still blocked if the agent later tries
-to send it anywhere. Hard secrets (private keys, AWS access keys, and
-`*_PASSWORD=` / `*_PRIVATE_KEY=` assignments) stay suppressed even inbound, as
-do concrete `account_security_content` shapes such as OTPs and reset/recovery
-links.
+context rather than suppressed: integrations such as MCP servers routinely surface
+their own tokens, and stripping them at read-time breaks the integration without
+preventing any leak — the token is still blocked if the agent later tries to send it
+anywhere. Hard secrets (private keys, AWS access keys, and `*_PASSWORD=` /
+`*_PRIVATE_KEY=` assignments) stay suppressed even inbound, as do concrete
+`account_security_content` shapes such as OTPs and reset/recovery links.
 
 Secret-assignment matching targets hardcoded literal values assigned to
 secret-named variables. Variables that merely *reference* a secret (names
@@ -531,7 +540,7 @@ The same read-time phrase relaxation applies to provably-reference material
 legitimately discuss password resets, magic links, verification, or security
 alerts as concepts. Concrete auth-code shapes, sensitive links, redaction
 markers, and hard credentials still suppress, and undeclared MCP document reads
-do not receive this provenance-based relaxation.
+do not receive this source-based relaxation.
 
 Disabling a security rule weakens non-approvable hardening. Privacy checks still
 apply to classified private egress, but the disabled security category no
@@ -541,10 +550,10 @@ status` and the dashboard policy snapshot surface a risk banner when
 
 ## Data Classes
 
-Guardian's data classes are categories of *provenance-private* content — private by
-origin, not by pattern (see [Why Guardian?](#why-guardian)). This is why they are
+Guardian's data classes are categories of content that is *private by where it came
+from*, not by what it looks like (see [Why Guardian?](#why-guardian)) — hence
 communications, contacts, calendar, and documents rather than credential or secret
-formats; access-sensitive material that *does* have a signature (credentials, OTPs,
+formats. Access-sensitive material that *does* have a signature (credentials, OTPs,
 tokens) is handled separately and more strictly by the Security Module.
 
 Guardian tracks private context with these data classes:
@@ -588,7 +597,7 @@ unambiguous signals (an SSN, an email-record header block) still taint regardles
 of context. The `email` class is accepted in persisted rules as an alias for
 `communications`.
 
-Document reads are tiered by **source provenance**, so a relaxation that is safe for
+Document reads are tiered by **where the read comes from**, so a relaxation that is safe for
 operator-installed reference material is not silently extended to arbitrary sources.
 A read of provably-reference material (the `skill_view` builtin, or any read whose
 target path resolves under the skills tree) is scanned leniently, tolerating the
@@ -598,7 +607,7 @@ declared (`source = reference`, `source = private`, `source = public`, or
 `public` never privacy-taints from that read; `unknown` is a remembered undecided
 state: it suppresses repeated review but does not relax taint behavior.
 An undeclared MCP document read (`…_read_resource`,
-`…_read_document`, `…_get_resource`) of unknown provenance fails closed: it taints
+`…_read_document`, `…_get_resource`) of unknown origin fails closed: it taints
 `documents` conservatively — even with no detectable signal — and Guardian surfaces
 a one-click "Sources seen" classification in Reading so you can declare the
 server once.
@@ -618,10 +627,6 @@ For arbitrary unknown non-MCP reads, **Taint Classification** controls the fallb
 /guardian reading llm-source-classification on|off
 ```
 
-Unknown MCP document sources are treated as private until declared reference,
-private, public, or unknown; strict extends that conservative posture to
-otherwise-unknown non-MCP reads.
-Relaxed keeps the balanced read behavior and loosens only unknown non-MCP sink handling.
 When LLM source classification is on, Guardian may ask the configured LLM to
 classify otherwise-unknown, signalless reads using metadata only: tool name,
 matcher shape, argument keys/types, status, result type/size, and JSON keys. It
@@ -630,8 +635,8 @@ ordinary Reading tool rule as `reference`, `private`, `public`, or `unknown`, so
 the same tool matcher is not reviewed again. `public` requires high confidence
 from tool metadata that the tool cannot return private user/workspace data, such
 as a current-time or static-version read. `reading.source_model` optionally pins
-this metadata-only classifier to a faster model; empty uses the agent's default
-model and rejected overrides retry once on the default model.
+this metadata-only classifier to a faster model (same fail-safe retry as the
+verifier above).
 
 Egress decisions reason over the **ambient session taint**: the union of the data
 classes the session has read so far and any private-looking classes intrinsic to
@@ -681,11 +686,10 @@ reads).
 
 ## Tool Classification
 
-Guardian recognizes Hermes built-in tools and classifies their calls. In
-`balanced` and `strict` Taint Classification, any non-MCP tool it does **not**
-recognize — a custom integration or a tool Guardian simply has no rule for — is
-treated as a potential sink and gated under taint, exactly like unknown MCP
-tools. In `relaxed`, unrecognized non-MCP tools are not gated under taint.
+Guardian recognizes Hermes built-in tools and classifies their calls. Any non-MCP
+tool it does **not** recognize — a custom integration, or a tool it has no rule for
+— is treated as a potential sink and gated under taint exactly like unknown MCP tools
+(except under `relaxed` Taint Classification; see [Data Classes](#data-classes)).
 
 Tool classifications are split by what they control:
 
@@ -738,7 +742,7 @@ Reading fields:
 - `source`: the document-read classification *mode* — `reference` (scan the read
   leniently, like a skill doc), `private` (always taint as personal data),
   `public` (never privacy-taint from this read), or `unknown` (remember that
-  provenance is unresolved while keeping fallback taint behavior). Empty uses the
+  the source is unresolved while keeping fallback taint behavior). Empty uses the
   tiered default. Because MCP tools are server-prefixed, a prefix match
   (`match = "crm_*"`) declares a whole server at once.
 
@@ -867,21 +871,22 @@ left-to-right is reading the decision pipeline top-to-bottom (what happened → 
 mine → what was read → is it covered by a grant → the floor):
 
 - **Activity**: the decided stream as **turn cards** — each card is one turn (one user
-  prompt and the checks it drove), paginated by turn, with its checks nested inside and
+  prompt and the checks it drove), paginated by turn, checks nested inside and
   expandable to the full resolved capability (the dashboard twin of `/guardian why`),
-  with per-check and per-turn Guardian latency.
-  Plus a pinned *Pending approvals* list with same-screen Approve / Dismiss, a session
-  **taint strip** with *Clear session taint*, per-check **trust pills**, and
-  **deep-linked decision steps** whose clauses jump to the tab that governs them.
-  Filters (decision, trust, class/tag, tool, destination, recipient, date range, search)
-  narrow the checks within each card. Each card header shows the prompt that drove the
-  turn when prompt persistence is enabled (the Debugging toggle on this tab).
+  with per-check and per-turn Guardian latency. Plus a pinned *Pending approvals* list
+  with same-screen Approve / Dismiss, a session **taint strip** with *Clear session
+  taint*, per-check **trust pills**, derived **flow boundary** labels (`Read (no
+  egress)`, `Stays with you`, `Outward`, `Outward to trusted`, `Boundary unknown`),
+  and **deep-linked decision steps** whose clauses jump to the governing tab. Filters
+  (decision, trust, class/tag, tool, destination, recipient, date range, search)
+  narrow checks within each card. Card headers show the driving prompt when prompt
+  persistence is enabled (the Debugging toggle on this tab).
 - **What's Yours**: the self side of the boundary — a *Seen recently* list bucketed by
   trust with a one-click "this is mine → add to self", the self-allowlist (stores /
   identities / hosts), a grant banner when identities/hosts are set, and a *Check a
   destination* widget (resolves a hypothetical destination/recipient to its trust,
   read-only).
-- **Reading**: source provenance and read-taint classification — an inventory
+- **Reading**: read sources and read-taint classification — an inventory
   table showing observed tools plus exact/inherited source policy, Taint
   Classification, the LLM source classifier toggle/model selector, and *Sources
   seen* for undeclared MCP document-read servers.
@@ -963,11 +968,11 @@ Independently of the token, the unauthenticated `GET /policy` and `GET /approval
 responses **do not** include the live four-digit approval ID, so a pending egress
 cannot be read and then self-approved over an unauthenticated channel.
 
-The dashboard stores and displays sanitized metadata, plus the sanitized
-verdict rationale (a best-effort-redacted, length-capped free-text string). It
-does not store raw tool arguments, email bodies, typed text, tokenized URLs,
-file contents, or message content. Recipient context is displayed as a stable
-pseudonymous `recipient_<hash>` identity rather than the raw recipient value.
+The dashboard stores and displays sanitized metadata plus the sanitized verdict
+rationale (a best-effort-redacted, length-capped free-text string); it never stores
+raw tool arguments, email bodies, typed text, tokenized URLs, file contents, or
+message content. Recipient context is displayed as a stable pseudonymous
+`recipient_<hash>` identity rather than the raw recipient value.
 One storage exception is deliberately kept out of dashboard payloads: short-lived
 pending approvals may store bounded `permit_recipient`, `permit_host`, and
 `permit_command` values so an approved block can create a precise `mine` or
@@ -1031,10 +1036,10 @@ HERMES_GUARDIAN_HISTORY_TIMEZONE=America/Los_Angeles
 Set a retention value to `0` to disable that specific limit. Set
 `HERMES_GUARDIAN_ACTIVITY_GROUP_SECONDS=0` to disable display grouping.
 
-Persistent state stores metadata, plus the sanitized verdict rationale (a
-best-effort-redacted, length-capped free-text string; see Limitations). If
-rules or activity state cannot be read or written, security-sensitive filtering
-still runs and private egress from tainted sessions fails closed.
+Persistent state is metadata-only apart from the sanitized verdict rationale (see
+Dashboard and Limitations). If rules or activity state cannot be read or written,
+security-sensitive filtering still runs and private egress from tainted sessions
+fails closed.
 
 ## Cron Notifications
 
@@ -1157,33 +1162,34 @@ python -m pytest -q tests/test_adversarial_corpus.py
 python -m pytest -q tests/test_hermes_e2e_eval.py
 ```
 
-Run the additive approval-fatigue benchmark:
+Each benchmark below is additive and loads the plugin facade into temporary Guardian
+state.
+
+Run the approval-fatigue benchmark:
 
 ```bash
 python -m benchmarks.approval_fatigue --pretty
 ```
 
-The benchmark loads the plugin facade into temporary Guardian state, drives the
-real hooks through synthetic email-to-Notion, browsing/booking, and cron digest
-workflows, and compares `strict`, `read-only`, and `llm` mode metrics. It uses a
-deterministic fake LLM and reports approvals, false-positive prompt rate,
+It drives the real hooks through synthetic email-to-Notion, browsing/booking, and
+cron digest workflows and compares `strict`, `read-only`, and `llm` mode metrics
+with a deterministic fake LLM, reporting approvals, false-positive prompt rate,
 auto/manual approvals, security blocks, unsafe auto approvals, completion, LLM
 calls/fallbacks, cron notifications, and sanitization violations.
 
-Run the additive adversarial corpus benchmark:
+Run the adversarial corpus benchmark:
 
 ```bash
 python -m benchmarks.guardian_adversarial --pretty
 ```
 
-The adversarial benchmark loads the plugin facade into temporary Guardian state
-and exercises hook, classifier, scanner, and result-suppression cases from
-`tests/fixtures/adversarial_corpus.json`. It reports prevented rate,
-false-positive rate, classification accuracy, security scanner accuracy,
-sanitization violations, and known-gap count. CI gates URL path/query/base64
-exfiltration, filename/upload shapes, supported same-call terminal exfiltration,
-multilingual auth-code/security phrasing, sensitive auth links, and benign
-controls. DNS-label-only exfiltration is tracked as a non-gating known gap.
+It exercises hook, classifier, scanner, and result-suppression cases from
+`tests/fixtures/adversarial_corpus.json`, reporting prevented rate, false-positive
+rate, classification accuracy, security scanner accuracy, sanitization violations,
+and known-gap count. CI gates URL path/query/base64 exfiltration, filename/upload
+shapes, supported same-call terminal exfiltration, multilingual auth-code/security
+phrasing, sensitive auth links, and benign controls. DNS-label-only exfiltration is
+tracked as a non-gating known gap.
 
 Run the Hermes-like e2e conversation eval:
 
@@ -1192,14 +1198,26 @@ python -m benchmarks.hermes_e2e_eval --pretty
 python -m pytest -q tests/test_hermes_e2e_eval.py
 ```
 
-The e2e eval loads the plugin facade into temporary Guardian state and drives
-full multi-turn transcripts from `tests/fixtures/e2e_conversations.json` through
-the real Hermes hook lifecycle: inbound user dispatch, pre-LLM hygiene,
-pre-tool checks, tool-result observation, final-output checks, time advances,
-and session reset/end hooks. It uses deterministic transcript steps in normal
-CI and reports attack prevented rate, benign false-positive rate, completion,
-auto approvals, LLM calls, p50/p95/max hook latency, and sanitization
-violations.
+It drives full multi-turn transcripts from `tests/fixtures/e2e_conversations.json`
+through the real Hermes hook lifecycle (inbound user dispatch, pre-LLM hygiene,
+pre-tool checks, tool-result observation, final-output checks, time advances, and
+session reset/end hooks), using deterministic transcript steps in normal CI and
+reporting attack prevented rate, benign false-positive rate, completion, auto
+approvals, LLM calls, p50/p95/max hook latency, and sanitization violations.
+
+Run the direct Hermes CLI probe locally:
+
+```bash
+python -m benchmarks.hermes_cli_e2e_probe --pretty
+HERMES_GUARDIAN_RUN_CLI_E2E=1 python -m pytest -q tests/test_hermes_cli_e2e_probe.py
+```
+
+The CLI probe starts a disposable `HERMES_HOME`, copies this plugin without
+runtime state, points Guardian at a temp `HERMES_GUARDIAN_STATE_DIR`, and drives
+`hermes chat --cli` against a localhost fake OpenAI-compatible model. It verifies
+that a real Hermes terminal-tool loop blocks a prompt-injected `curl` after a
+local private file read, that private file content cannot be laundered into a
+`web_extract` URL, and that benign local terminal/file workflows still complete.
 
 Live model evals are opt-in locally and required by the dedicated live CI job on
 pushes to `main` and manual dispatch:
@@ -1299,17 +1317,15 @@ systemctl restart hermes-gateway.service
 - Blocked tool calls are not paused and resumed; the agent must retry after
   approval.
 - Session taint is intentionally coarse and conservative: egress decisions reason
-  over the full ambient session taint, never narrowing on the basis that a payload
-  "looks clean." The only narrowing is the `llm`-mode verifier reading the real
-  payload — there is no separate deterministic check for payloads that copy
-  private content verbatim, so a laundering payload that fools the verifier in
-  `llm` mode is not otherwise caught; `strict` mode still reviews every tainted
-  egress.
-- The persisted verdict rationale is a sanitized, length-capped free-text
-  string, not structured metadata. Redaction of emails, phones, and
-  credential-shaped tokens is best-effort, so a paraphrased private detail that
-  is none of those could persist in activity and approval storage for the
-  retention window.
+  over the full ambient session taint, never narrowing because a payload "looks
+  clean." The only narrowing is the `llm`-mode verifier reading the real payload, and
+  there is no separate deterministic check for verbatim-copied private content — so a
+  laundering payload that fools the verifier in `llm` mode is not otherwise caught;
+  `strict` mode still reviews every tainted egress.
+- The persisted verdict rationale is free text, not structured metadata. Redaction
+  of emails, phones, and credential-shaped tokens is best-effort, so a paraphrased
+  private detail that is none of those could persist in activity and approval storage
+  for the retention window.
 - Tool classification is heuristic. Unrecognized tools (unknown MCP tools, custom
   integrations, future Hermes tools) are gated conservatively under taint by
   default; declare trusted ones with tool classifications rather than disabling the
@@ -1328,8 +1344,11 @@ systemctl restart hermes-gateway.service
 
 ## Further Reading
 
+- [When secrets don't look like secrets](https://kevinpei.com/posts/thoughts-on-agent-privacy):
+  the origin story and the plain-language argument for why Guardian exists — the
+  *why* this README's *how* puts into practice.
 - [`THEORY.md`](./THEORY.md): Guardian's defense theory, assumptions, and
-  comparisons.
+  comparisons — the rigorous *why-it's-sound* behind the same design.
 - [Hermes security guide](https://hermes-agent.nousresearch.com/docs/user-guide/security)
 - [Hermes security policy](https://github.com/NousResearch/hermes-agent/blob/main/SECURITY.md)
 
