@@ -56,6 +56,14 @@ def _submit_form(plugin, session_id="s1"):
     )
 
 
+def _terminal_helper(plugin, session_id="s1"):
+    return plugin._on_pre_tool_call(
+        "terminal",
+        {"cmd": "printf subscription-helper"},
+        session_id=session_id,
+    )
+
+
 def test_authenticated_owner_request_is_attached_and_enables_allow(monkeypatch):
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin = load_plugin()
@@ -169,7 +177,7 @@ def test_user_request_is_never_persisted(monkeypatch):
         assert "newsletter" not in json.dumps(row).lower()
 
 
-def test_stale_request_beyond_ttl_is_ignored(monkeypatch):
+def test_owner_request_history_is_process_lifetime_not_time_pruned(monkeypatch):
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
@@ -178,15 +186,14 @@ def test_stale_request_beyond_ttl_is_ignored(monkeypatch):
 
     plugin._on_pre_gateway_dispatch(gateway_event(_NEWSLETTER_REQUEST, user_id="owner"))
     owner_hash = plugin._hash_identity("telegram", "owner")
-    # Age the cached entry past its TTL.
-    plugin._OWNER_REQUEST_HISTORY[owner_hash][0]["ts"] -= plugin._USER_REQUEST_TTL_SECONDS + 1
+    plugin._OWNER_REQUEST_HISTORY[owner_hash][0]["ts"] -= 365 * 24 * 60 * 60
 
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
     _submit_form(plugin)
 
     payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
-    assert "user_request_context" not in payload
+    assert payload["user_request_context"]["latest_sanitized_owner_message"]
 
 
 def test_owner_request_history_is_capped_and_chronological(monkeypatch):
@@ -323,15 +330,25 @@ def test_need_more_context_expansion_persists_for_current_turn(monkeypatch):
         args=args,
     )
 
+    other_args = {"cmd": "printf status"}
+    other_shape = plugin._approval_shape(
+        session_id="s1",
+        tool_name="terminal",
+        action_family="terminal_exec",
+        destination="terminal",
+        data_classes={"communications"},
+        args=other_args,
+    )
+
     plugin._llm_security_verdict(shape, args)
-    plugin._llm_security_verdict(shape, args)
+    plugin._llm_security_verdict(other_shape, other_args)
 
     assert len(fake_llm.calls) == 3
     third_payload = json.loads(fake_llm.calls[2]["input"][0]["text"])
     assert third_payload["user_request_context"]["mode"] == "expanded"
 
 
-def test_block_queues_expanded_context_for_next_owner_turn(monkeypatch):
+def test_block_queues_expanded_context_for_next_owner_turn_across_tool_route(monkeypatch):
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
@@ -358,7 +375,7 @@ def test_block_queues_expanded_context_for_next_owner_turn(monkeypatch):
     assert first is not None
 
     plugin._on_pre_gateway_dispatch(gateway_event("try again", user_id="owner"))
-    second = _submit_form(plugin)
+    second = _terminal_helper(plugin)
 
     assert second is None
     retry_payload = json.loads(fake_llm.calls[1]["input"][0]["text"])
@@ -369,7 +386,7 @@ def test_block_queues_expanded_context_for_next_owner_turn(monkeypatch):
     ]
 
 
-def test_queued_expansion_does_not_apply_to_changed_shape(monkeypatch):
+def test_queued_expansion_clears_after_one_owner_turn(monkeypatch):
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
@@ -381,10 +398,16 @@ def test_queued_expansion_does_not_apply_to_changed_shape(monkeypatch):
             "rationale": "needs owner approval",
         },
         {
+            "outcome": "allow",
+            "risk_level": "medium",
+            "authorization_level": "substantive",
+            "rationale": "expanded retry context authorizes helper",
+        },
+        {
             "outcome": "deny",
             "risk_level": "high",
             "authorization_level": "unknown",
-            "rationale": "different payload",
+            "rationale": "new turn is not expanded",
         },
     ])
     plugin.state._PLUGIN_LLM = fake_llm
@@ -396,14 +419,15 @@ def test_queued_expansion_does_not_apply_to_changed_shape(monkeypatch):
     assert first is not None
 
     plugin._on_pre_gateway_dispatch(gateway_event("try again", user_id="owner"))
-    plugin._on_pre_tool_call(
-        "browser_type",
-        {"text": "different@example.com", "selector": "#email"},
-        session_id="s1",
-    )
+    assert _terminal_helper(plugin) is None
+
+    plugin._on_pre_gateway_dispatch(gateway_event("new unrelated request", user_id="owner"))
+    _terminal_helper(plugin)
 
     retry_payload = json.loads(fake_llm.calls[1]["input"][0]["text"])
-    assert retry_payload["user_request_context"]["mode"] == "minimal"
+    later_payload = json.loads(fake_llm.calls[2]["input"][0]["text"])
+    assert retry_payload["user_request_context"]["mode"] == "expanded"
+    assert later_payload["user_request_context"]["mode"] == "minimal"
 
 
 def test_user_context_setting_off_suppresses_attachment(monkeypatch):

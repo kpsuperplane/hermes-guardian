@@ -185,7 +185,7 @@ def test_read_activity_classifier_golden_cases(tool_name, args, expected):
 # softest model-trust point: the prompt waves through low/medium risk, and both
 # risk_level and authorization_level are model-emitted. The deterministic corroboration
 # gate honors such an allow ONLY when the model rated authorization explicit/substantive
-# AND Guardian ACTUALLY held owner/cron authorization context for this owner this window.
+# AND Guardian ACTUALLY held owner/cron authorization context for this owner context.
 # Otherwise it downgrades the allow to a manual gate. It is additive (allow->gate only),
 # never touches intra-boundary allows or local_system-only reads, and never weakens the
 # existing critical/high/cron caps.
@@ -238,7 +238,7 @@ def test_medium_external_private_export_with_weak_auth_gates_even_with_owner_con
 
 def test_external_private_export_with_owner_context_and_explicit_auth_still_allows(monkeypatch):
     # (b) The legitimate "the user asked me to send X" flow: owner authorization context is
-    # present (an authenticated owner request this window) AND the model rated authorization
+    # present (an authenticated owner request) AND the model rated authorization
     # explicit. Both conditions met -> the external private export still auto-allows.
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin = load_plugin()

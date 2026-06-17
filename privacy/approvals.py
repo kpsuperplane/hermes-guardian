@@ -781,6 +781,7 @@ def _remember_user_request(event: Any) -> None:
     if not sanitized:
         return
     with state._LOCK:
+        state._OWNER_TURN_IDS[owner_hash] = turn_id
         _prune_owner_context_unlocked(owner_hash)
         history = state._OWNER_REQUEST_HISTORY.setdefault(owner_hash, [])
         history.append({"ts": state._now(), "text": sanitized})
@@ -789,11 +790,10 @@ def _remember_user_request(event: Any) -> None:
 
 
 def _prune_owner_context_unlocked(owner_hash: str) -> None:
-    cutoff = state._now() - core._USER_REQUEST_TTL_SECONDS
     history = [
         entry
         for entry in state._OWNER_REQUEST_HISTORY.get(owner_hash, [])
-        if float(entry.get("ts") or 0) >= cutoff and str(entry.get("text") or "").strip()
+        if str(entry.get("text") or "").strip()
     ]
     if history:
         state._OWNER_REQUEST_HISTORY[owner_hash] = history[-core._OWNER_REQUEST_HISTORY_MAX:]
@@ -801,18 +801,8 @@ def _prune_owner_context_unlocked(owner_hash: str) -> None:
         state._OWNER_REQUEST_HISTORY.pop(owner_hash, None)
         state._OWNER_CONTEXT_ACTIVE_EXPANSIONS.pop(owner_hash, None)
         state._OWNER_CONTEXT_QUEUED_EXPANSIONS.pop(owner_hash, None)
+        state._OWNER_TURN_IDS.pop(owner_hash, None)
         return
-    for store_name in ("_OWNER_CONTEXT_ACTIVE_EXPANSIONS", "_OWNER_CONTEXT_QUEUED_EXPANSIONS"):
-        store = getattr(state, store_name)
-        records = [
-            record
-            for record in store.get(owner_hash, [])
-            if float(record.get("ts") or 0) >= cutoff and str(record.get("shape_key") or "")
-        ]
-        if records:
-            store[owner_hash] = records[-16:]
-        else:
-            store.pop(owner_hash, None)
 
 
 def _owner_request_texts_for_owner(owner_hash: str) -> list[str]:
@@ -833,37 +823,12 @@ def _latest_owner_request_for_owner(owner_hash: str) -> str:
     return history[-1] if history else ""
 
 
-def _owner_context_shape_key(shape: dict[str, Any]) -> str:
-    classes = ",".join(sorted(str(cls) for cls in (shape.get("data_classes") or [])))
-    parts = [
-        tool_policy._normalize_session_id(shape.get("session_id")),
-        str(shape.get("action_family") or ""),
-        str(shape.get("destination") or ""),
-        tool_policy._normalize_rule_purpose(shape.get("purpose", "unknown"), allow_star=False),
-        tool_policy._normalize_rule_recipient_identity(shape.get("recipient_identity", "none"), allow_star=False),
-        classes,
-        str(shape.get("fingerprint") or ""),
-    ]
-    return "|".join(parts)
-
-
 def _promote_queued_owner_context_unlocked(owner_hash: str, turn_id: str) -> None:
-    queued = state._OWNER_CONTEXT_QUEUED_EXPANSIONS.pop(owner_hash, [])
+    queued = state._OWNER_CONTEXT_QUEUED_EXPANSIONS.pop(owner_hash, None)
     if not queued or not turn_id:
         state._OWNER_CONTEXT_ACTIVE_EXPANSIONS.pop(owner_hash, None)
         return
-    active: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for record in queued:
-        shape_key = str(record.get("shape_key") or "")
-        if not shape_key or shape_key in seen:
-            continue
-        seen.add(shape_key)
-        active.append({"ts": state._now(), "turn_id": turn_id, "shape_key": shape_key})
-    if active:
-        state._OWNER_CONTEXT_ACTIVE_EXPANSIONS[owner_hash] = active[-16:]
-    else:
-        state._OWNER_CONTEXT_ACTIVE_EXPANSIONS.pop(owner_hash, None)
+    state._OWNER_CONTEXT_ACTIVE_EXPANSIONS[owner_hash] = {"ts": state._now(), "turn_id": turn_id}
 
 
 def _activate_owner_context_expansion_for_shape(shape: dict[str, Any]) -> bool:
@@ -872,20 +837,13 @@ def _activate_owner_context_expansion_for_shape(shape: dict[str, Any]) -> bool:
         return False
     if len(_owner_request_texts_for_owner(owner_hash)) < 2:
         return False
-    shape_key = _owner_context_shape_key(shape)
-    turn_id = tool_policy._current_turn_id(shape.get("session_id"))
-    if not shape_key or not turn_id:
+    turn_id = _owner_turn_id_for_shape(shape)
+    if not turn_id:
         return False
     with state._LOCK:
         _prune_owner_context_unlocked(owner_hash)
-        active = [
-            record
-            for record in state._OWNER_CONTEXT_ACTIVE_EXPANSIONS.get(owner_hash, [])
-            if str(record.get("turn_id") or "") == turn_id
-        ]
-        if not any(str(record.get("shape_key") or "") == shape_key for record in active):
-            active.append({"ts": state._now(), "turn_id": turn_id, "shape_key": shape_key})
-        state._OWNER_CONTEXT_ACTIVE_EXPANSIONS[owner_hash] = active[-16:]
+        state._OWNER_TURN_IDS.setdefault(owner_hash, turn_id)
+        state._OWNER_CONTEXT_ACTIVE_EXPANSIONS[owner_hash] = {"ts": state._now(), "turn_id": turn_id}
     return True
 
 
@@ -895,15 +853,18 @@ def _queue_owner_context_expansion_for_shape(shape: dict[str, Any]) -> None:
         return
     if not _owner_request_texts_for_owner(owner_hash):
         return
-    shape_key = _owner_context_shape_key(shape)
-    if not shape_key:
-        return
     with state._LOCK:
         _prune_owner_context_unlocked(owner_hash)
-        queued = state._OWNER_CONTEXT_QUEUED_EXPANSIONS.setdefault(owner_hash, [])
-        if not any(str(record.get("shape_key") or "") == shape_key for record in queued):
-            queued.append({"ts": state._now(), "shape_key": shape_key})
-        state._OWNER_CONTEXT_QUEUED_EXPANSIONS[owner_hash] = queued[-16:]
+        state._OWNER_CONTEXT_QUEUED_EXPANSIONS[owner_hash] = {"ts": state._now()}
+
+
+def _owner_turn_id_for_shape(shape: dict[str, Any]) -> str:
+    owner_hash = str(shape.get("owner_hash") or "")
+    with state._LOCK:
+        turn_id = str(state._OWNER_TURN_IDS.get(owner_hash) or "")
+    if turn_id:
+        return turn_id
+    return tool_policy._current_turn_id(shape.get("session_id"))
 
 
 def _owner_context_expansion_active_for_shape(shape: dict[str, Any]) -> bool:
@@ -912,20 +873,14 @@ def _owner_context_expansion_active_for_shape(shape: dict[str, Any]) -> bool:
         return False
     if len(_owner_request_texts_for_owner(owner_hash)) < 2:
         return False
-    shape_key = _owner_context_shape_key(shape)
-    turn_id = tool_policy._current_turn_id(shape.get("session_id"))
+    turn_id = _owner_turn_id_for_shape(shape)
     with state._LOCK:
         _prune_owner_context_unlocked(owner_hash)
-        records = [
-            record
-            for record in state._OWNER_CONTEXT_ACTIVE_EXPANSIONS.get(owner_hash, [])
-            if str(record.get("turn_id") or "") == turn_id
-        ]
-        if records:
-            state._OWNER_CONTEXT_ACTIVE_EXPANSIONS[owner_hash] = records[-16:]
-        else:
+        record = state._OWNER_CONTEXT_ACTIVE_EXPANSIONS.get(owner_hash) or {}
+        if str(record.get("turn_id") or "") != turn_id:
             state._OWNER_CONTEXT_ACTIVE_EXPANSIONS.pop(owner_hash, None)
-        return any(str(record.get("shape_key") or "") == shape_key for record in records)
+            return False
+        return True
 
 
 def _owner_context_for_verdict(shape: dict[str, Any], *, expanded: bool) -> dict[str, Any] | None:

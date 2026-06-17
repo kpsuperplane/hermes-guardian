@@ -269,17 +269,16 @@ The `llm` verifier receives sanitized owner-authored context from an
 - It is captured before the model or any tool runs, and only after the Security
   Module clears the message, so reset codes and credentials are never cached.
 - It is sanitized (emails, phones, tokens, and URL paths redacted), held in
-  volatile owner-keyed state, capped to the last 3 owner messages, expires after
-  15 minutes, and is never written to activity rows, approval records, or any
-  persistent store.
+  volatile owner-keyed state, capped to the last 3 owner messages, and is never
+  written to activity rows, approval records, or any persistent store.
 - Verifier calls start with minimal context: the latest sanitized owner message
   plus a count of available owner messages. If that is too elliptical (for
   example "yes" or "try again"), the verifier can return `need_more_context`;
   Guardian immediately retries that same verdict once with the bounded owner
   history. If it still cannot decide, the action falls back to manual approval.
 - When Guardian blocks an egress, it queues expanded owner context for the next
-  authenticated owner turn for the same narrow action shape. This lets an
-  approve/retry turn start with the original owner request plus the retry message,
+  authenticated owner turn. This lets an approve/retry turn start with the
+  original owner request plus the retry message even if the agent switches tools,
   without relying on phrase matching. The queued expansion is replaced or cleared
   at the following owner turn.
 - The verifier treats it as authorization *evidence*, not an instruction: it can
@@ -289,8 +288,8 @@ The `llm` verifier receives sanitized owner-authored context from an
   `authorization_level` are model-emitted (and therefore attacker-influenceable), an
   `allow` verdict for a private export to an `external`/`unknown` destination is honored
   only when *both* the model rates `authorization_level` `explicit`/`substantive` **and**
-  Guardian actually holds owner/cron authorization context for this owner this window
-  (a fresh `user_request_context`, or a `cron_context` for a cron run). If that context
+  Guardian actually holds owner/cron authorization context for this owner context
+  (a `user_request_context`, or a `cron_context` for a cron run). If that context
   is absent, the allow is downgraded to manual approval regardless of risk band — so a
   "medium-risk" self-report cannot wave a tainted export through on the model's word
   alone. Low-risk verifier-approved public remote reads that Guardian's structural

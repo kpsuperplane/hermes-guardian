@@ -299,11 +299,11 @@ def _owner_context_present(shape: dict[str, Any]) -> bool:
     """True iff owner/cron authorization context is ACTUALLY attached for this verdict.
 
     Mirrors exactly the conditions under which ``_llm_verdict_input`` attaches
-    ``user_request_context`` (fresh sanitized owner-authored context from an authenticated
+    ``user_request_context`` (sanitized owner-authored context from an authenticated
     session owner, with the owner-context channel enabled) or ``cron_context`` (the
     standing instruction of the cron job that owns this run, with the cron-context
     channel enabled). This is the corroboration signal: it is true only when Guardian holds
-    concrete owner/cron authorization for this owner this window — not merely because
+    concrete owner/cron authorization for this owner context — not merely because
     the model emitted ``explicit``/``substantive`` (both of those fields are model-emitted
     and therefore attacker-influenceable). The external-export allow gate combines the
     model's authorization_level with this independent presence check (doc 02 §3 / charter

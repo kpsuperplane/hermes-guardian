@@ -424,7 +424,7 @@ def _llm_policy_tool_call_result(
         # prompt waves through low/medium risk, and both risk_level and authorization_level
         # are model-emitted. Honor such an allow only when the model rated authorization
         # explicit/substantive AND Guardian ACTUALLY held owner/cron authorization context
-        # for this owner this window. Otherwise downgrade to a manual gate — never
+        # for this owner context. Otherwise downgrade to a manual gate — never
         # auto-allow. Additive: this only turns an allow into a deny, and only for genuinely
         # outward private exports (intra-boundary allows and reads are untouched). Runs
         # AFTER the cron high-risk downgrade so that cap still holds, and after the deny
