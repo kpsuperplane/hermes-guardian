@@ -174,10 +174,8 @@ def _prune_expired() -> None:
                 state._RECENT_COMMAND_OWNERS[key] = fresh
             else:
                 state._RECENT_COMMAND_OWNERS.pop(key, None)
-        request_cutoff = state._now() - core._USER_REQUEST_TTL_SECONDS
-        for owner_hash, (timestamp, _text) in list(state._RECENT_OWNER_REQUESTS.items()):
-            if timestamp < request_cutoff:
-                state._RECENT_OWNER_REQUESTS.pop(owner_hash, None)
+        for owner_hash in list(state._OWNER_REQUEST_HISTORY):
+            approvals._prune_owner_context_unlocked(owner_hash)
 
 
 def _terminal_command_is_low_risk(args: Any) -> bool:
@@ -301,10 +299,10 @@ def _owner_context_present(shape: dict[str, Any]) -> bool:
     """True iff owner/cron authorization context is ACTUALLY attached for this verdict.
 
     Mirrors exactly the conditions under which ``_llm_verdict_input`` attaches
-    ``user_request_context`` (a fresh sanitized request from an authenticated session
-    owner, with the owner-context channel enabled) or ``cron_context`` (the standing
-    instruction of the cron job that owns this run, with the cron-context channel
-    enabled). This is the corroboration signal: it is true only when Guardian holds a
+    ``user_request_context`` (fresh sanitized owner-authored context from an authenticated
+    session owner, with the owner-context channel enabled) or ``cron_context`` (the
+    standing instruction of the cron job that owns this run, with the cron-context
+    channel enabled). This is the corroboration signal: it is true only when Guardian holds
     concrete owner/cron authorization for this owner this window — not merely because
     the model emitted ``explicit``/``substantive`` (both of those fields are model-emitted
     and therefore attacker-influenceable). The external-export allow gate combines the
@@ -313,7 +311,7 @@ def _owner_context_present(shape: dict[str, Any]) -> bool:
     """
     if (
         rules._llm_user_context_enabled()
-        and approvals._recent_user_request_for_owner(shape.get("owner_hash", ""))
+        and approvals._owner_context_for_verdict(shape, expanded=False)
     ):
         return True
     if (
@@ -427,8 +425,11 @@ def _llm_corroboration_downgrade_reason(
     return "external private export lacks corroboration: " + "; ".join(missing)
 
 
-def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:
-    user_request = approvals._recent_user_request_for_owner(shape.get("owner_hash", ""))
+def _llm_verdict_input(shape: dict[str, Any], args: Any, *, expand_owner_context: bool = False) -> dict[str, Any]:
+    user_context = approvals._owner_context_for_verdict(
+        shape,
+        expanded=bool(expand_owner_context),
+    )
     payload: dict[str, Any] = {
         "planned_action": {
             "tool_name": shape.get("tool_name", ""),
@@ -459,10 +460,10 @@ def _llm_verdict_input(shape: dict[str, Any], args: Any) -> dict[str, Any]:
             "manual_approval_available_if_denied": True,
         },
     }
-    if user_request and rules._llm_user_context_enabled():
+    if user_context and rules._llm_user_context_enabled():
         # Present only for authenticated owner origins; sanitized authorization
         # evidence, not an instruction (see _LLM_POLICY_INSTRUCTIONS).
-        payload["user_request_context"] = {"sanitized_user_request": user_request}
+        payload["user_request_context"] = user_context
     if rules._llm_cron_context_enabled():
         cron_instruction = approvals._cron_instruction_for_session(shape.get("session_id"))
         if cron_instruction:
@@ -599,7 +600,27 @@ def _deny_cache_key(shape: dict[str, Any]) -> str:
         tool_policy._normalize_session_id(shape.get("session_id")),
         str(shape.get("owner_hash") or ""),
         str(shape.get("fingerprint") or ""),
+        _verdict_context_digest(shape),
     ])
+
+
+def _verdict_context_digest(shape: dict[str, Any]) -> str:
+    context: dict[str, Any] = {}
+    if rules._llm_user_context_enabled():
+        user_context = approvals._owner_context_for_verdict(
+            shape,
+            expanded=approvals._owner_context_expansion_active_for_shape(shape),
+        )
+        if user_context:
+            context["user_request_context"] = user_context
+    if rules._llm_cron_context_enabled():
+        cron_instruction = approvals._cron_instruction_for_session(shape.get("session_id"))
+        if cron_instruction:
+            context["cron_context"] = {"sanitized_cron_instruction": cron_instruction}
+    if not context:
+        return ""
+    raw = json.dumps(context, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
 def _cached_deny_verdict(shape: dict[str, Any]) -> dict[str, str] | None:
@@ -650,9 +671,14 @@ def _llm_security_verdict(shape: dict[str, Any], args: Any) -> dict[str, str]:
         return _llm_verifier_unavailable_verdict("LLM verifier unavailable")
     activity_store._perf_mark_llm_invoked()
     verifier_model = rules._llm_verifier_model()
-    input_text = json.dumps(_llm_verdict_input(shape, args), sort_keys=True)
 
-    def _call(use_model: bool) -> Any:
+    def _input_text(expand_owner_context: bool) -> str:
+        return json.dumps(
+            _llm_verdict_input(shape, args, expand_owner_context=expand_owner_context),
+            sort_keys=True,
+        )
+
+    def _call(input_text: str, use_model: bool) -> Any:
         kwargs: dict[str, Any] = {
             "instructions": core._LLM_POLICY_INSTRUCTIONS,
             "input": [{"type": "text", "text": input_text}],
@@ -667,32 +693,52 @@ def _llm_security_verdict(shape: dict[str, Any], args: Any) -> dict[str, str]:
             kwargs["model"] = verifier_model
         return llm.complete_structured(**kwargs)
 
-    try:
-        result = _call(use_model=True)
-    except Exception as exc:
-        if verifier_model:
-            # The model override can be rejected (e.g. allow_model_override is not
-            # granted in config) or the fast model may be unavailable. Never
-            # fail-close the verifier on that: retry once on the default model so a
-            # misconfiguration degrades to "slower", not "deny everything".
-            core.logger.warning(
-                "%s: verifier model override %r failed (%s); retrying on default model",
-                core._PLUGIN_NAME, verifier_model, exc,
-            )
-            try:
-                result = _call(use_model=False)
-            except Exception as exc2:
-                core.logger.warning("%s: LLM security verifier failed closed: %s", core._PLUGIN_NAME, exc2)
+    def _verdict_for_input(input_text: str) -> dict[str, str]:
+        try:
+            result = _call(input_text, use_model=True)
+        except Exception as exc:
+            if verifier_model:
+                # The model override can be rejected (e.g. allow_model_override not
+                # granted in config) or the fast model may be unavailable. Never
+                # fail-close the verifier on that: retry once on the default model so a
+                # misconfiguration degrades to "slower", not "deny everything".
+                core.logger.warning(
+                    "%s: verifier model override %r failed (%s); retrying on default model",
+                    core._PLUGIN_NAME, verifier_model, exc,
+                )
+                try:
+                    result = _call(input_text, use_model=False)
+                except Exception as exc2:
+                    core.logger.warning("%s: LLM security verifier failed closed: %s", core._PLUGIN_NAME, exc2)
+                    return _llm_verifier_unavailable_verdict("LLM verifier failed closed")
+            else:
+                core.logger.warning("%s: LLM security verifier failed closed: %s", core._PLUGIN_NAME, exc)
                 return _llm_verifier_unavailable_verdict("LLM verifier failed closed")
-        else:
+
+        try:
+            parsed = getattr(result, "parsed", None)
+            if parsed is None and getattr(result, "text", ""):
+                parsed = json.loads(str(result.text))
+            return _validated_llm_security_verdict(parsed)
+        except Exception as exc:
             core.logger.warning("%s: LLM security verifier failed closed: %s", core._PLUGIN_NAME, exc)
             return _llm_verifier_unavailable_verdict("LLM verifier failed closed")
 
-    try:
-        parsed = getattr(result, "parsed", None)
-        if parsed is None and getattr(result, "text", ""):
-            parsed = json.loads(str(result.text))
-        return _validated_llm_security_verdict(parsed)
-    except Exception as exc:
-        core.logger.warning("%s: LLM security verifier failed closed: %s", core._PLUGIN_NAME, exc)
-        return _llm_verifier_unavailable_verdict("LLM verifier failed closed")
+    expanded = approvals._owner_context_expansion_active_for_shape(shape)
+    verdict = _verdict_for_input(_input_text(expanded))
+    if verdict.get("outcome") == "need_more_context":
+        if not expanded and approvals._activate_owner_context_expansion_for_shape(shape):
+            expanded = True
+            verdict = _verdict_for_input(_input_text(expanded))
+        if verdict.get("outcome") == "need_more_context":
+            try:
+                approvals._queue_owner_context_expansion_for_shape(shape)
+            except Exception:
+                pass
+            return {
+                "outcome": "deny",
+                "risk_level": "high",
+                "authorization_level": "unknown",
+                "rationale": "verifier needed more owner context",
+            }
+    return verdict

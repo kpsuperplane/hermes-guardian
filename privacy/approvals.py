@@ -759,10 +759,12 @@ def _owner_is_authenticated(owner_hash: str) -> bool:
 
 
 def _remember_user_request(event: Any) -> None:
-    """Cache a sanitized excerpt of an authenticated owner's inbound message.
+    """Cache a sanitized authenticated-owner inbound message.
 
     Stored in volatile, owner-keyed process state only. The raw text is never
     persisted; emails, phones, tokens, and URL paths are redacted before storage.
+    The bounded history is authorization evidence for the LLM verifier; it is not
+    a transcript and never includes model/tool content.
     """
     text = getattr(event, "text", "")
     if not isinstance(text, str) or not text.strip():
@@ -774,27 +776,171 @@ def _remember_user_request(event: Any) -> None:
     # so a denial in the previous turn does not persist into this one, and rotate the
     # turn_id so subsequent activity groups under this prompt.
     privacy_module._clear_turn_external_denials_for_owner(owner_hash)
-    tool_policy._rotate_turn_id_for_owner(owner_hash)
+    turn_id = tool_policy._rotate_turn_id_for_owner(owner_hash)
     sanitized = llm._redact_command_for_llm(text.strip())
     if not sanitized:
         return
     with state._LOCK:
-        state._RECENT_OWNER_REQUESTS[owner_hash] = (state._now(), sanitized)
+        _prune_owner_context_unlocked(owner_hash)
+        history = state._OWNER_REQUEST_HISTORY.setdefault(owner_hash, [])
+        history.append({"ts": state._now(), "text": sanitized})
+        del history[:-core._OWNER_REQUEST_HISTORY_MAX]
+        _promote_queued_owner_context_unlocked(owner_hash, turn_id)
 
 
-def _recent_user_request_for_owner(owner_hash: str) -> str:
-    """Most recent fresh sanitized request for an authenticated owner, else ""."""
+def _prune_owner_context_unlocked(owner_hash: str) -> None:
+    cutoff = state._now() - core._USER_REQUEST_TTL_SECONDS
+    history = [
+        entry
+        for entry in state._OWNER_REQUEST_HISTORY.get(owner_hash, [])
+        if float(entry.get("ts") or 0) >= cutoff and str(entry.get("text") or "").strip()
+    ]
+    if history:
+        state._OWNER_REQUEST_HISTORY[owner_hash] = history[-core._OWNER_REQUEST_HISTORY_MAX:]
+    else:
+        state._OWNER_REQUEST_HISTORY.pop(owner_hash, None)
+        state._OWNER_CONTEXT_ACTIVE_EXPANSIONS.pop(owner_hash, None)
+        state._OWNER_CONTEXT_QUEUED_EXPANSIONS.pop(owner_hash, None)
+        return
+    for store_name in ("_OWNER_CONTEXT_ACTIVE_EXPANSIONS", "_OWNER_CONTEXT_QUEUED_EXPANSIONS"):
+        store = getattr(state, store_name)
+        records = [
+            record
+            for record in store.get(owner_hash, [])
+            if float(record.get("ts") or 0) >= cutoff and str(record.get("shape_key") or "")
+        ]
+        if records:
+            store[owner_hash] = records[-16:]
+        else:
+            store.pop(owner_hash, None)
+
+
+def _owner_request_texts_for_owner(owner_hash: str) -> list[str]:
+    """Fresh sanitized owner messages, oldest-to-newest."""
     if not _owner_is_authenticated(owner_hash):
-        return ""
+        return []
     with state._LOCK:
-        entry = state._RECENT_OWNER_REQUESTS.get(owner_hash)
-        if not entry:
-            return ""
-        timestamp, sanitized = entry
-        if state._now() - timestamp > core._USER_REQUEST_TTL_SECONDS:
-            state._RECENT_OWNER_REQUESTS.pop(owner_hash, None)
-            return ""
-        return sanitized
+        _prune_owner_context_unlocked(owner_hash)
+        return [
+            str(entry.get("text") or "")
+            for entry in state._OWNER_REQUEST_HISTORY.get(owner_hash, [])
+            if str(entry.get("text") or "")
+        ]
+
+
+def _latest_owner_request_for_owner(owner_hash: str) -> str:
+    history = _owner_request_texts_for_owner(owner_hash)
+    return history[-1] if history else ""
+
+
+def _owner_context_shape_key(shape: dict[str, Any]) -> str:
+    classes = ",".join(sorted(str(cls) for cls in (shape.get("data_classes") or [])))
+    parts = [
+        tool_policy._normalize_session_id(shape.get("session_id")),
+        str(shape.get("action_family") or ""),
+        str(shape.get("destination") or ""),
+        tool_policy._normalize_rule_purpose(shape.get("purpose", "unknown"), allow_star=False),
+        tool_policy._normalize_rule_recipient_identity(shape.get("recipient_identity", "none"), allow_star=False),
+        classes,
+        str(shape.get("fingerprint") or ""),
+    ]
+    return "|".join(parts)
+
+
+def _promote_queued_owner_context_unlocked(owner_hash: str, turn_id: str) -> None:
+    queued = state._OWNER_CONTEXT_QUEUED_EXPANSIONS.pop(owner_hash, [])
+    if not queued or not turn_id:
+        state._OWNER_CONTEXT_ACTIVE_EXPANSIONS.pop(owner_hash, None)
+        return
+    active: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for record in queued:
+        shape_key = str(record.get("shape_key") or "")
+        if not shape_key or shape_key in seen:
+            continue
+        seen.add(shape_key)
+        active.append({"ts": state._now(), "turn_id": turn_id, "shape_key": shape_key})
+    if active:
+        state._OWNER_CONTEXT_ACTIVE_EXPANSIONS[owner_hash] = active[-16:]
+    else:
+        state._OWNER_CONTEXT_ACTIVE_EXPANSIONS.pop(owner_hash, None)
+
+
+def _activate_owner_context_expansion_for_shape(shape: dict[str, Any]) -> bool:
+    owner_hash = str(shape.get("owner_hash") or "")
+    if not _owner_is_authenticated(owner_hash):
+        return False
+    if len(_owner_request_texts_for_owner(owner_hash)) < 2:
+        return False
+    shape_key = _owner_context_shape_key(shape)
+    turn_id = tool_policy._current_turn_id(shape.get("session_id"))
+    if not shape_key or not turn_id:
+        return False
+    with state._LOCK:
+        _prune_owner_context_unlocked(owner_hash)
+        active = [
+            record
+            for record in state._OWNER_CONTEXT_ACTIVE_EXPANSIONS.get(owner_hash, [])
+            if str(record.get("turn_id") or "") == turn_id
+        ]
+        if not any(str(record.get("shape_key") or "") == shape_key for record in active):
+            active.append({"ts": state._now(), "turn_id": turn_id, "shape_key": shape_key})
+        state._OWNER_CONTEXT_ACTIVE_EXPANSIONS[owner_hash] = active[-16:]
+    return True
+
+
+def _queue_owner_context_expansion_for_shape(shape: dict[str, Any]) -> None:
+    owner_hash = str(shape.get("owner_hash") or "")
+    if not _owner_is_authenticated(owner_hash):
+        return
+    if not _owner_request_texts_for_owner(owner_hash):
+        return
+    shape_key = _owner_context_shape_key(shape)
+    if not shape_key:
+        return
+    with state._LOCK:
+        _prune_owner_context_unlocked(owner_hash)
+        queued = state._OWNER_CONTEXT_QUEUED_EXPANSIONS.setdefault(owner_hash, [])
+        if not any(str(record.get("shape_key") or "") == shape_key for record in queued):
+            queued.append({"ts": state._now(), "shape_key": shape_key})
+        state._OWNER_CONTEXT_QUEUED_EXPANSIONS[owner_hash] = queued[-16:]
+
+
+def _owner_context_expansion_active_for_shape(shape: dict[str, Any]) -> bool:
+    owner_hash = str(shape.get("owner_hash") or "")
+    if not _owner_is_authenticated(owner_hash):
+        return False
+    if len(_owner_request_texts_for_owner(owner_hash)) < 2:
+        return False
+    shape_key = _owner_context_shape_key(shape)
+    turn_id = tool_policy._current_turn_id(shape.get("session_id"))
+    with state._LOCK:
+        _prune_owner_context_unlocked(owner_hash)
+        records = [
+            record
+            for record in state._OWNER_CONTEXT_ACTIVE_EXPANSIONS.get(owner_hash, [])
+            if str(record.get("turn_id") or "") == turn_id
+        ]
+        if records:
+            state._OWNER_CONTEXT_ACTIVE_EXPANSIONS[owner_hash] = records[-16:]
+        else:
+            state._OWNER_CONTEXT_ACTIVE_EXPANSIONS.pop(owner_hash, None)
+        return any(str(record.get("shape_key") or "") == shape_key for record in records)
+
+
+def _owner_context_for_verdict(shape: dict[str, Any], *, expanded: bool) -> dict[str, Any] | None:
+    history = _owner_request_texts_for_owner(str(shape.get("owner_hash") or ""))
+    if not history:
+        return None
+    context: dict[str, Any] = {
+        "mode": "expanded" if expanded else "minimal",
+        "latest_sanitized_owner_message": history[-1],
+        "available_owner_messages": len(history),
+        "expanded_context_available": len(history) > 1,
+    }
+    if expanded:
+        context["sanitized_owner_messages"] = history
+    return context
 
 
 def _cron_instruction_for_session(session_id: str | None) -> str:

@@ -37,6 +37,17 @@ def _deny_llm():
     })
 
 
+class SequenceSecurityLlm:
+    def __init__(self, verdicts):
+        self.verdicts = list(verdicts)
+        self.calls = []
+
+    def complete_structured(self, **kwargs):
+        self.calls.append(kwargs)
+        verdict = self.verdicts.pop(0)
+        return SimpleNamespace(parsed=verdict, text=json.dumps(verdict))
+
+
 def _submit_form(plugin, session_id="s1"):
     return plugin._on_pre_tool_call(
         "browser_type",
@@ -61,7 +72,9 @@ def test_authenticated_owner_request_is_attached_and_enables_allow(monkeypatch):
     assert result is None
     assert not plugin._PENDING_APPROVALS
     payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
-    request = payload["user_request_context"]["sanitized_user_request"]
+    context = payload["user_request_context"]
+    assert context["mode"] == "minimal"
+    request = context["latest_sanitized_owner_message"]
     assert "newsletter" in request
     assert "submit this form" in request
 
@@ -112,7 +125,7 @@ def test_security_sensitive_message_is_not_cached(monkeypatch):
     )
 
     owner_hash = plugin._hash_identity("telegram", "owner")
-    assert plugin._recent_user_request_for_owner(owner_hash) == ""
+    assert plugin._latest_owner_request_for_owner(owner_hash) == ""
 
 
 def test_cached_request_redacts_pii_before_storage(monkeypatch):
@@ -133,7 +146,7 @@ def test_cached_request_redacts_pii_before_storage(monkeypatch):
     payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
     encoded = json.dumps(payload, sort_keys=True)
     assert "alice@example.com" not in encoded
-    assert "<email>" in payload["user_request_context"]["sanitized_user_request"]
+    assert "<email>" in payload["user_request_context"]["latest_sanitized_owner_message"]
 
 
 def test_user_request_is_never_persisted(monkeypatch):
@@ -166,11 +179,7 @@ def test_stale_request_beyond_ttl_is_ignored(monkeypatch):
     plugin._on_pre_gateway_dispatch(gateway_event(_NEWSLETTER_REQUEST, user_id="owner"))
     owner_hash = plugin._hash_identity("telegram", "owner")
     # Age the cached entry past its TTL.
-    timestamp, text = plugin._RECENT_OWNER_REQUESTS[owner_hash]
-    plugin._RECENT_OWNER_REQUESTS[owner_hash] = (
-        timestamp - plugin._USER_REQUEST_TTL_SECONDS - 1,
-        text,
-    )
+    plugin._OWNER_REQUEST_HISTORY[owner_hash][0]["ts"] -= plugin._USER_REQUEST_TTL_SECONDS + 1
 
     bind_owner(plugin)
     plugin._taint_session("s1", {"communications"})
@@ -178,6 +187,223 @@ def test_stale_request_beyond_ttl_is_ignored(monkeypatch):
 
     payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
     assert "user_request_context" not in payload
+
+
+def test_owner_request_history_is_capped_and_chronological(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+
+    for text in ["first", "second", "third", "fourth"]:
+        plugin._on_pre_gateway_dispatch(gateway_event(text, user_id="owner"))
+
+    owner_hash = plugin._hash_identity("telegram", "owner")
+    assert plugin._owner_request_texts_for_owner(owner_hash) == ["second", "third", "fourth"]
+
+
+def test_guardian_command_does_not_enter_owner_request_history(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+
+    plugin._on_pre_gateway_dispatch(gateway_event("unsubscribe me", user_id="owner"))
+    plugin._on_pre_gateway_dispatch(gateway_event("/guardian status", user_id="owner"))
+
+    owner_hash = plugin._hash_identity("telegram", "owner")
+    assert plugin._owner_request_texts_for_owner(owner_hash) == ["unsubscribe me"]
+
+
+def test_need_more_context_expands_current_verdict_call(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    fake_llm = SequenceSecurityLlm([
+        {
+            "outcome": "need_more_context",
+            "risk_level": "medium",
+            "authorization_level": "unknown",
+            "rationale": "latest reply is elliptical",
+        },
+        {
+            "outcome": "allow",
+            "risk_level": "medium",
+            "authorization_level": "substantive",
+            "rationale": "expanded owner context authorizes newsletter signup",
+        },
+    ])
+    plugin.state._PLUGIN_LLM = fake_llm
+
+    plugin._on_pre_gateway_dispatch(gateway_event("subscribe me to this newsletter", user_id="owner"))
+    bind_owner(plugin)
+    plugin._on_pre_gateway_dispatch(gateway_event("yeah that sounds great bro", user_id="owner"))
+    plugin._taint_session("s1", {"communications", "contacts"})
+
+    result = _submit_form(plugin)
+
+    assert result is None
+    assert len(fake_llm.calls) == 2
+    first_payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
+    second_payload = json.loads(fake_llm.calls[1]["input"][0]["text"])
+    assert first_payload["user_request_context"]["mode"] == "minimal"
+    assert "sanitized_owner_messages" not in first_payload["user_request_context"]
+    assert second_payload["user_request_context"]["mode"] == "expanded"
+    assert second_payload["user_request_context"]["sanitized_owner_messages"] == [
+        "subscribe me to this newsletter",
+        "yeah that sounds great bro",
+    ]
+
+
+def test_repeated_need_more_context_falls_back_to_manual_approval(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    fake_llm = SequenceSecurityLlm([
+        {
+            "outcome": "need_more_context",
+            "risk_level": "medium",
+            "authorization_level": "unknown",
+            "rationale": "latest reply is elliptical",
+        },
+        {
+            "outcome": "need_more_context",
+            "risk_level": "medium",
+            "authorization_level": "unknown",
+            "rationale": "still unclear",
+        },
+    ])
+    plugin.state._PLUGIN_LLM = fake_llm
+
+    plugin._on_pre_gateway_dispatch(gateway_event("subscribe me to this newsletter", user_id="owner"))
+    bind_owner(plugin)
+    plugin._on_pre_gateway_dispatch(gateway_event("yes", user_id="owner"))
+    plugin._taint_session("s1", {"communications", "contacts"})
+
+    result = _submit_form(plugin)
+
+    assert result is not None
+    assert "Approval ID:" in result["message"]
+    assert len(fake_llm.calls) == 2
+    assert plugin._PENDING_APPROVALS
+
+
+def test_need_more_context_expansion_persists_for_current_turn(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    fake_llm = SequenceSecurityLlm([
+        {
+            "outcome": "need_more_context",
+            "risk_level": "medium",
+            "authorization_level": "unknown",
+            "rationale": "latest reply is elliptical",
+        },
+        {
+            "outcome": "deny",
+            "risk_level": "high",
+            "authorization_level": "unknown",
+            "rationale": "expanded context still insufficient",
+        },
+        {
+            "outcome": "deny",
+            "risk_level": "high",
+            "authorization_level": "unknown",
+            "rationale": "same expanded context",
+        },
+    ])
+    plugin.state._PLUGIN_LLM = fake_llm
+
+    plugin._on_pre_gateway_dispatch(gateway_event("send the update to Bob", user_id="owner"))
+    bind_owner(plugin)
+    plugin._on_pre_gateway_dispatch(gateway_event("yes", user_id="owner"))
+    args = {"to": "bob@example.com", "text": "hello"}
+    shape = plugin._approval_shape(
+        session_id="s1",
+        tool_name="send_message",
+        action_family="message_send",
+        destination="messaging",
+        data_classes={"communications"},
+        args=args,
+    )
+
+    plugin._llm_security_verdict(shape, args)
+    plugin._llm_security_verdict(shape, args)
+
+    assert len(fake_llm.calls) == 3
+    third_payload = json.loads(fake_llm.calls[2]["input"][0]["text"])
+    assert third_payload["user_request_context"]["mode"] == "expanded"
+
+
+def test_block_queues_expanded_context_for_next_owner_turn(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    fake_llm = SequenceSecurityLlm([
+        {
+            "outcome": "deny",
+            "risk_level": "high",
+            "authorization_level": "unknown",
+            "rationale": "needs owner approval",
+        },
+        {
+            "outcome": "allow",
+            "risk_level": "medium",
+            "authorization_level": "substantive",
+            "rationale": "expanded retry context authorizes signup",
+        },
+    ])
+    plugin.state._PLUGIN_LLM = fake_llm
+
+    plugin._on_pre_gateway_dispatch(gateway_event("subscribe me to this newsletter", user_id="owner"))
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications", "contacts"})
+    first = _submit_form(plugin)
+    assert first is not None
+
+    plugin._on_pre_gateway_dispatch(gateway_event("try again", user_id="owner"))
+    second = _submit_form(plugin)
+
+    assert second is None
+    retry_payload = json.loads(fake_llm.calls[1]["input"][0]["text"])
+    assert retry_payload["user_request_context"]["mode"] == "expanded"
+    assert retry_payload["user_request_context"]["sanitized_owner_messages"] == [
+        "subscribe me to this newsletter",
+        "try again",
+    ]
+
+
+def test_queued_expansion_does_not_apply_to_changed_shape(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    fake_llm = SequenceSecurityLlm([
+        {
+            "outcome": "deny",
+            "risk_level": "high",
+            "authorization_level": "unknown",
+            "rationale": "needs owner approval",
+        },
+        {
+            "outcome": "deny",
+            "risk_level": "high",
+            "authorization_level": "unknown",
+            "rationale": "different payload",
+        },
+    ])
+    plugin.state._PLUGIN_LLM = fake_llm
+
+    plugin._on_pre_gateway_dispatch(gateway_event("subscribe me to this newsletter", user_id="owner"))
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications", "contacts"})
+    first = _submit_form(plugin)
+    assert first is not None
+
+    plugin._on_pre_gateway_dispatch(gateway_event("try again", user_id="owner"))
+    plugin._on_pre_tool_call(
+        "browser_type",
+        {"text": "different@example.com", "selector": "#email"},
+        session_id="s1",
+    )
+
+    retry_payload = json.loads(fake_llm.calls[1]["input"][0]["text"])
+    assert retry_payload["user_request_context"]["mode"] == "minimal"
 
 
 def test_user_context_setting_off_suppresses_attachment(monkeypatch):

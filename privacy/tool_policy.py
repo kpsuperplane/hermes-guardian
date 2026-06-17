@@ -89,14 +89,15 @@ def _new_turn_id() -> str:
     return f"turn_{secrets.token_hex(8)}"
 
 
-def _rotate_turn_id_for_owner(owner_hash: str) -> None:
+def _rotate_turn_id_for_owner(owner_hash: str) -> str:
     """Start a fresh turn for an owner's sessions (called at the turn boundary)."""
     if not owner_hash:
-        return
+        return ""
     turn_id = _new_turn_id()
     with state._LOCK:
         for sid in set(state._OWNER_SESSIONS.get(owner_hash, set())):
             _ensure_session(sid)["turn_id"] = turn_id
+    return turn_id
 
 
 def _current_turn_id(session_id: str | None) -> str:

@@ -85,10 +85,15 @@ _RECENT_COMMAND_CONTEXTS: dict[str, list[dict[str, Any]]] = {}
 # anomalous and must not escalate. A genuine local-CLI/host embedding that drives the
 # handler directly sets this flag to opt into the local-operator identity.
 _TRUSTED_LOCAL_COMMAND_CONTEXT = False
-# Volatile, owner-keyed cache of the most recent sanitized user request captured
+# Volatile, owner-keyed history of the most recent sanitized owner messages captured
 # at gateway dispatch. Used only as authorization evidence for the LLM verifier.
 # Never persisted; pruned by _USER_REQUEST_TTL_SECONDS.
-_RECENT_OWNER_REQUESTS: dict[str, tuple[float, str]] = {}
+_OWNER_REQUEST_HISTORY: dict[str, list[dict[str, Any]]] = {}
+# Volatile owner-context expansion state for LLM verifier calls. Active records apply
+# only within their recorded turn_id; queued records are promoted on the next owner
+# turn, then replaced/cleared at the following turn boundary.
+_OWNER_CONTEXT_ACTIVE_EXPANSIONS: dict[str, list[dict[str, Any]]] = {}
+_OWNER_CONTEXT_QUEUED_EXPANSIONS: dict[str, list[dict[str, Any]]] = {}
 # Cross-channel turn lockdown (channel-shopping defense). Per session, a bounded
 # list of metadata-only records for private outward exports withheld this turn.
 # Broad records stop high-risk approval-shopping across channels; route records

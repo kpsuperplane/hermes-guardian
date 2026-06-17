@@ -828,7 +828,7 @@ def _emit_activity(
     turn_id = tool_policy._current_turn_id(sid)
     user_prompt = ""
     if rules._persist_prompts_enabled():
-        user_prompt = (approvals._recent_user_request_for_owner(owner_hash) or approvals._cron_instruction_for_session(sid))[:500]
+        user_prompt = (approvals._latest_owner_request_for_owner(owner_hash) or approvals._cron_instruction_for_session(sid))[:500]
     try:
         _ensure_activity_db()
         with _activity_connect() as conn:

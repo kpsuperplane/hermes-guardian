@@ -708,6 +708,7 @@ def _block_for_pending_approval(
 ) -> dict[str, str]:
     if arm_lockdown:
         _record_turn_external_denial(shape, lockdown_basis or {"source": "manual_gate"})
+    approvals._queue_owner_context_expansion_for_shape(shape)
     approval = approvals._create_pending_approval(shape)
     approval["reason"] = blocked_reason
     approvals._save_pending_approval_to_store_unlocked(approval)
