@@ -89,13 +89,13 @@ _TRUSTED_LOCAL_COMMAND_CONTEXT = False
 # at gateway dispatch. Used only as authorization evidence for the LLM verifier.
 # Never persisted; pruned by _USER_REQUEST_TTL_SECONDS.
 _RECENT_OWNER_REQUESTS: dict[str, tuple[float, str]] = {}
-# Cross-channel turn lockdown (channel-shopping defense). Per session, the set of
-# egress-gating POLICY classes whose export to an EXTERNAL destination was withheld
-# this turn. Once present, the verifier (and read-only) may not auto-allow another
-# export of those classes to external in the same turn — it gates for the human,
-# regardless of which tool/channel is used. Turn-scoped: cleared on the next user
-# input (per owner) and on session reset. Volatile, never persisted.
-_TURN_DENIED_EXTERNAL: dict[str, set[str]] = {}
+# Cross-channel turn lockdown (channel-shopping defense). Per session, a bounded
+# list of metadata-only records for private outward exports withheld this turn.
+# Broad records stop high-risk approval-shopping across channels; route records
+# stop likely reroutes without freezing unrelated same-turn work. Turn-scoped:
+# cleared on the next user input (per owner) and on session reset. Volatile, never
+# persisted.
+_TURN_DENIED_EXTERNAL: dict[str, list[dict[str, Any]]] = {}
 # Volatile, session-keyed single-slot stash of the most recent tool call's input
 # args, written in the pre-tool-call hook and consumed in the post-result hook (which
 # is not itself handed the original args). Lets the taint resolver see e.g. a read's

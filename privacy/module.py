@@ -339,7 +339,7 @@ def _allow_safe_remote_read_tool_call(shape: dict[str, Any], tool_name: str, arg
 
 def _llm_policy_tool_call_result(
     shape: dict[str, Any], tool_name: str, args: Any
-) -> tuple[dict[str, str] | None, str | None, Callable[[], None] | None]:
+) -> tuple[dict[str, str] | None, str | None, Callable[[], None] | None, dict[str, Any]]:
     # Returns ``(block_result, blocked_reason, apply_allow)``. At most one is set:
     #   - block_result: a hard-deny/security block to return verbatim (lockdown-independent).
     #   - blocked_reason: the verifier wants manual approval; caller gates it.
@@ -350,6 +350,7 @@ def _llm_policy_tool_call_result(
     #     state is never recorded for an export the lockdown then withholds.
     hard_reason = llm._llm_hard_deny_reason(shape, args)
     if hard_reason:
+        _record_turn_external_denial(shape, {"source": "hard_deny", "reason": hard_reason})
         core.logger.info(
             "%s: hard-blocked Hermes Guardian %s to %s for session %s (%s)",
             core._PLUGIN_NAME,
@@ -384,7 +385,7 @@ def _llm_policy_tool_call_result(
             destination_trust=shape.get("destination_trust", "unknown"),
             decision_step=shape.get("decision_step", ""),
         )
-        return {"action": "block", "message": security_module._block_message(hard_reason)}, None, None
+        return {"action": "block", "message": security_module._block_message(hard_reason)}, None, None, {}
 
     cached = llm._cached_deny_verdict(shape)
     verdict = cached if cached is not None else llm._llm_security_verdict(shape, args)
@@ -410,10 +411,11 @@ def _llm_policy_tool_call_result(
         # consult instead of a stale gate.
         llm._store_deny_verdict(shape, verdict)
     safe_remote_read = tool_policy._tool_call_is_safe_remote_read(tool_name, args)
+    owner_context_present = llm._owner_context_present(shape)
     corroboration_reason = llm._llm_corroboration_downgrade_reason(
         shape,
         verdict,
-        llm._owner_context_present(shape),
+        owner_context_present,
         safe_remote_read=safe_remote_read,
     )
     if verdict.get("outcome") == "allow" and corroboration_reason:
@@ -473,28 +475,71 @@ def _llm_policy_tool_call_result(
                 mark_browser_private_input=True,
             )
 
-        return None, None, _apply_allow
+        return None, None, _apply_allow, {
+            "source": "llm",
+            "outcome": "allow",
+            "risk_level": verdict.get("risk_level", "unknown"),
+            "authorization_level": verdict.get("authorization_level", "unknown"),
+            "owner_context_present": owner_context_present,
+            "corroboration_reason": corroboration_reason,
+        }
 
     blocked_reason = (
         f"requires approval (llm {verdict.get('risk_level', 'unknown')}: "
         f"{verdict.get('rationale', 'denied')})"
     )
-    return None, blocked_reason, None
+    return None, blocked_reason, None, {
+        "source": "llm",
+        "outcome": "deny",
+        "risk_level": verdict.get("risk_level", "unknown"),
+        "authorization_level": verdict.get("authorization_level", "unknown"),
+        "owner_context_present": owner_context_present,
+        "corroboration_reason": corroboration_reason,
+    }
 
 
 # --- Cross-channel turn lockdown (channel-shopping defense) ------------------
-_LOCKDOWN_BLOCKED_REASON = (
-    "requires approval (cross-channel lockdown: an export of this private data to an "
-    "external destination was already withheld this turn; re-routing the same export "
-    "through another tool or channel is gated for your review)"
+_LOCKDOWN_ROUTE_BLOCKED_REASON = (
+    "requires approval (cross-channel lockdown: likely re-route of a withheld "
+    "private export; this retry is gated for your review)"
+)
+_LOCKDOWN_GLOBAL_BLOCKED_REASON = (
+    "requires approval (cross-channel lockdown: a high-risk private export was "
+    "already withheld this turn; further outward exports of the same private data "
+    "classes are gated for your review)"
 )
 
-# Once a private export to an EXTERNAL destination is withheld this turn, the
-# verifier / read-only may not auto-allow another export of the same policy classes
-# to external in the same turn — regardless of which tool or channel is used. This
-# closes the terminal->browser channel-shop: the deterministic engine already gated
-# the first attempt; this denies the re-route a soft channel. Turn-scoped (cleared
-# on the next user input and on session reset); never persisted.
+_LOCKDOWN_ACTION_GROUPS = {
+    "browser_type": "browser_write",
+    "browser_click": "browser_write",
+    "browser_press": "browser_write",
+    "browser_dialog": "browser_write",
+    "browser_console": "browser_write",
+    "browser_cdp": "browser_write",
+    "message_send": "message",
+    "web_api": "network_write",
+    "terminal_exec": "network_write",
+    "model_api": "network_write",
+    "mcp_write": "service_write",
+    "mcp_unknown": "service_write",
+    "tool_write": "service_write",
+    "tool_unknown": "service_write",
+    "local_write": "local_write",
+    "cron_write": "local_write",
+    "kanban_write": "local_write",
+    "homeassistant_write": "local_write",
+    "computer_use": "computer_use",
+    "browser_read": "read",
+    "web_read": "read",
+    "mcp_read_query": "read",
+    "message_list": "read",
+}
+
+# Once a private outward export is withheld this turn, the verifier / read-only
+# preset may not auto-allow a likely reroute. High-risk records still apply
+# broadly across channels; ordinary ambiguity is route-scoped so one benign bulk
+# workflow item does not freeze unrelated same-turn destinations. Records are
+# metadata-only, turn-scoped, and never persisted.
 def _egress_gating_policy_classes(data_classes: Any) -> set[str]:
     try:
         fine = set(data_classes or ())
@@ -503,21 +548,146 @@ def _egress_gating_policy_classes(data_classes: Any) -> set[str]:
     return set(policy._taint_policy_classes(fine)) & set(policy._EGRESS_GATING_POLICY_CLASSES)
 
 
-def _record_turn_external_denial(session_id: Any, data_classes: Any) -> None:
-    classes = _egress_gating_policy_classes(data_classes)
+def _lockdown_action_group(action_family: Any) -> str:
+    family = str(action_family or "").strip().lower()
+    if family in _LOCKDOWN_ACTION_GROUPS:
+        return _LOCKDOWN_ACTION_GROUPS[family]
+    if family.endswith("_read"):
+        return "read"
+    if family.endswith("_write"):
+        return "service_write"
+    return family or "unknown"
+
+
+def _lockdown_destination_key(destination: Any) -> str:
+    return str(destination or "").strip().lower()[:160]
+
+
+def _lockdown_purpose_key(purpose: Any) -> str:
+    return tool_policy._normalize_rule_purpose(purpose or "unknown", allow_star=False)
+
+
+def _lockdown_recipient_key(recipient_identity: Any) -> str:
+    return tool_policy._normalize_rule_recipient_identity(recipient_identity or "none", allow_star=False)
+
+
+def _lockdown_is_outward_shape(shape: dict[str, Any]) -> bool:
+    trust = _trust_label(shape.get("destination_trust", "unknown"))
+    if trust in {"self", "local_system", "model_provider", "trusted_recipient"}:
+        return False
+    return bool(_egress_gating_policy_classes(shape.get("data_classes")))
+
+
+def _lockdown_scope_for_basis(shape: dict[str, Any], basis: dict[str, Any] | None) -> str:
+    basis = basis or {}
+    if basis.get("source") in {"hard_deny", "security_blocked"}:
+        return "global"
+    risk = str(basis.get("risk_level") or "").strip().lower()
+    if risk in {"high", "critical"}:
+        return "global"
+    corroboration = str(basis.get("corroboration_reason") or "").lower()
+    if "owner/cron authorization context was absent" in corroboration:
+        return "global"
+    authorization = str(basis.get("authorization_level") or "").strip().lower()
+    if authorization == "unknown" and not bool(basis.get("owner_context_present")):
+        return "global"
+    return "route"
+
+
+def _lockdown_record_for_shape(shape: dict[str, Any], basis: dict[str, Any] | None) -> dict[str, Any]:
+    classes = _egress_gating_policy_classes(shape.get("data_classes"))
+    return {
+        "scope": _lockdown_scope_for_basis(shape, basis),
+        "classes": sorted(classes),
+        "destination": _lockdown_destination_key(shape.get("destination")),
+        "action_group": _lockdown_action_group(shape.get("action_family")),
+        "action_family": str(shape.get("action_family") or ""),
+        "purpose": _lockdown_purpose_key(shape.get("purpose")),
+        "recipient_identity": _lockdown_recipient_key(shape.get("recipient_identity")),
+        "fingerprint": str(shape.get("fingerprint") or ""),
+        "source": str((basis or {}).get("source") or "manual_gate"),
+        "risk_level": str((basis or {}).get("risk_level") or "unknown"),
+        "authorization_level": str((basis or {}).get("authorization_level") or "unknown"),
+        "ts": state._now(),
+    }
+
+
+def _record_turn_external_denial(shape: dict[str, Any] | Any, basis: dict[str, Any] | None = None) -> None:
+    if not isinstance(shape, dict):
+        shape = {
+            "session_id": shape,
+            "data_classes": basis if not isinstance(basis, dict) else (),
+            "destination_trust": "external",
+        }
+        basis = {"source": "manual_gate"}
+    if not _lockdown_is_outward_shape(shape):
+        return
+    record = _lockdown_record_for_shape(shape, basis)
+    classes = set(record.get("classes") or [])
     if not classes:
         return
     with state._LOCK:
-        state._TURN_DENIED_EXTERNAL.setdefault(tool_policy._normalize_session_id(session_id), set()).update(classes)
+        sid = tool_policy._normalize_session_id(shape.get("session_id"))
+        records = [
+            entry
+            for entry in state._TURN_DENIED_EXTERNAL.get(sid, [])
+            if isinstance(entry, dict)
+        ]
+        records.append(record)
+        state._TURN_DENIED_EXTERNAL[sid] = records[-12:]
 
 
-def _turn_external_denial_hit(session_id: Any, data_classes: Any) -> bool:
-    classes = _egress_gating_policy_classes(data_classes)
+def _lockdown_record_matches(record: dict[str, Any], shape: dict[str, Any]) -> bool:
+    classes = _egress_gating_policy_classes(shape.get("data_classes"))
     if not classes:
         return False
+    remembered = set(record.get("classes") or [])
+    if not remembered or not (classes & remembered):
+        return False
+    if str(record.get("scope") or "") == "global":
+        return True
+
+    fingerprint = str(shape.get("fingerprint") or "")
+    if fingerprint and fingerprint == str(record.get("fingerprint") or ""):
+        return True
+
+    recipient = _lockdown_recipient_key(shape.get("recipient_identity"))
+    if recipient != "none" and recipient == str(record.get("recipient_identity") or ""):
+        return True
+
+    destination = _lockdown_destination_key(shape.get("destination"))
+    if not destination or destination != str(record.get("destination") or ""):
+        return False
+    group = _lockdown_action_group(shape.get("action_family"))
+    if group == "read" or str(record.get("action_group") or "") == "read":
+        return True
+    if group == str(record.get("action_group") or ""):
+        return True
+    purpose = _lockdown_purpose_key(shape.get("purpose"))
+    return purpose != "unknown" and purpose == str(record.get("purpose") or "")
+
+
+def _turn_external_denial_hit(shape: dict[str, Any], args: Any = None) -> dict[str, Any] | None:
+    if tool_policy._tool_call_is_safe_remote_read(shape.get("tool_name", ""), args):
+        return None
+    if not _lockdown_is_outward_shape(shape):
+        return None
     with state._LOCK:
-        remembered = state._TURN_DENIED_EXTERNAL.get(tool_policy._normalize_session_id(session_id))
-        return bool(remembered and (classes & remembered))
+        records = [
+            dict(entry)
+            for entry in state._TURN_DENIED_EXTERNAL.get(tool_policy._normalize_session_id(shape.get("session_id")), [])
+            if isinstance(entry, dict)
+        ]
+    for record in reversed(records):
+        if _lockdown_record_matches(record, shape):
+            return record
+    return None
+
+
+def _lockdown_blocked_reason(record: dict[str, Any] | None) -> str:
+    if record and str(record.get("scope") or "") == "global":
+        return _LOCKDOWN_GLOBAL_BLOCKED_REASON
+    return _LOCKDOWN_ROUTE_BLOCKED_REASON
 
 
 def _clear_turn_external_denials_for_owner(owner_hash: str) -> None:
@@ -528,10 +698,16 @@ def _clear_turn_external_denials_for_owner(owner_hash: str) -> None:
             state._TURN_DENIED_EXTERNAL.pop(sid, None)
 
 
-def _block_for_pending_approval(shape: dict[str, Any], tool_name: str, blocked_reason: str) -> dict[str, str]:
-    # Withholding a private->external egress arms the turn lockdown so a re-route
-    # through another channel this turn cannot be auto-allowed (channel-shop defense).
-    _record_turn_external_denial(shape.get("session_id"), shape.get("data_classes"))
+def _block_for_pending_approval(
+    shape: dict[str, Any],
+    tool_name: str,
+    blocked_reason: str,
+    lockdown_basis: dict[str, Any] | None = None,
+    *,
+    arm_lockdown: bool = True,
+) -> dict[str, str]:
+    if arm_lockdown:
+        _record_turn_external_denial(shape, lockdown_basis or {"source": "manual_gate"})
     approval = approvals._create_pending_approval(shape)
     approval["reason"] = blocked_reason
     approvals._save_pending_approval_to_store_unlocked(approval)
@@ -713,6 +889,20 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
         action_family = str(intrinsic_risk.get("action_family") or "")
         destination = str(intrinsic_risk.get("destination") or "")
         data_classes = set(intrinsic_risk.get("data_classes") or [])
+        _record_turn_external_denial(
+            {
+                "session_id": session_id,
+                "tool_name": tool_name,
+                "action_family": action_family,
+                "destination": destination,
+                "data_classes": data_classes,
+                "destination_trust": "external",
+                "purpose": "unknown",
+                "recipient_identity": "none",
+                "fingerprint": "",
+            },
+            {"source": "security_blocked", "reason": reason},
+        )
         action_detail = (
             f"action_family={action_family or 'unknown'} "
             f"destination={destination or 'network'} "
@@ -860,47 +1050,65 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
             activity_store._record_suggestion("command", suggestion)
 
     # decision == APPROVE: gate for human approval (doc 02 §3 step 6).
-    # Cross-channel turn lockdown (channel-shopping defense): if a private export of
-    # these classes to an external destination was already withheld this turn, an
-    # AUTO-ALLOW (read-only preset OR llm verifier) is downgraded to a manual gate. The
-    # verifier still runs and may DENY; it just may not auto-allow a re-routed export
-    # this turn. Channel-agnostic; turn-scoped (cleared on the next user input).
-    lockdown = _turn_external_denial_hit(session_id, data_classes)
+    # Cross-channel turn lockdown (channel-shopping defense): if a private outward export
+    # was already withheld this turn, an AUTO-ALLOW (read-only preset OR llm verifier) is
+    # downgraded only when the prior record matches this action as a likely reroute. The
+    # verifier still runs and may deny on its own; lockdown only prevents channel-shopping
+    # through a softer auto-approval path.
+    lockdown = _turn_external_denial_hit(shape, args)
 
-    if egress_safety == "read-only" and not lockdown and llm._read_only_auto_approves(shape, args):
+    if egress_safety == "llm" and tool_policy._tool_call_is_safe_remote_read(tool_name, args):
+        # Deterministic public GET-style remote reads pull data into the agent; they do
+        # not export the ambient private classes already in scope. A proven safe public
+        # read should not become a manual approval because the ambient taint is broad or
+        # a previous export was withheld.
+        _allow_safe_remote_read_tool_call(shape, tool_name, args)
+        return None
+
+    if egress_safety == "read-only" and llm._read_only_auto_approves(shape, args):
+        if lockdown:
+            return _block_for_pending_approval(
+                shape,
+                tool_name,
+                _lockdown_blocked_reason(lockdown),
+                arm_lockdown=False,
+            )
         # read-only's metadata-verified low-risk auto-approve preset (doc 02 §6): a
         # read-only auto-approval that happens today must still happen.
         _allow_read_only_tool_call(shape, tool_name, args)
         return None
 
-    if egress_safety == "llm" and not lockdown and tool_policy._tool_call_is_safe_remote_read(tool_name, args):
-        # Deterministic public GET-style remote reads pull data into the agent; they do
-        # not export the ambient private classes already in scope. The verifier still
-        # receives this same safe_remote_read fact for non-deterministic cases, but a
-        # proven safe public read should not become a manual approval because the ambient
-        # taint is broad.
-        _allow_safe_remote_read_tool_call(shape, tool_name, args)
-        return None
-
-    blocked_reason = _LOCKDOWN_BLOCKED_REASON if lockdown else "requires approval"
+    blocked_reason = "requires approval"
+    lockdown_basis: dict[str, Any] | None = None
     if egress_safety == "llm":
         # llm mode: the verifier may UPGRADE the APPROVE to allow/hold/deny, including the
         # cron high-risk downgrade and _validated_llm_security_verdict — UNCHANGED.
-        llm_result, llm_blocked_reason, llm_apply_allow = _llm_policy_tool_call_result(shape, tool_name, args)
+        llm_result, llm_blocked_reason, llm_apply_allow, llm_lockdown_basis = _llm_policy_tool_call_result(
+            shape,
+            tool_name,
+            args,
+        )
         if llm_result is not None:
             return llm_result
         if llm_apply_allow is not None:
-            # Verifier auto-approved. Honor that unless the turn lockdown is armed, in which
-            # case a re-routed external export is gated for the human regardless. The
-            # auto_approved activity row and allowed side effects are emitted ONLY here, so a
-            # lockdown block never leaves a phantom auto_approved twin in the audit trail.
-            if not lockdown:
-                llm_apply_allow()
-                return None
-        elif not lockdown:
-            blocked_reason = llm_blocked_reason
+            # Verifier auto-approved. Honor that unless a matching turn-lockdown record says
+            # this is a likely reroute of a withheld export. The auto_approved activity row
+            # and allowed side effects are emitted ONLY here, so a lockdown block never leaves
+            # a phantom auto_approved twin in the audit trail.
+            if lockdown:
+                return _block_for_pending_approval(
+                    shape,
+                    tool_name,
+                    _lockdown_blocked_reason(lockdown),
+                    arm_lockdown=False,
+                )
+            llm_apply_allow()
+            return None
+        else:
+            blocked_reason = llm_blocked_reason or "requires approval"
+            lockdown_basis = llm_lockdown_basis
 
-    return _block_for_pending_approval(shape, tool_name, blocked_reason)
+    return _block_for_pending_approval(shape, tool_name, blocked_reason, lockdown_basis)
 
 
 def _privacy_observe_tool_result(

@@ -1,13 +1,14 @@
 """Cross-channel turn lockdown (channel-shopping defense).
 
-When a private export to an external destination is withheld for approval, the agent
+When a private export to an outward destination is withheld for approval, the agent
 must not be able to re-route the same export through a softer channel within the same
-turn and have the verifier auto-allow it. Once a private->external egress is gated, any
-later egress carrying the same policy classes to an external destination is gated too —
-regardless of tool — until the next user input resets the turn.
+turn and have the verifier auto-allow it. High-risk denials apply broadly for the
+turn; ordinary ambiguity is route-scoped so unrelated same-turn work can continue.
 """
 
 from __future__ import annotations
+
+import json
 
 from support import *  # noqa: F403
 
@@ -23,11 +24,13 @@ def _fake_llm(outcome: str, risk_level: str):
     )
 
 
-def test_lockdown_gates_a_rerouted_export_through_another_channel():
+def test_lockdown_gates_a_rerouted_export_through_another_channel(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     bind_owner(plugin)
     plugin._taint_session("s1", {"contacts"})
+    plugin._on_pre_gateway_dispatch(gateway_event("send my private update", user_id="owner"))
 
     # Attempt 1 (messaging channel): the verifier denies -> gated, arming the lockdown.
     plugin.state._PLUGIN_LLM = _fake_llm("deny", "high")
@@ -45,6 +48,7 @@ def test_lockdown_gates_a_rerouted_export_through_another_channel():
     )
     assert second is not None and second["action"] == "block"
     assert "cross-channel lockdown" in second["message"].lower()
+    assert "high-risk private export" in second["message"].lower()
 
 
 def test_external_export_auto_allows_without_a_prior_denial(monkeypatch):
@@ -94,7 +98,7 @@ def test_lockdown_is_scoped_to_the_denied_policy_classes(monkeypatch):
     )
 
 
-def test_lockdown_block_does_not_double_log_or_record_allowed_side_effects():
+def test_lockdown_block_does_not_double_log_or_record_allowed_side_effects(monkeypatch):
     """Regression: a lockdown-blocked export must leave exactly ONE activity row (the
     block) and no allowed side effects.
 
@@ -105,15 +109,30 @@ def test_lockdown_block_does_not_double_log_or_record_allowed_side_effects():
     and taint was marked for an action that never executed. The allow emit/side effects
     are now deferred until after the lockdown check passes.
     """
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")
     bind_owner(plugin)
     plugin._taint_session("s1", {"contacts"})
+    plugin._on_pre_gateway_dispatch(gateway_event("fill the external form", user_id="owner"))
 
-    # Arm the turn lockdown directly (a prior private->external export was already
+    # Arm the turn lockdown directly (a prior high-risk private export was already
     # withheld this turn) without emitting its own activity row, so the single gated call
     # below is the only row we expect.
-    plugin._record_turn_external_denial("s1", {"contacts"})
+    plugin._record_turn_external_denial(
+        {
+            "session_id": "s1",
+            "tool_name": "send_message",
+            "action_family": "message_send",
+            "destination": "messaging",
+            "data_classes": {"contacts"},
+            "destination_trust": "external",
+            "purpose": "unknown",
+            "recipient_identity": "recipient_deadbeefdeadbeefdeadbe",
+            "fingerprint": "fp1",
+        },
+        {"source": "llm", "risk_level": "high", "authorization_level": "unknown"},
+    )
 
     # The verifier WOULD auto-allow this browser form-fill into an external page...
     plugin.state._PLUGIN_LLM = _fake_llm("allow", "low")
@@ -136,6 +155,111 @@ def test_lockdown_block_does_not_double_log_or_record_allowed_side_effects():
     # applied: the withheld export left no browser-private taint behind.
     assert not plugin._browser_has_private_input("s1")
     assert "browser_private_input" not in plugin._session_taint("s1")
+
+
+def test_route_lockdown_gates_same_destination_retry_but_not_different_unsubscribe(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "owner")
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications", "contacts"})
+    plugin._on_pre_gateway_dispatch(
+        gateway_event(
+            "Unsubscribe from Costco, Newegg, Ticketmaster, Ember stores, and IHG please",
+            user_id="owner",
+        )
+    )
+
+    # A medium verifier denial on an owner-authorized unsubscribe form-fill arms a
+    # route-scoped guard for Costco only.
+    plugin.state._PLUGIN_LLM = _fake_llm("deny", "medium")
+    plugin._set_browser_host("s1", "https://www.costcobusinessdelivery.com/preferences")
+    first = plugin._on_pre_tool_call(
+        "browser_type",
+        {"ref": "email", "text": "owner@example.com"},
+        session_id="s1",
+    )
+    assert first is not None and first["action"] == "block"
+
+    # Retrying the same destination through a softer read/navigation route is gated.
+    plugin.state._PLUGIN_LLM = _fake_llm("allow", "low")
+    same_dest = plugin._on_pre_tool_call(
+        "browser_navigate",
+        {"url": "https://www.costcobusinessdelivery.com/unsubscribe?email=owner@example.com"},
+        session_id="s1",
+    )
+    assert same_dest is not None and same_dest["action"] == "block"
+    assert "likely re-route" in same_dest["message"]
+
+    # A different merchant/subscription-management destination in the same bulk request
+    # still reaches the verifier and can auto-allow.
+    other_dest = plugin._on_pre_tool_call(
+        "browser_navigate",
+        {"url": "https://hs-49503193.s.hubspotemail.net/unsubscribe?email=owner@example.com"},
+        session_id="s1",
+    )
+    assert other_dest is None
+
+
+def test_safe_remote_read_bypasses_even_global_lockdown():
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts"})
+    plugin._record_turn_external_denial(
+        {
+            "session_id": "s1",
+            "tool_name": "send_message",
+            "action_family": "message_send",
+            "destination": "messaging",
+            "data_classes": {"contacts"},
+            "destination_trust": "external",
+            "purpose": "unknown",
+            "recipient_identity": "recipient_deadbeefdeadbeefdeadbe",
+            "fingerprint": "fp1",
+        },
+        {"source": "llm", "risk_level": "high", "authorization_level": "unknown"},
+    )
+    plugin.state._PLUGIN_LLM = _fake_llm("deny", "high")
+
+    result = plugin._on_pre_tool_call(
+        "terminal",
+        {"command": "curl https://api.weather.gov/points/47.61,-122.33"},
+        session_id="s1",
+    )
+
+    assert result is None
+
+
+def test_lockdown_records_are_metadata_only_and_do_not_refresh_on_lockdown_block():
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts"})
+
+    plugin.state._PLUGIN_LLM = _fake_llm("deny", "medium")
+    plugin._set_browser_host("s1", "https://www.costcobusinessdelivery.com/preferences")
+    first = plugin._on_pre_tool_call(
+        "browser_type",
+        {"ref": "email", "text": "owner@example.com"},
+        session_id="s1",
+    )
+    assert first is not None and first["action"] == "block"
+    records = list(plugin._TURN_DENIED_EXTERNAL["s1"])
+    assert len(records) == 1
+    encoded = json.dumps(records, sort_keys=True)
+    assert "owner@example.com" not in encoded
+    assert "ref" not in encoded
+    assert "text" not in encoded
+
+    plugin.state._PLUGIN_LLM = _fake_llm("allow", "low")
+    blocked = plugin._on_pre_tool_call(
+        "browser_navigate",
+        {"url": "https://www.costcobusinessdelivery.com/unsubscribe?email=owner@example.com"},
+        session_id="s1",
+    )
+    assert blocked is not None and blocked["action"] == "block"
+    assert len(plugin._TURN_DENIED_EXTERNAL["s1"]) == 1
 
 
 def test_new_user_input_clears_the_turn_lockdown(monkeypatch):

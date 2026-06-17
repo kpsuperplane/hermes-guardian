@@ -416,17 +416,17 @@ There is no global "allow everything" approval.
 
 ### Cross-channel lockdown
 
-Once a private export to an external destination has been withheld in a turn,
-Guardian arms a turn-scoped lockdown for the withheld data classes: another
-export of those classes to any external destination in the same turn cannot be
-auto-approved — not by `read-only` mode's metadata-verified set and not by the
-`llm` verifier — regardless of which tool or channel the retry uses. The
-re-route is gated for manual review with a `cross-channel lockdown` reason.
-This closes channel-shopping: a gated terminal export cannot be re-tried
-through a browser form or another softer channel to dodge the review the first
-block asked for. The lockdown is volatile and turn-scoped — it clears on the
-next owner message and on session reset, and is never persisted. Explicit
-approvals still work: approving the block and retrying proceeds as normal.
+Once a private outward export has been withheld in a turn, Guardian records a
+volatile, metadata-only reroute guard for that withheld flow. A later action still
+gets its normal `read-only` or `llm` judgment, but an otherwise auto-approved retry
+is downgraded to manual review when it looks like the same export being re-routed
+through another tool or channel. High-risk denials arm a broader same-turn guard
+for the overlapping private data classes; ordinary ambiguity is route-scoped by
+metadata such as destination, action family, purpose, recipient identity, and exact
+argument fingerprint. This closes channel-shopping without freezing unrelated
+bulk work in the same user request. The guard clears on the next owner message and
+on session reset, and is never persisted. Explicit approvals still work: approving
+the block and retrying proceeds as normal.
 
 ## Privacy Rules
 

@@ -745,6 +745,8 @@ def _local_system_segment_is_metadata_only(segment: str) -> bool:
 
 def _terminal_command_is_safe_remote_read(command: str) -> bool:
     command = str(command or "").strip()
+    if re.search(r"[;&|`]|\$\(", command):
+        return False
     if not _remote_read_text_has_safe_public_target(command):
         return False
     if re.search(r">\s*(?!/(?:tmp|var/tmp)/)", command):
