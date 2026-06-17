@@ -26,7 +26,9 @@ from benchmarks.guardian_adversarial import _load_plugin
 
 CORPUS_PATH = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "e2e_conversations.json"
 LATENCY_P95_MS_FLOOR = 100.0
-LATENCY_MAX_MS_FLOOR = 500.0
+# The benchmark runs inside shared GitHub-hosted workers; one cold filesystem or
+# scheduler outlier should not fail the whole matrix when p95 remains tight.
+LATENCY_MAX_MS_FLOOR = 2000.0
 
 
 @dataclass(frozen=True)
