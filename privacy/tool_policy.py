@@ -1334,12 +1334,37 @@ def _intrinsic_mcp_source_classes(lower: str, args_text: str) -> set[str]:
     return classes
 
 
+_INTRINSIC_MCP_SINK_RE = re.compile(
+    r"(?:^|[^a-z0-9])(?:webhook|callback|endpoint|share|send|post|publish|upload)(?:[^a-z0-9]|$)",
+    re.I,
+)
+
+
+def _intrinsic_mcp_has_sink_key(value: Any, *, depth: int = 0) -> bool:
+    if depth > 6:
+        return False
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if _INTRINSIC_MCP_SINK_RE.search(str(key or "")):
+                return True
+            if _intrinsic_mcp_has_sink_key(item, depth=depth + 1):
+                return True
+    elif isinstance(value, (list, tuple)):
+        return any(_intrinsic_mcp_has_sink_key(item, depth=depth + 1) for item in value[:20])
+    return False
+
+
 def _intrinsic_mcp_sink_destination(lower: str, args: Any, args_text: str) -> str:
+    combined = f"{lower} {args_text}"
+    if _INTRINSIC_MCP_SINK_RE.search(lower) or _intrinsic_mcp_has_sink_key(args):
+        return _intrinsic_destination(args, default=_mcp_destination(lower))
+    if _is_mcp_read_tool(lower):
+        return ""
+    if _INTRINSIC_MCP_SINK_RE.search(combined):
+        return _intrinsic_destination(args, default=_mcp_destination(lower))
     destination = _intrinsic_destination(args, default="")
     if destination:
         return destination
-    if re.search(r"(?:^|[^a-z0-9])(?:webhook|callback|endpoint|share|send|post|publish|upload)(?:[^a-z0-9]|$)", f"{lower} {args_text}", re.I):
-        return _mcp_destination(lower)
     return ""
 
 
