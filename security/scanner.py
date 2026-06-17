@@ -179,6 +179,16 @@ _SSN_RE = re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)")
 _PRIVATE_FIELD_RE = _COMPILED_LANGUAGE_PACKS.private_field_pattern
 _apply_compiled_language_packs(_COMPILED_LANGUAGE_PACKS)
 
+_GUARDIAN_CONTROL_PLANE_RE = re.compile(
+    r"\b(?:hermes[- ]guardian|guardian|security module|security filter)\b",
+    re.I,
+)
+_GUARDIAN_REDACTED_SECURITY_NOTICE_RE = re.compile(
+    r"\bredacted\s+security\s+content(?:\s+(?:was\s+)?detected)?\b"
+    r"|\bsecurity-sensitive\s+content\s+(?:detected|suppressed|blocked|omitted)\b",
+    re.I,
+)
+
 # Maximum scanned-text size, in characters. A multi-MB tool result would otherwise run
 # every pattern over the whole payload on every egress (seconds-long stalls; potential
 # catastrophic backtracking). Inputs over this are scanned on the capped prefix only and,
@@ -339,11 +349,15 @@ def _scan_normalized_text(
         and account_security_enabled
         and _COMPILED_LANGUAGE_PACKS.redacted_security_context_pattern.search(text)
     ):
-        return {
-            "reason": "redacted security content",
-            "match": redacted_match.group(0),
-            "context": _context(text, redacted_match.start(), redacted_match.end()),
-        }
+        if not (
+            _GUARDIAN_CONTROL_PLANE_RE.search(text)
+            and _GUARDIAN_REDACTED_SECURITY_NOTICE_RE.search(text)
+        ):
+            return {
+                "reason": "redacted security content",
+                "match": redacted_match.group(0),
+                "context": _context(text, redacted_match.start(), redacted_match.end()),
+            }
     if account_security_enabled:
         for pattern, reason in _SECURITY_SENSITIVE_PATTERNS:
             if reason in skip_reasons:

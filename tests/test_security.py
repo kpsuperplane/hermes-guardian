@@ -36,6 +36,29 @@ def test_sensitive_reason_detects_core_security_flows():
         assert plugin._sensitive_reason(text) == expected
 
 
+def test_guardian_redacted_security_notice_is_control_plane_not_secret():
+    plugin = load_plugin()
+
+    notice = "Blocked by hermes-guardian: redacted security content detected in tool arguments."
+
+    assert plugin._sensitive_reason(notice) is None
+    assert plugin._on_transform_llm_output(response_text=notice) is None
+    assert plugin._on_pre_tool_call("skill_manage", {"file_content": notice}) is None
+
+    assert plugin._sensitive_reason("GitHub token [redacted]") == "redacted security content"
+    assert (
+        plugin._sensitive_reason("The message contained a password reset link [redacted].")
+        == "redacted security content"
+    )
+    assert (
+        plugin._sensitive_reason(
+            "Blocked by hermes-guardian: redacted security content detected. "
+            "Reset here: https://example.com/reset-password?token=abc"
+        )
+        == "sensitive link"
+    )
+
+
 def test_sensitive_reason_ignores_normal_content():
     plugin = load_plugin()
 
