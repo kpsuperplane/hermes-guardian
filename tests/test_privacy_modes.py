@@ -357,6 +357,27 @@ def test_remote_download_to_artifact_does_not_autoapprove_under_private_taint():
     assert "verifier authorization was weak" in rows[0]["reason"]
 
 
+def test_execute_code_pending_approval_keeps_sanitized_code_detail():
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="strict")
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    code = (
+        "import urllib.request\n"
+        "url='https://api.weather.gov/gridpoints/LOX/154,44/forecast?email=reader@example.com'\n"
+        "print(url)\n"
+    )
+
+    result = plugin._on_pre_tool_call("execute_code", {"code": code}, session_id="s1")
+
+    assert result is not None and result["action"] == "block"
+    approval = next(iter(plugin._PENDING_APPROVALS.values()))
+    assert approval["action_detail"].startswith("code: import urllib.request")
+    assert "api.weather.gov" in approval["action_detail"]
+    assert "reader@example.com" not in approval["action_detail"]
+    assert "gridpoints/LOX" not in approval["action_detail"]
+
+
 def test_safe_remote_read_deterministically_allows_with_private_taint():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")

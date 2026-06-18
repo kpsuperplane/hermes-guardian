@@ -755,6 +755,24 @@ def test_terminal_action_detail_preserves_sanitized_command_preview():
     assert token not in detail
 
 
+def test_execute_code_action_detail_uses_code_preview_under_terminal_family():
+    plugin = load_plugin()
+    code = (
+        "import urllib.request\n"
+        "url='https://api.weather.gov/gridpoints/LOX/154,44/forecast?email=reader@example.com'\n"
+        "print(url)\n"
+    )
+
+    detail = plugin._activity_action_detail("execute_code", {"code": code}, "terminal_exec", "terminal")
+
+    assert detail.startswith("code: import urllib.request")
+    assert "api.weather.gov" in detail
+    assert "<path:redacted>" in detail
+    assert "reader@example.com" not in detail
+    assert "gridpoints/LOX" not in detail
+    assert detail.strip() != "code:"
+
+
 def test_activity_prune_limits_max_rows(monkeypatch):
     plugin = load_plugin()
     monkeypatch.setenv("HERMES_GUARDIAN_ACTIVITY_MAX_ROWS", "3")

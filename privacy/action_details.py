@@ -131,6 +131,21 @@ def _terminal_command_preview(command: str) -> str:
     return text
 
 
+def _code_execution_preview(code: str) -> str:
+    text = str(code or "")
+    reason = security_module._sensitive_reason(text)
+    if reason:
+        return f"<security-sensitive content redacted: {reason}>"
+    redacted = _redact_python_literals_for_terminal_preview(text)
+    redacted = _redact_action_detail_text(redacted, check_sensitive=False)
+    redacted = re.sub(r"(https?://[A-Za-z0-9.-]+)(<path:redacted>)", r"\1/\2", redacted)
+    lines = [line.rstrip() for line in redacted.splitlines()]
+    redacted = "\n".join(lines).strip()
+    if len(redacted) > _TERMINAL_PREVIEW_LIMIT:
+        return redacted[: _TERMINAL_PREVIEW_LIMIT - 3].rstrip() + "..."
+    return redacted
+
+
 def _redacted_content_note(value: Any) -> str:
     text = str(value or "")
     classes = sorted(tool_policy._classes_from_content(text))
@@ -151,12 +166,12 @@ def _activity_action_detail(tool_name: str, args: Any, action_family: str = "", 
     lower_tool = str(tool_name or "").lower()
     lower_action = str(action_family or "").lower()
     if isinstance(args, dict):
+        if lower_tool in {"execute_code", "code_execution"}:
+            code = str(args.get("code") or args.get("script") or args.get("command") or "")
+            return "code: " + _code_execution_preview(code)
         if lower_action == "terminal_exec" or lower_tool in {"terminal", "shell"}:
             command = str(args.get("command") or args.get("cmd") or "")
             return "command: " + _terminal_command_preview(command)
-        if lower_tool in {"execute_code", "code_execution"}:
-            code = str(args.get("code") or args.get("script") or "")
-            return f"code: {_redacted_content_note(code)}"
         if lower_action == "browser_type":
             text = str(args.get("text") or args.get("value") or "")
             return f"type into {destination or 'browser'}: {_redacted_content_note(text)}"
