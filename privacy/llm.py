@@ -374,12 +374,14 @@ def _llm_allow_lacks_owner_corroboration(
     owner_context_present: bool,
     *,
     safe_remote_read: bool = False,
+    local_only_terminal: bool = False,
 ) -> bool:
     return bool(_llm_corroboration_downgrade_reason(
         shape,
         verdict,
         owner_context_present,
         safe_remote_read=safe_remote_read,
+        local_only_terminal=local_only_terminal,
     ))
 
 
@@ -389,6 +391,7 @@ def _llm_corroboration_downgrade_reason(
     owner_context_present: bool,
     *,
     safe_remote_read: bool = False,
+    local_only_terminal: bool = False,
 ) -> str:
     """Reason iff an ``allow`` verdict for a private external export must be downgraded.
 
@@ -404,15 +407,17 @@ def _llm_corroboration_downgrade_reason(
     If either is missing, the allow is downgraded to a manual gate. This is purely
     ADDITIVE: it can only turn an allow into a gate, never the reverse, and it never
     touches intra-boundary allows or reads (``_is_external_private_export`` excludes them).
-    A low-risk verifier allow for a structurally safe public remote read is not a private
-    export for corroboration purposes; the conservative safe-remote-read helper remains
-    the eligibility boundary.
+    A low-risk verifier allow for a structurally safe public remote read or a terminal
+    command with no network target is not an external private export for corroboration
+    purposes; the conservative structural helpers remain the eligibility boundary.
     """
     if verdict.get("outcome") != "allow":
         return ""
     if not _is_external_private_export(shape):
         return ""
-    if str(verdict.get("risk_level") or "").strip().lower() == "low" and safe_remote_read:
+    if str(verdict.get("risk_level") or "").strip().lower() == "low" and (
+        safe_remote_read or local_only_terminal
+    ):
         return ""
     authorization_level = str(verdict.get("authorization_level") or "").strip().lower()
     missing: list[str] = []
@@ -455,6 +460,10 @@ def _llm_verdict_input(shape: dict[str, Any], args: Any, *, expand_owner_context
             "safe_remote_read": (
                 shape.get("action_family") == "terminal_exec"
                 and tool_policy._tool_call_is_safe_remote_read(shape.get("tool_name", ""), args)
+            ),
+            "local_only_terminal": (
+                shape.get("action_family") == "terminal_exec"
+                and tool_policy._tool_call_is_local_only_terminal(shape.get("tool_name", ""), args)
             ),
             "security_sensitive_content_already_hard_blocked": True,
             "manual_approval_available_if_denied": True,

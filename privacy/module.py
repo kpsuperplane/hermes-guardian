@@ -411,12 +411,14 @@ def _llm_policy_tool_call_result(
         # consult instead of a stale gate.
         llm._store_deny_verdict(shape, verdict)
     safe_remote_read = tool_policy._tool_call_is_safe_remote_read(tool_name, args)
+    local_only_terminal = tool_policy._tool_call_is_local_only_terminal(tool_name, args)
     owner_context_present = llm._owner_context_present(shape)
     corroboration_reason = llm._llm_corroboration_downgrade_reason(
         shape,
         verdict,
         owner_context_present,
         safe_remote_read=safe_remote_read,
+        local_only_terminal=local_only_terminal,
     )
     if verdict.get("outcome") == "allow" and corroboration_reason:
         # Deterministic corroboration gate (charter §2.1-§2.2). An ``allow`` of a private
