@@ -214,21 +214,29 @@ The persisted activity and dashboard model is metadata-only. Activity rows, poli
 
 ## The mediated-flow property
 
-The most precise statement of Guardian’s current security property is:
+Guardian's useful promise is a reference-monitor promise, not a detector promise:
 
-> Guardian enforces a taint-and-approval policy over classified Hermes-mediated egress actions.
+> Once a Hermes-mediated session has observed private data, any later Hermes-visible action that Guardian classifies as outbound must have an explicit declassification reason, or it is blocked, suppressed, or routed to approval.
 
-More formally:
+That sentence is the whole security shape. Each qualifier matters:
 
-- Let `L` be a set of private labels.
-- Let `T(session)` be the set of labels observed in a session.
-- Let `A(tool, args, session)` classify a proposed action as either no egress or an egress tuple `(action_family, destination, purpose, recipient_identity)`.
-- Let `P(actor, session, action_family, destination, purpose, recipient_identity, labels, context)` represent allow, deny, and declassification policy.
-- An action, result, or final response with an enabled Security Module finding is blocked or suppressed before ordinary privacy declassification applies.
-- A mediated action is allowed when it is not classified as egress, when no private labels are in scope, or when policy allows the flow.
-- A mediated action is blocked or routed to approval when it is classified as egress, private labels are in scope, and no policy allows the flow.
+- **Hermes-mediated** means the action crosses a Hermes hook Guardian can inspect: tool calls, tool results, gateway dispatch, slash/dashboard mutations, and final-output security scanning. If a subprocess, browser profile, MCP server, or external service leaks internally before Hermes sees a classified action, Guardian is not the boundary; Hermes sandboxing and OS/network policy are.
+- **Observed private data** means the session has source taint from a private source or stronger access-sensitive findings from the Security Module. The payload does not need to look private. The point is that the session has been exposed to private context.
+- **Outbound** means Guardian can classify the proposed operation as a sink with an action family, destination, purpose, and recipient identity where available. Unknown tools under taint are treated as sinks unless the operator explicitly classifies them otherwise.
+- **Explicit declassification** means a standing allow rule, trusted-recipient rule, scoped approval, read-only auto-approval with metadata support, or an `llm`-mode verifier allow that also passes the deterministic corroboration gate. Security Module findings are outside this path: credentials, OTPs, reset links, and intrinsic same-call exfiltration shapes are non-approvable.
 
-This is a mediated-flow guarantee rather than a universal confidentiality proof. The guarantee holds only across the actions Guardian sees and classifies.
+The practical decision table is:
+
+| Situation | Guardian behavior | Why |
+|---|---|---|
+| No private source has been observed | Allow ordinary actions unless the Security Module fires | There is no private flow in scope |
+| Private source observed, later action is a known outbound sink | Require policy, approval, or verifier-backed declassification | A tainted session is trying to communicate out |
+| Private source observed, later action is an unknown tool | Gate by default in balanced/strict modes | Unknown capability is treated as possible egress |
+| Private source observed, destination is inside the owner's declared boundary | Allow when destination trust says it is still "yours" | The flow stays within the protected boundary |
+| Action carries credential/account-security content | Block or suppress without approval | Access-sensitive content is not ordinary private data |
+| Tool reads and leaks inside one opaque call | Out of scope for this property | Guardian cannot mediate what it cannot observe |
+
+So the property is intentionally weaker than noninterference: Guardian does not prove an output has no semantic dependence on private input. It is also stronger than prompt-injection detection: Guardian does not need to decide whether an instruction was malicious. It only needs to notice that a tainted session is attempting a mediated outbound flow and then demand a declassification reason for that flow.
 
 ## Relationship to Hermes built-in security
 
