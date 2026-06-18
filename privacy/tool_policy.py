@@ -809,18 +809,6 @@ def _tool_call_is_safe_remote_read(tool_name: str, args: Any) -> bool:
     return False
 
 
-def _tool_call_is_local_only_terminal(tool_name: str, args: Any) -> bool:
-    lower = str(tool_name or "").lower()
-    if lower != "terminal":
-        return False
-    command = _terminal_command_for_args(args)
-    if not command:
-        return False
-    if _extract_urls(args):
-        return False
-    return not core._NETWORK_SINK_RE.search(command)
-
-
 # --- Trusted-command matching (Trusted destinations, kind="command") ----------
 # A user-curated allowlist entry trusts a terminal command (exact / token-boundary
 # prefix) or a skills-directory wildcard. The live command must carry no shell

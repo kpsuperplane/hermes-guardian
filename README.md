@@ -292,11 +292,10 @@ The `llm` verifier receives sanitized owner-authored context from an
   (a `user_request_context`, or a `cron_context` for a cron run). If that context
   is absent, the allow is downgraded to manual approval regardless of risk band — so a
   "medium-risk" self-report cannot wave a tainted export through on the model's word
-  alone. Low-risk verifier-approved public remote reads and terminal commands with no
-  network target are not treated as private exports for this gate. The structural
-  safe-remote-read and local-terminal checks remain conservative eligibility
-  boundaries. Intra-boundary flows (self / local system / model provider) never reach
-  the verifier and are unaffected.
+  alone. Low-risk verifier-approved public remote reads that Guardian's structural
+  safe-remote-read detector proves cannot carry local/private data are not treated as
+  private exports for this gate. Intra-boundary flows (self / local system / model
+  provider) never reach the verifier and are unaffected.
 - Authorization is scoped to the data actually being sent, not just the action.
   The verifier reads the **real action payload** (`action_arguments`, with
   security-sensitive content and credential-shaped tokens stripped) alongside the
