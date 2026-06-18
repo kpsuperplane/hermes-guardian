@@ -286,14 +286,19 @@ _GENERIC_WRITE_TOOL_RE = re.compile(
 _CONTENT_BEARING_READ_RE = re.compile(r"^\s*(cat|head|tail|grep|rg|find|sed|awk|jq|sqlite3)(\s|$)", re.I)
 # Ephemeral per-turn hygiene note returned from the pre_llm_call hook while a session
 # is still untainted. Injected by Hermes into the current turn's user message at
-# API-call time only (never persisted), steering the agent away from content-bearing
-# local reads that would taint the session and gate later egress.
+# API-call time only (never persisted), steering the agent toward simple command
+# shapes and away from content-bearing local reads that would taint the session.
 _TAINT_HYGIENE_NOTE = (
-    "Guardian: this session is currently untainted. Terminal reads of local file "
-    "contents (configs, ~/.hermes/.env, logs) taint it and add privacy checks to "
-    "later web/network use. For environment preflights, prefer metadata-only "
-    'commands: [ -n "$VAR" ] presence tests, command -v, whoami/pwd/date, and '
-    "printf/echo with literal text."
+    "Guardian: prefer the simplest tool shape that fits the task. Use "
+    "purpose-built read tools for public web, RSS, and weather lookups instead "
+    "of wrapping those reads in terminal/code. If terminal/code is necessary, "
+    "keep public network reads as direct fetch-to-stdout commands with no pipes, "
+    "redirects, downloads, or execution. For environment preflights, prefer "
+    'metadata-only commands: [ -n "$VAR" ] presence tests, command -v, '
+    "whoami/pwd/date, and printf/echo with literal text. Avoid local "
+    "file-content reads, shell substitutions, nested terminal runners, "
+    "secrets/env dumps, and downloaded artifacts unless the user explicitly "
+    "needs them."
 )
 _UNTRUSTED_DROPBOX_ENDPOINT_RE = re.compile(
     r"\b(attacker[- ]?controlled|webhook\.site|requestbin|pastebin\.com|ngrok|interact\.sh|burpcollaborator)\b",

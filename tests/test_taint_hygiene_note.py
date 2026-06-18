@@ -22,6 +22,10 @@ def test_untainted_session_gets_hygiene_note():
     assert isinstance(note, str)
     assert note == plugin.core._TAINT_HYGIENE_NOTE
     assert "Guardian" in note
+    assert "simplest tool shape" in note
+    assert "public web, RSS, and weather" in note
+    assert "direct fetch-to-stdout" in note
+    assert "nested terminal runners" in note
 
 
 def test_tainted_session_gets_no_note():
