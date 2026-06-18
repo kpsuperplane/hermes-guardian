@@ -62,7 +62,7 @@ def test_corrupt_egress_safety_file_forces_strict_without_llm_auto_allow(tmp_pat
     bind_owner(plugin)
     plugin._taint_session("s1", {"memory"})
 
-    result = plugin._on_pre_tool_call("terminal", {"command": "pwd"}, session_id="s1")
+    result = plugin._on_pre_tool_call("terminal", {"command": "cat README.md"}, session_id="s1")
 
     assert plugin._egress_safety_policy() == "strict"
     assert plugin.state._PERSISTENT_RULES_ERROR is True
@@ -121,7 +121,7 @@ def test_invalid_llm_allow_verdict_falls_back_to_manual_approval():
     bind_owner(plugin)
     plugin._taint_session("s1", {"documents"})
 
-    result = plugin._on_pre_tool_call("terminal", {"command": "pwd"}, session_id="s1")
+    result = plugin._on_pre_tool_call("terminal", {"command": "cat README.md"}, session_id="s1")
 
     assert result is not None
     assert "Approval ID:" in result["message"]
@@ -136,7 +136,7 @@ def test_llm_timeout_falls_back_to_manual_approval():
     bind_owner(plugin)
     plugin._taint_session("s1", {"memory"})
 
-    result = plugin._on_pre_tool_call("terminal", {"command": "pwd"}, session_id="s1")
+    result = plugin._on_pre_tool_call("terminal", {"command": "cat README.md"}, session_id="s1")
 
     assert result is not None
     assert "Approval ID:" in result["message"]

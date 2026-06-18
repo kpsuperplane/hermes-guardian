@@ -32,7 +32,7 @@ def test_llm_privacy_allows_model_approved_guardian(monkeypatch):
     # authorization context (doc 02 §3 corroboration gate).
     plugin._on_pre_gateway_dispatch(gateway_event("check the working directory", user_id="owner"))
 
-    result = plugin._on_pre_tool_call("terminal", {"command": "pwd"}, session_id="s1")
+    result = plugin._on_pre_tool_call("terminal", {"command": "cat README.md"}, session_id="s1")
 
     assert result is None
     assert len(fake_llm.calls) == 1
@@ -250,12 +250,10 @@ def test_llm_privacy_allows_safe_remote_read_from_paste_endpoint_to_verifier(mon
 
     command = (
         "python3 - <<'PY'\n"
-        "import urllib.request, pathlib\n"
+        "import urllib.request\n"
         "url='https://pastebin.com/raw/t4SF0XfV'\n"
         "data=urllib.request.urlopen(url, timeout=15).read()\n"
-        "p=pathlib.Path('/tmp/paste_t4SF0XfV')\n"
-        "p.write_bytes(data)\n"
-        "print('saved', len(data))\n"
+        "print(data[:80])\n"
         "PY"
     )
     result = plugin._on_pre_tool_call("terminal", {"command": command}, session_id="s1")
@@ -355,7 +353,7 @@ def test_llm_privacy_without_llm_fails_closed_to_manual_approval(monkeypatch):
     bind_owner(plugin)
     plugin._taint_session("s1", {"memory"})
 
-    result = plugin._on_pre_tool_call("terminal", {"command": "pwd"}, session_id="s1")
+    result = plugin._on_pre_tool_call("terminal", {"command": "cat README.md"}, session_id="s1")
 
     assert result is not None
     assert "Approval ID:" in result["message"]

@@ -736,9 +736,9 @@ def test_public_remote_read_result_does_not_suppress_auth_code_like_text():
 
     command = (
         "python3 - <<'PY'\n"
-        "import urllib.request, pathlib\n"
+        "import urllib.request\n"
         "data=urllib.request.urlopen('https://pastebin.com/raw/t4SF0XfV').read()\n"
-        "pathlib.Path('/tmp/paste_t4SF0XfV').write_bytes(data)\n"
+        "print(data[:80])\n"
         "PY"
     )
     assert plugin._on_pre_tool_call("terminal", {"command": command}, session_id="s1") is None
@@ -764,7 +764,7 @@ def test_execute_code_safe_remote_read_result_does_not_taint_local_system():
         "data = urllib.request.urlopen('https://api.weather.gov/gridpoints/LOX/154,44/forecast', timeout=10).read()\n"
         "print(data[:20])\n"
     )
-    assert plugin._terminal_command_is_safe_remote_read(code)
+    assert plugin.tool_policy._tool_call_is_safe_remote_read("execute_code", {"code": code})
     assert plugin._on_pre_tool_call("execute_code", {"code": code}, session_id="s1") is None
 
     result = plugin._on_transform_tool_result(

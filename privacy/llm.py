@@ -178,17 +178,6 @@ def _prune_expired() -> None:
             approvals._prune_owner_context_unlocked(owner_hash)
 
 
-def _terminal_command_is_low_risk(args: Any) -> bool:
-    command = ""
-    if isinstance(args, dict):
-        command = str(args.get("command") or args.get("cmd") or "")
-    if not command:
-        return False
-    if core._READ_ONLY_AUTO_APPROVE_DENY_RE.search(command):
-        return False
-    return bool(core._READ_ONLY_TERMINAL_SAFE_RE.search(command))
-
-
 def _read_only_auto_approves(shape: dict[str, Any], args: Any) -> bool:
     """Metadata-only low-risk verifier for read-only privacy policy.
 
@@ -196,7 +185,7 @@ def _read_only_auto_approves(shape: dict[str, Any], args: Any) -> bool:
     not recognized as low-risk falls back to manual approval.
     """
     if shape.get("action_family") == "terminal_exec":
-        return _terminal_command_is_low_risk(args)
+        return tool_policy._tool_call_is_safe_local_metadata(shape.get("tool_name", ""), args)
     return False
 
 

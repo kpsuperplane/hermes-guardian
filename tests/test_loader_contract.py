@@ -51,6 +51,7 @@ def test_core_logic_modules_are_single_ordered_contract():
         "runtime/activity_rows",
         "privacy/taint",
         "privacy/destinations",
+        "privacy/terminal_analysis",
         "privacy/tool_policy",
         "privacy/capability",
         "privacy/policy",

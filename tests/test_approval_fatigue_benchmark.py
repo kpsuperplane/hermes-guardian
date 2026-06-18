@@ -40,12 +40,12 @@ def test_approval_fatigue_benchmark_mode_metrics_are_stable():
 
     assert llm["approvals"] == 2
     assert llm["manual_approvals"] == 2
-    # The Notion write is now verifier-mediated (was an upstream self auto-allow), so the
-    # verifier auto-approval + call counts rise by one (4->5 auto, 6->7 calls).
+    # The Notion write is verifier-mediated, while local metadata terminal helpers are
+    # structurally allowed without consulting the verifier.
     assert llm["auto_approvals"] == 5
     assert llm["false_positive_prompts"] == 0
     assert llm["false_positive_rate"] == 0.0
-    assert llm["llm_calls"] == 7
+    assert llm["llm_calls"] == 6
     assert llm["llm_fallbacks"] == 1
 
     for mode_metrics in result["modes"].values():

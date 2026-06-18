@@ -59,7 +59,7 @@ def _submit_form(plugin, session_id="s1"):
 def _terminal_helper(plugin, session_id="s1"):
     return plugin._on_pre_tool_call(
         "terminal",
-        {"cmd": "printf subscription-helper"},
+        {"cmd": "cat README.md"},
         session_id=session_id,
     )
 

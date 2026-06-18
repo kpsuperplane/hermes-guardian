@@ -337,6 +337,32 @@ def _allow_safe_remote_read_tool_call(shape: dict[str, Any], tool_name: str, arg
     _record_allowed_tool_side_effects(shape.get("session_id", ""), tool_name, args)
 
 
+def _allow_safe_local_metadata_tool_call(shape: dict[str, Any], tool_name: str, args: Any) -> None:
+    core.logger.info(
+        "%s: safe local metadata approved Hermes Guardian %s for session %s",
+        core._PLUGIN_NAME,
+        shape.get("action_family", ""),
+        tool_policy._normalize_session_id(shape.get("session_id", "")),
+    )
+    _emit_egress_activity(
+        "auto_approved",
+        session_id=shape.get("session_id", ""),
+        owner_hash=shape.get("owner_hash", ""),
+        tool_name=tool_name,
+        action_family=shape.get("action_family", ""),
+        destination=shape.get("destination", ""),
+        data_classes=set(shape.get("data_classes") or []),
+        reason="safe local metadata computation",
+        rule_source="safe_local_metadata",
+        action_detail=shape.get("action_detail", ""),
+        purpose=shape.get("purpose", "unknown"),
+        recipient_identity=shape.get("recipient_identity", "none"),
+        destination_trust=shape.get("destination_trust", "unknown"),
+        decision_step=shape.get("decision_step", ""),
+    )
+    _record_allowed_tool_side_effects(shape.get("session_id", ""), tool_name, args)
+
+
 def _llm_policy_tool_call_result(
     shape: dict[str, Any], tool_name: str, args: Any
 ) -> tuple[dict[str, str] | None, str | None, Callable[[], None] | None, dict[str, Any]]:
@@ -1057,6 +1083,13 @@ def _privacy_pre_tool_call(tool_name: str = "", args: Any = None, session_id: st
     # verifier still runs and may deny on its own; lockdown only prevents channel-shopping
     # through a softer auto-approval path.
     lockdown = _turn_external_denial_hit(shape, args)
+
+    if egress_safety == "llm" and tool_policy._tool_call_is_safe_local_metadata(tool_name, args):
+        # Deterministic local metadata computations do not move the ambient private
+        # classes to another party. Keep this as a structural allow, not a verifier
+        # corroboration exception.
+        _allow_safe_local_metadata_tool_call(shape, tool_name, args)
+        return None
 
     if egress_safety == "llm" and tool_policy._tool_call_is_safe_remote_read(tool_name, args):
         # Deterministic public GET-style remote reads pull data into the agent; they do

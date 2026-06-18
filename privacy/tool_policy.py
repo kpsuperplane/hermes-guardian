@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from . import rules as rules_mod
+from . import terminal_analysis
 from .. import core
 from .. import state
 from ..runtime import shared_context
@@ -698,115 +699,23 @@ def _is_local_system_tool(tool_name: str) -> bool:
 
 
 def _terminal_command_for_args(args: Any) -> str:
-    if isinstance(args, dict):
-        return str(args.get("command") or args.get("cmd") or args.get("code") or "")
-    return ""
+    return terminal_analysis._command_from_args(args)
 
 
 def _terminal_command_result_is_metadata_only(command: str) -> bool:
-    command = str(command or "").strip()
-    if not command:
-        return False
-    screened = core._LOCAL_SYSTEM_NO_TAINT_DISCARD_RE.sub(" ", command)
-    if core._LOCAL_SYSTEM_NO_TAINT_DENY_RE.search(screened):
-        return False
-    return all(
-        _local_system_segment_is_metadata_only(segment.strip())
-        for segment in core._LOCAL_SYSTEM_SEGMENT_SPLIT_RE.split(screened)
-    )
-
-
-def _local_system_segment_is_metadata_only(segment: str) -> bool:
-    """True iff one ;/&&/||/&-separated segment can only emit metadata output.
-
-    Shell-control keywords and env-assignment prefixes are stripped, then the head
-    command must be a metadata word, a safe whole-segment head (presence test,
-    literal printf/echo, command -v, set flags), optionally piped through the
-    count/filter commands. Anything unrecognized fails closed (the command taints).
-    """
-    while True:
-        stripped = core._LOCAL_SYSTEM_CONTROL_KEYWORD_RE.sub("", segment).strip()
-        if stripped == segment:
-            break
-        segment = stripped
-    segment = core._LOCAL_SYSTEM_ENV_ASSIGN_RE.sub("", segment).strip()
-    if not segment:
-        return True
-    parts = [part.strip() for part in segment.split("|")]
-    head = parts[0]
-    if not head:
-        return False
-    if not (
-        core._LOCAL_SYSTEM_NO_TAINT_FIRST_RE.search(head)
-        or core._LOCAL_SYSTEM_NO_TAINT_SAFE_HEAD_RE.fullmatch(head)
-    ):
-        return False
-    return all(core._LOCAL_SYSTEM_NO_TAINT_FILTER_RE.search(part) for part in parts[1:])
+    return terminal_analysis.analyze_tool_call("terminal", {"command": command}).safe_local_metadata
 
 
 def _terminal_command_is_safe_remote_read(command: str) -> bool:
-    command = str(command or "").strip()
-    if re.search(r"[;&|`]|\$\(", command):
-        return False
-    if not _remote_read_text_has_safe_public_target(command):
-        return False
-    if re.search(r">\s*(?!/(?:tmp|var/tmp)/)", command):
-        return False
-    if re.search(r"\b(?:write_bytes|write_text|open)\b", command) and not core._REMOTE_READ_TMP_WRITE_RE.search(command):
-        return False
-    return True
-
-
-def _remote_read_text_has_safe_public_target(text: str) -> bool:
-    text = str(text or "").strip()
-    if not text:
-        return False
-    if not core._REMOTE_READ_URL_RE.search(text) or not core._REMOTE_READ_TOOL_RE.search(text):
-        return False
-    if core._security_rule_enabled("private_network_reads") and any(_is_private_or_metadata_host(_safe_host_from_url(url)) for url in _extract_urls(text)):
-        return False
-    if core._REMOTE_READ_OUTBOUND_RE.search(text):
-        return False
-    if core._REMOTE_READ_EXECUTION_RE.search(text):
-        return False
-    # A command substitution (`$(...)` / backticks) feeding a network call can splice
-    # ANY local read into the request, so it is never a provably-safe remote read.
-    if core._COMMAND_SUBSTITUTION_RE.search(text):
-        return False
-    if core._SENSITIVE_LOCAL_PATH_RE.search(text):
-        return False
-    return True
-
-
-_CODE_REMOTE_READ_LOCAL_SOURCE_RE = re.compile(
-    r"("
-    r"\bos\.environ\b|\bgetenv\s*\(|\b__import__\s*\(|\b(?:eval|exec|compile)\s*\("
-    r"|\bsubprocess\b|\bPopen\s*\(|\bsystem\s*\("
-    r"|\b(?:open|read_text|read_bytes|write_text|write_bytes)\s*\("
-    r"|\bpathlib\.Path\b|\bPath\.home\s*\(|\bexpanduser\s*\("
-    r"|\b(?:glob|iglob|scandir|listdir|walk)\s*\("
-    r")",
-    re.I | re.S,
-)
-
-
-def _code_snippet_is_safe_remote_read(code: str) -> bool:
-    code = str(code or "").strip()
-    if not _remote_read_text_has_safe_public_target(code):
-        return False
-    if _CODE_REMOTE_READ_LOCAL_SOURCE_RE.search(code):
-        return False
-    return True
+    return terminal_analysis.analyze_tool_call("terminal", {"command": command}).safe_remote_read
 
 
 def _tool_call_is_safe_remote_read(tool_name: str, args: Any) -> bool:
-    lower = str(tool_name or "").lower()
-    command = _terminal_command_for_args(args)
-    if lower == "terminal":
-        return _terminal_command_is_safe_remote_read(command)
-    if lower in {"execute_code", "code_execution", "shell"}:
-        return _code_snippet_is_safe_remote_read(command)
-    return False
+    return terminal_analysis.analyze_tool_call(tool_name, args).safe_remote_read
+
+
+def _tool_call_is_safe_local_metadata(tool_name: str, args: Any) -> bool:
+    return terminal_analysis.analyze_tool_call(tool_name, args).safe_local_metadata
 
 
 # --- Trusted-command matching (Trusted destinations, kind="command") ----------
@@ -993,28 +902,20 @@ def _is_private_or_metadata_host(host: str) -> bool:
 
 
 def _local_system_result_taint_classes(tool_name: str, args: Any) -> set[str]:
-    lower = str(tool_name or "").lower()
-    if lower in {"execute_code", "code_execution", "shell"}:
-        if _tool_call_is_safe_remote_read(tool_name, args):
-            return set()
-        return {"local_system"}
-    if lower == "terminal":
-        if _tool_call_is_safe_remote_read(tool_name, args):
-            return set()
-        command = _terminal_command_for_args(args)
-        if _terminal_command_result_is_metadata_only(command):
-            return set()
-        return {"local_system"}
-    return set()
+    analysis = terminal_analysis.analyze_tool_call(tool_name, args)
+    if not analysis.is_terminal_tool:
+        return set()
+    return {"local_system"} if analysis.taints_local_system else set()
 
 
 def _record_local_system_result_policy(session_id: str | None, tool_name: str, args: Any) -> None:
     if not _is_local_system_tool(tool_name):
         return
+    analysis = terminal_analysis.analyze_tool_call(tool_name, args)
     entry = {
         "tool_name": str(tool_name or "").lower(),
-        "taint": sorted(_local_system_result_taint_classes(tool_name, args)),
-        "remote_read": _tool_call_is_safe_remote_read(tool_name, args),
+        "taint": ["local_system"] if analysis.taints_local_system else [],
+        "remote_read": analysis.safe_remote_read,
         "ts": state._now(),
     }
     shared_context._record_shared_context(

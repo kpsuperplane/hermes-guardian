@@ -283,50 +283,7 @@ _GENERIC_WRITE_TOOL_RE = re.compile(
     r"(^|_)(add|create|update|delete|send|post|comment|reply|share|invite|append|publish|write|patch|remove)(_|$)",
     re.I,
 )
-_READ_ONLY_AUTO_APPROVE_DENY_RE = re.compile(
-    r"(\b(curl|wget|scp|sftp|ssh|rsync|nc|netcat|telnet|ftp|openssl|base64|python|python3|node|npm|npx|perl|ruby|php)\b"
-    r"|https?://|>>?|<|\||;|&&|\|\||`|\$\()",
-    re.I,
-)
-_READ_ONLY_TERMINAL_SAFE_RE = re.compile(
-    r"^\s*(pwd|date|whoami|id|uname|hostname|ls|wc|stat|du|df|test|true|false)"
-    r"(\s|$)",
-    re.I,
-)
 _CONTENT_BEARING_READ_RE = re.compile(r"^\s*(cat|head|tail|grep|rg|find|sed|awk|jq|sqlite3)(\s|$)", re.I)
-_LOCAL_SYSTEM_NO_TAINT_DENY_RE = re.compile(
-    r"(\b(curl|wget|scp|sftp|ssh|rsync|nc|netcat|telnet|ftp|openssl|base64|python|python3|node|npm|npx|perl|ruby|php)\b"
-    r"|https?://|>>?|<|`|\$\()",
-    re.I,
-)
-# Output-discarding redirects are stripped before the deny check: sending output to
-# /dev/null (or merging streams) cannot persist content anywhere.
-_LOCAL_SYSTEM_NO_TAINT_DISCARD_RE = re.compile(
-    r"(?:[0-9]?>>?|&>>?)\s*/dev/null\b|[0-9]>&[0-9]",
-    re.I,
-)
-_LOCAL_SYSTEM_SEGMENT_SPLIT_RE = re.compile(r"\|\||[;\n&]")
-_LOCAL_SYSTEM_CONTROL_KEYWORD_RE = re.compile(r"^(?:if|then|elif|else|fi|do|done)\b\s*", re.I)
-_LOCAL_SYSTEM_ENV_ASSIGN_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;|&<>`]*(?:\s+|$))+")
-_LOCAL_SYSTEM_NO_TAINT_FIRST_RE = re.compile(
-    r"^\s*(pwd|date|whoami|id|uname|hostname|ls|stat|du|df|test|true|false)(\s|$)",
-    re.I,
-)
-# Whole-segment heads that only ever emit metadata: presence tests (exit status only),
-# shell option setting, command lookup, and printf/echo restricted to literal arguments
-# (no $-expansion, so no environment or file content can reach the output).
-_LOCAL_SYSTEM_NO_TAINT_SAFE_HEAD_RE = re.compile(
-    r"(?:set(?:\s+(?:--|[-+][A-Za-z]+|[a-z]+))+"
-    r"|command\s+-v\s+[\w.+/-]+"
-    r"|\[{1,2}\s.*\]{1,2}"
-    r"|(?:printf|echo)(?:\s+(?:-[A-Za-z]+|'[^'$`]*'|\"[^\"$`]*\"|[^\s'\"$`\\;|&<>]+))*"
-    r")",
-    re.I | re.S,
-)
-_LOCAL_SYSTEM_NO_TAINT_FILTER_RE = re.compile(
-    r"^\s*(grep|wc|head|tail)(\s|$)",
-    re.I,
-)
 # Ephemeral per-turn hygiene note returned from the pre_llm_call hook while a session
 # is still untainted. Injected by Hermes into the current turn's user message at
 # API-call time only (never persisted), steering the agent away from content-bearing
@@ -340,34 +297,6 @@ _TAINT_HYGIENE_NOTE = (
 )
 _UNTRUSTED_DROPBOX_ENDPOINT_RE = re.compile(
     r"\b(attacker[- ]?controlled|webhook\.site|requestbin|pastebin\.com|ngrok|interact\.sh|burpcollaborator)\b",
-    re.I,
-)
-_REMOTE_READ_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.I)
-_REMOTE_READ_TOOL_RE = re.compile(r"\b(curl|wget|urlopen|urllib\.request|requests\.get)\b", re.I)
-_REMOTE_READ_OUTBOUND_RE = re.compile(
-    r"("
-    # An explicit POST/upload flag. The flag group is anchored with a whitespace/start
-    # lookbehind `(?<!\S)` instead of `\b`, because `\b` does not fire between a space
-    # and a leading `-` (both non-word), so `-d` / `--data` / `--data-binary` / `-T` /
-    # `--form` were silently missed. The trailing edge for short flags is a non-letter
-    # lookahead so `-d` matches `-d ` but not the unrelated `-data` token.
-    r"\b(curl|wget)\b.{0,80}(?<!\S)(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s*(?:POST|PUT|PATCH|DELETE)|--data(?:-raw|-binary)?\b|-d(?![a-z])|--form\b|--upload-file\b|-T(?![a-z]))"
-    r"|\brequests\.(?:post|put|patch|delete)\b"
-    r"|\bmethod\s*=\s*['\"](?:POST|PUT|PATCH|DELETE)['\"]"
-    r"|\burlopen\s*\([^)]*,\s*data\s*="
-    r"|\b(upload|post|send|exfiltrat(?:e|ion)|steal|leak|dump|harvest)\b"
-    r")",
-    re.I | re.S,
-)
-_REMOTE_READ_EXECUTION_RE = re.compile(
-    r"(\|\s*(?:sh|bash|zsh|python|python3|node|ruby|perl)\b"
-    r"|\b(?:sh|bash|zsh|python|python3|node|ruby|perl)\s+/(?:tmp|var/tmp)/"
-    r"|\bchmod\s+\+x\b"
-    r")",
-    re.I,
-)
-_REMOTE_READ_TMP_WRITE_RE = re.compile(
-    r"(/tmp/|/var/tmp/|tempfile\.|mktemp\b|Path\s*\(\s*['\"]/(?:tmp|var/tmp)/|open\s*\(\s*['\"]/(?:tmp|var/tmp)/)",
     re.I,
 )
 _SENSITIVE_LOCAL_PATH_RE = re.compile(
@@ -705,6 +634,7 @@ _CORE_LOGIC_MODULES = (
     "runtime/activity_rows",
     "privacy/taint",
     "privacy/destinations",
+    "privacy/terminal_analysis",
     "privacy/tool_policy",
     "privacy/capability",
     "privacy/policy",
@@ -819,6 +749,7 @@ _m_activity_store = _import_logic("runtime.activity_store")
 _m_activity_rows = _import_logic("runtime.activity_rows")
 _m_taint = _import_logic("privacy.taint")
 _m_destinations = _import_logic("privacy.destinations")
+terminal_analysis = _import_logic("privacy.terminal_analysis")
 tool_policy = _import_logic("privacy.tool_policy")
 _m_capability = _import_logic("privacy.capability")
 _m_policy = _import_logic("privacy.policy")
@@ -843,6 +774,7 @@ _LOADED_LOGIC_MODULES = (
     _m_activity_rows,
     _m_taint,
     _m_destinations,
+    terminal_analysis,
     tool_policy,
     _m_capability,
     _m_policy,

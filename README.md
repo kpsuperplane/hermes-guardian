@@ -292,10 +292,12 @@ The `llm` verifier receives sanitized owner-authored context from an
   (a `user_request_context`, or a `cron_context` for a cron run). If that context
   is absent, the allow is downgraded to manual approval regardless of risk band — so a
   "medium-risk" self-report cannot wave a tainted export through on the model's word
-  alone. Low-risk verifier-approved public remote reads that Guardian's structural
-  safe-remote-read detector proves cannot carry local/private data are not treated as
-  private exports for this gate. Intra-boundary flows (self / local system / model
-  provider) never reach the verifier and are unaffected.
+  alone. Public remote reads that Guardian's structural detector proves are
+  fetch-to-output only, plus local metadata-only terminal helpers, are not treated
+  as private exports for this gate. Persisted downloads, local artifact execution,
+  shell substitution, uploads, and any shape that can mix local data with a network
+  sink stay outside that shortcut. Intra-boundary flows (self / local system /
+  model provider) never reach the verifier and are unaffected.
 - Authorization is scoped to the data actually being sent, not just the action.
   The verifier reads the **real action payload** (`action_arguments`, with
   security-sensitive content and credential-shaped tokens stripped) alongside the
@@ -584,12 +586,15 @@ email text contains no obvious PII pattern. A bare email address found in conten
 is an identifier and taints `contacts`, not `communications`.
 
 Terminal commands whose output can only be metadata do not taint `local_system`:
-the metadata words above (`pwd`, `date`, `whoami`, …), presence tests like
+the metadata words above (`pwd`, `date`, `whoami`, ...), presence tests like
 `[ -n "$VAR" ]`, `command -v`, `set` flags, and `printf`/`echo` with literal
-arguments — including chains of such segments (`;`, `&&`, `||`, `if`/`then`),
-env-assignment prefixes (`TZ=… date`), and output-discarding `>/dev/null`
-redirects. Any segment outside that set (content-bearing reads, `$`-expansion in
-output, real redirects, network tools, substitution) taints the whole command.
+arguments, including chains of such segments (`;`, `&&`, `||`, `if`/`then`),
+env-assignment prefixes (`TZ=... date`), and output-discarding `>/dev/null`
+redirects. Guardian also permits a narrow Python heredoc form only when the AST is
+literal arithmetic/loop/print metadata with no imports, filesystem access,
+environment reads, network calls, or dynamic execution. Any segment outside that
+set (content-bearing reads, `$`-expansion in output, real redirects, network
+tools, substitution, local artifact execution) taints the whole command.
 
 While a session is still untainted (and Egress Safety is not `off`), Guardian's
 `pre_llm_call` hook returns a short static hygiene note that Hermes appends to
@@ -783,16 +788,18 @@ available:
 
 Terminal and code execution are conservative because they can read local state
 and exfiltrate data in the same call. In `read-only` mode, Guardian only
-auto-approves a small metadata-verified set:
+auto-approves a small metadata-verified set, including safe chains and
+environment prefixes:
 
 ```text
 pwd, date, whoami, id, uname, hostname, ls, wc, stat, du, df, test, true, false
 ```
 
-Commands with network tools, URLs, redirects, pipes, command chaining,
-substitution, script runtimes, or content-bearing reads such as `cat`, `grep`,
-`rg`, `find`, `sed`, `awk`, `jq`, or `sqlite3` are not auto-approved by
-`read-only`.
+Literal `printf`/`echo`, `command -v`, `set` flags, and narrow literal-arithmetic
+Python heredocs may also pass. Commands with network tools, URLs, persisted
+redirects, unsafe pipes, substitution, local artifact execution, general script
+runtimes, or content-bearing reads such as `cat`, `rg`, `find`, `sed`, `awk`,
+`jq`, or `sqlite3` are not auto-approved by `read-only`.
 
 ## Slash Commands
 
