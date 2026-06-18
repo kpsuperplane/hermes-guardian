@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from typing import Any
 
@@ -10,12 +11,16 @@ from . import tool_policy
 from .. import core
 from ..security import module as security_module
 
+_TERMINAL_PREVIEW_LIMIT = 500
+_TERMINAL_STRING_LITERAL_LIMIT = 36
 
-def _redact_action_detail_text(text: str) -> str:
+
+def _redact_action_detail_text(text: str, *, check_sensitive: bool = True) -> str:
     text = str(text or "")
-    reason = security_module._sensitive_reason(text)
-    if reason:
-        return f"<security-sensitive content redacted: {reason}>"
+    if check_sensitive:
+        reason = security_module._sensitive_reason(text)
+        if reason:
+            return f"<security-sensitive content redacted: {reason}>"
     text = re.sub(r"https?://[^\s\"'<>]+", lambda m: llm._sanitize_url_for_llm(m.group(0)), text)
     text = core._EMAIL_ADDRESS_RE.sub("<email>", text)
     text = core._PHONE_RE.sub("<phone>", text)
@@ -30,6 +35,100 @@ def _redact_action_detail_text(text: str) -> str:
     text = re.sub(r"\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}", r"\1 <redacted>", text, flags=re.I)
     text = re.sub(r"\b[A-Za-z0-9._~+/=-]{48,}\b", "<token-like>", text)
     return text[:500]
+
+
+def _redact_terminal_string_literal(value: str) -> str:
+    text = str(value or "")
+    if not text:
+        return text
+    if re.search(r"<(?:path:redacted|token-like|string:\d+)>", text):
+        return text
+    reason = security_module._sensitive_reason(text)
+    if reason:
+        return f"<security-sensitive:{reason}>"
+    redacted = _redact_action_detail_text(text)
+    if re.search(r"https?://", text, re.I):
+        return redacted
+    if re.fullmatch(r"[A-Za-z0-9._~+/=-]{48,}", text):
+        return "<token-like>"
+    if (
+        redacted != text
+        or len(text) > _TERMINAL_STRING_LITERAL_LIMIT
+        or tool_policy._classes_from_content(text)
+        or re.search(r"[/\\]|\b(token|secret|password|credential|auth|cookie|key)\b", text, re.I)
+    ):
+        return f"<string:{len(text)}>"
+    return text
+
+
+class _TerminalPreviewLiteralTransformer(ast.NodeTransformer):
+    def visit_Constant(self, node: ast.Constant) -> ast.AST:
+        if isinstance(node.value, str):
+            return ast.copy_location(ast.Constant(_redact_terminal_string_literal(node.value)), node)
+        return node
+
+
+def _redact_python_literals_for_terminal_preview(code: str) -> str:
+    try:
+        tree = ast.parse(str(code or ""))
+    except SyntaxError:
+        return _redact_action_detail_text(code)
+    tree = _TerminalPreviewLiteralTransformer().visit(tree)
+    ast.fix_missing_locations(tree)
+    try:
+        return ast.unparse(tree)
+    except Exception:
+        return _redact_action_detail_text(code)
+
+
+def _redact_terminal_heredoc(match: re.Match[str]) -> str:
+    body = match.group("body")
+    redacted = _redact_python_literals_for_terminal_preview(body)
+    return f"{match.group('head')}\n{redacted}\n{match.group('marker')}"
+
+
+def _redact_terminal_shell_quoted_literal(match: re.Match[str]) -> str:
+    quote = match.group("quote")
+    body = match.group("body")
+    redacted = _redact_terminal_string_literal(body)
+    if redacted == body:
+        return match.group(0)
+    return f"{quote}{redacted}{quote}"
+
+
+def _terminal_command_preview(command: str) -> str:
+    text = str(command or "")
+    reason = security_module._sensitive_reason(text)
+    if reason:
+        return f"<security-sensitive content redacted: {reason}>"
+
+    text = re.sub(
+        r"(?P<head>python3?\s+-\s+<<['\"]?(?P<marker>[A-Za-z_][A-Za-z0-9_]*)['\"]?)\n(?P<body>.*?)\n(?P=marker)",
+        _redact_terminal_heredoc,
+        text,
+        flags=re.S,
+    )
+    text = re.sub(
+        r"(?P<quote>['\"])(?P<body>[^'\"\n]{0,2000})(?P=quote)",
+        _redact_terminal_shell_quoted_literal,
+        text,
+    )
+    text = _redact_action_detail_text(text, check_sensitive=False)
+    text = re.sub(r"(https?://[A-Za-z0-9.-]+)(<path:redacted>)", r"\1/\2", text)
+    text = re.sub(
+        r"(?P<prefix>(?:['\"])?[A-Za-z_][A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|AUTH|KEY)[A-Za-z0-9_]*(?:['\"])?\s*[:=]\s*)(?P<quote>['\"]?)[^\s;&|,)]+(?P=quote)",
+        r"\g<prefix><redacted>",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(r"(?P<flag>--(?:token|password|secret|auth|key)(?:=|\s+))(?P<quote>['\"]?)[^\s;&|]+(?P=quote)", r"\g<flag><redacted>", text, flags=re.I)
+    text = re.sub(r"(?P<flag>-(?:p|u)\s+)(?P<quote>['\"]?)[^\s;&|]+(?P=quote)", r"\g<flag><redacted>", text, flags=re.I)
+    text = re.sub(r"[ \t]+", " ", text)
+    lines = [line.rstrip() for line in text.splitlines()]
+    text = "\n".join(lines).strip()
+    if len(text) > _TERMINAL_PREVIEW_LIMIT:
+        return text[: _TERMINAL_PREVIEW_LIMIT - 3].rstrip() + "..."
+    return text
 
 
 def _redacted_content_note(value: Any) -> str:
@@ -54,9 +153,7 @@ def _activity_action_detail(tool_name: str, args: Any, action_family: str = "", 
     if isinstance(args, dict):
         if lower_action == "terminal_exec" or lower_tool in {"terminal", "shell"}:
             command = str(args.get("command") or args.get("cmd") or "")
-            if tool_policy._classes_from_content(command):
-                return f"command: {_redacted_content_note(command)}"
-            return _redact_action_detail_text(command)
+            return "command: " + _terminal_command_preview(command)
         if lower_tool in {"execute_code", "code_execution"}:
             code = str(args.get("code") or args.get("script") or "")
             return f"code: {_redacted_content_note(code)}"

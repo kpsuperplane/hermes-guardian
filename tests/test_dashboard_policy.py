@@ -637,7 +637,7 @@ def test_datatables_payload_shows_terminal_action_detail():
     plugin._on_pre_tool_call("terminal", {"command": "pwd | grep root"}, session_id="s1")
     payload = plugin._activity_datatables_payload({"draw": "1", "start": "0", "length": "25"})
 
-    assert payload["data"][0]["action_detail"] == "pwd | grep root"
+    assert payload["data"][0]["action_detail"] == "command: pwd | grep root"
 
 
 def test_activity_reason_preserves_long_llm_rationale():
@@ -726,9 +726,33 @@ def test_activity_action_detail_keeps_safe_raw_command_but_redacts_security_sens
         "terminal",
     )
 
-    assert safe_detail == "pwd | grep root"
-    assert sensitive_detail == "<security-sensitive content redacted: auth code>"
+    assert safe_detail == "command: pwd | grep root"
+    assert sensitive_detail == "command: <security-sensitive content redacted: auth code>"
     assert "123456" not in sensitive_detail
+
+
+def test_terminal_action_detail_preserves_sanitized_command_preview():
+    plugin = load_plugin()
+    token = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh"
+    command = (
+        "python3 - <<'PY'\n"
+        "import urllib.request\n"
+        "url='https://api.weather.gov/gridpoints/LOX/154,44/forecast?email=reader@example.com'\n"
+        f"value='{token}'\n"
+        "print(url, value)\n"
+        "PY"
+    )
+
+    detail = plugin._activity_action_detail("terminal", {"command": command}, "terminal_exec", "terminal")
+
+    assert detail.startswith("command: python3 - <<'PY'")
+    assert "import urllib.request" in detail
+    assert "api.weather.gov" in detail
+    assert "<path:redacted>" in detail
+    assert "<token-like>" in detail
+    assert "reader@example.com" not in detail
+    assert "gridpoints/LOX" not in detail
+    assert token not in detail
 
 
 def test_activity_prune_limits_max_rows(monkeypatch):

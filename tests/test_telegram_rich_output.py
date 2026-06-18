@@ -80,6 +80,35 @@ def test_telegram_approvals_and_permit_menu_are_rich_and_sanitized(monkeypatch):
     assert "raw private sentence" not in menu
 
 
+def test_telegram_permit_menu_shows_sanitized_terminal_action_detail(monkeypatch):
+    plugin = load_plugin()
+    monkeypatch.setattr(plugin._m_commands, "_telegram_rich_slash_supported", lambda: True)
+    save_privacy_config(plugin, mode="strict")
+    bind_owner(plugin, session_id="s1", user_id="owner")
+    plugin._taint_session("s1", {"communications"})
+    command = (
+        "cat README.md && python3 - <<'PY'\n"
+        "import urllib.request\n"
+        "url='https://api.weather.gov/gridpoints/LOX/154,44/forecast?email=reader@example.com'\n"
+        "print(url)\n"
+        "PY"
+    )
+
+    blocked = plugin._on_pre_tool_call("terminal", {"command": command}, session_id="s1")
+    assert blocked is not None
+    approval_id = next(iter(plugin.state._PENDING_APPROVALS))
+
+    approvals = _dispatch_command(plugin, "approvals", platform="telegram")
+    menu = _dispatch_command(plugin, f"approve {approval_id}", platform="telegram")
+
+    assert "api.weather.gov" not in approvals
+    assert "Action detail" in menu
+    assert "command: cat README.md && python3" in menu
+    assert "api.weather.gov" in menu
+    assert "reader@example.com" not in menu
+    assert "gridpoints/LOX" not in menu
+
+
 def test_telegram_activity_and_why_use_rich_shapes_without_raw_payload(monkeypatch):
     plugin = load_plugin()
     monkeypatch.setattr(plugin._m_commands, "_telegram_rich_slash_supported", lambda: True)

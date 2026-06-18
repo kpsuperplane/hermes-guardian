@@ -106,6 +106,7 @@ def _cron_notification_message(
     data_classes: set[str] | list[str] | tuple[str, ...] | None = None,
     reason: str = "",
     approval_id: str = "",
+    action_detail: str = "",
     destination_trust: str = "",
     decision_step: str = "",
 ) -> str:
@@ -136,6 +137,9 @@ def _cron_notification_message(
         lines.append(f"Decision step: {step_label}")
     if classes:
         lines.append(f"Data classes: {', '.join(classes)}")
+    detail = core._presentation.clip_text(action_detail, 500, ellipsis="...", fallback="")
+    if detail:
+        lines.append(f"Action detail: {detail}")
     if reason:
         lines.append(
             "Reason: "
@@ -195,6 +199,8 @@ def _cron_notification_rich_message(message: str) -> str:
     details = []
     if values.get("decision step"):
         details.append(f"- Decision step: `{_cron_md_inline(values['decision step'])}`")
+    if values.get("action detail"):
+        details.append(f"- Action detail: `{_cron_md_inline(values['action detail'])}`")
     if values.get("reason"):
         details.append(f"- Reason: {_cron_md_inline(values['reason'])}")
     if approval_command:
@@ -444,6 +450,7 @@ def _notify_cron_failure_if_needed(
     data_classes: set[str] | list[str] | tuple[str, ...] | None = None,
     reason: str = "",
     approval_id: str = "",
+    action_detail: str = "",
     destination_trust: str = "",
     decision_step: str = "",
 ) -> None:
@@ -475,6 +482,7 @@ def _notify_cron_failure_if_needed(
         data_classes=data_classes,
         reason=reason,
         approval_id=approval_id,
+        action_detail=action_detail,
         destination_trust=destination_trust,
         decision_step=decision_step,
     )

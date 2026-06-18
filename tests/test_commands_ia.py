@@ -271,6 +271,32 @@ def test_bare_approve_shows_the_permit_menu_without_granting():  # doc 06 §7.1
     assert approval_id in plugin._PENDING_APPROVALS
 
 
+def test_bare_approve_shows_sanitized_terminal_action_detail_without_list_noise():
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="strict")
+    bind_owner(plugin)
+    plugin._taint_session("s1", {"communications"})
+    command = (
+        "cat README.md && python3 - <<'PY'\n"
+        "import urllib.request\n"
+        "url='https://api.weather.gov/gridpoints/LOX/154,44/forecast?email=reader@example.com'\n"
+        "print(url)\n"
+        "PY"
+    )
+    plugin._on_pre_tool_call("terminal", {"command": command}, session_id="s1")
+    approval_id = first_pending_id(plugin)
+
+    listing = plugin._handle_guardian_command("approvals")
+    out = plugin._handle_guardian_command(f"approve {approval_id}")
+
+    assert "api.weather.gov" not in listing
+    assert "Action detail: command: cat README.md && python3" in out
+    assert "import urllib.request" in out
+    assert "api.weather.gov" in out
+    assert "reader@example.com" not in out
+    assert "gridpoints/LOX" not in out
+
+
 # --- §6.4 Delegation, not duplication: group verb == original handler. ---------
 def test_check_delegates_to_resolve_widget_identically():
     plugin = load_plugin()

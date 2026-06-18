@@ -423,7 +423,7 @@ def test_untainted_terminal_egress_logs_allowed_without_private_data():
     assert rows[0]["action_family"] == "terminal_exec"
     assert rows[0]["data_classes"] == ""
     assert rows[0]["reason"] == "no private data in scope"
-    assert rows[0]["action_detail"] == "pwd | grep root"
+    assert rows[0]["action_detail"] == "command: pwd | grep root"
 
 
 def test_terminal_action_detail_redacts_obvious_secret_values():
@@ -449,7 +449,7 @@ def test_terminal_action_detail_redacts_private_command_payload():
 
     detail = plugin._activity_rows({}, limit=5)[0]["action_detail"]
 
-    assert detail.startswith("command: <redacted ")
+    assert detail.startswith("command: curl -d '<string:")
     assert "E2E-CLI-SECRET" not in detail
     assert "owner@example.com" not in detail
 

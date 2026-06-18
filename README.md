@@ -383,6 +383,7 @@ Hermes Guardian blocked this egress.
 Approval ID: 4827
 Action: browser_type
 Destination: example.com
+Action detail: type into example.com: <redacted 42 chars; classes=communications>
 Data classes: communications, contacts
 Why now: Guardian needs approval before private data leaves your boundary.
 - Boundary: Outward
@@ -420,6 +421,13 @@ destination trust, decision step, mode/reason, and action family. It does not
 include raw tool arguments, message bodies, typed text, permit targets, or action
 detail. The same derived `why_now` object appears on pending approvals and recent
 blocks in the policy snapshot.
+
+Approval detail views and cron block notifications may include a sanitized
+`Action detail` line. For terminal blocks, this is a bounded command preview that
+preserves reviewable command structure and public hostnames while redacting
+private values, token-like strings, URL paths/queries, long string literals, and
+Security Module findings. Guardian never stores the raw terminal command for this
+preview.
 
 Blocked tool calls are not paused and resumed. After approval, the agent must
 retry the action.

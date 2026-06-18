@@ -770,6 +770,7 @@ def _block_for_pending_approval(
         data_classes=set(shape.get("data_classes") or []),
         reason=blocked_reason,
         approval_id=approval.get("id", ""),
+        action_detail=shape.get("action_detail", ""),
         destination_trust=shape.get("destination_trust", "unknown"),
         decision_step=shape.get("decision_step", ""),
     )

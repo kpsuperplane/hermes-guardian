@@ -666,6 +666,7 @@ def _guardian_permit_menu_telegram(owner_hash: str, approval_id: str) -> str:
     resolved_id, approval, error = _resolve_owned_approval(owner_hash, approval_id)
     if error:
         return error
+    action_detail = dashboard_mod._clip_text(approval.get("action_detail", ""), 500, ellipsis="...", fallback="")
     sections: list[str] = [
         f"## Permit Approval {resolved_id}",
         _md_table(
@@ -678,6 +679,8 @@ def _guardian_permit_menu_telegram(owner_hash: str, approval_id: str) -> str:
             ],
         ),
     ]
+    if action_detail:
+        sections.extend(["", _md_details("Action detail", [f"- {_md_code(action_detail)}"])])
     groups: dict[str, list[list[str]]] = {}
     for option in approvals._approval_permit_options(approval):
         command = approvals._permit_command_line(resolved_id, option["method"])
@@ -2198,6 +2201,9 @@ def _guardian_permit_menu(owner_hash: str, approval_id: str) -> str:
         f"Ways to permit approval {resolved_id} "
         f"({approval.get('action_family', '')} -> {approval.get('destination', '')}):"
     ]
+    action_detail = dashboard_mod._clip_text(approval.get("action_detail", ""), 500, ellipsis="...", fallback="")
+    if action_detail:
+        lines.append(f"Action detail: {action_detail}")
     last_group = ""
     for option in approvals._approval_permit_options(approval):
         group = str(option.get("group") or "Approval options")

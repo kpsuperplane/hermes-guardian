@@ -99,6 +99,42 @@ def test_cron_notification_defaults_to_job_delivery_targets(monkeypatch):
     assert "Job: Example Availability Check" in message
 
 
+def test_cron_terminal_notification_includes_sanitized_action_detail(monkeypatch):
+    plugin = load_plugin()
+    sent = []
+    cron_session = "cron_aaaaaaaaaaaa_20260607_030107"
+    command = (
+        "cat README.md && python3 - <<'PY'\n"
+        "import urllib.request\n"
+        "url='https://api.weather.gov/gridpoints/LOX/154,44/forecast?email=reader@example.com'\n"
+        "print(url)\n"
+        "PY"
+    )
+
+    save_privacy_config(plugin, mode="strict")
+    monkeypatch.setenv("HERMES_GUARDIAN_CRON_NOTIFY_TO", "telegram")
+    monkeypatch.setattr(plugin.cron_notifications, "_cron_job_name", lambda _job_id: "Example Availability Check")
+    monkeypatch.setattr(
+        plugin.cron_notifications,
+        "_send_cron_notification_message",
+        lambda message, target: sent.append((message, target)),
+    )
+    bind_owner(plugin, session_id=cron_session)
+    plugin._taint_session(cron_session, {"communications"})
+
+    result = plugin._on_pre_tool_call("terminal", {"command": command}, session_id=cron_session)
+
+    assert result is not None
+    assert wait_for(lambda: len(sent) == 1)
+    message, _target = sent[0]
+    assert "Action: terminal_exec" in message
+    assert "Action detail: command: cat README.md && python3" in message
+    assert "import urllib.request" in message
+    assert "api.weather.gov" in message
+    assert "reader@example.com" not in message
+    assert "gridpoints/LOX" not in message
+
+
 def test_cron_notification_uses_telegram_copy_button_sender(monkeypatch):
     plugin = load_plugin()
     sent = []
