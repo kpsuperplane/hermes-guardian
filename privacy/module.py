@@ -465,8 +465,10 @@ def _llm_policy_tool_call_result(
         }
     if verdict.get("outcome") == "allow":
         reason = (
-            f"llm {verdict.get('risk_level', 'unknown')}: "
-            f"{verdict.get('rationale', 'approved')}"
+            "LLM verifier: "
+            f"risk={verdict.get('risk_level', 'unknown')}; "
+            f"authorization={verdict.get('authorization_level', 'unknown')}; "
+            f"rationale: {verdict.get('rationale', 'approved')}"
         )
 
         def _apply_allow() -> None:
@@ -511,8 +513,10 @@ def _llm_policy_tool_call_result(
         }
 
     blocked_reason = (
-        f"requires approval (llm {verdict.get('risk_level', 'unknown')}: "
-        f"{verdict.get('rationale', 'denied')})"
+        "requires approval (LLM verifier: "
+        f"risk={verdict.get('risk_level', 'unknown')}; "
+        f"authorization={verdict.get('authorization_level', 'unknown')}; "
+        f"rationale: {verdict.get('rationale', 'denied')})"
     )
     return None, blocked_reason, None, {
         "source": "llm",

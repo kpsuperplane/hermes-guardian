@@ -642,7 +642,7 @@ def test_datatables_payload_shows_terminal_action_detail():
 
 def test_activity_reason_preserves_long_llm_rationale():
     plugin = load_plugin()
-    long_reason = "llm low: " + "safe public read. " * 30
+    long_reason = "LLM verifier: risk=low; authorization=explicit; rationale: " + "safe public read. " * 30
 
     plugin._emit_activity(
         "auto_approved",
@@ -662,7 +662,7 @@ def test_activity_reason_preserves_long_llm_rationale():
 
 def test_datatables_payload_exposes_full_long_reason():
     plugin = load_plugin()
-    long_reason = "llm low: " + "safe public read. " * 30
+    long_reason = "LLM verifier: risk=low; authorization=explicit; rationale: " + "safe public read. " * 30
 
     plugin._emit_activity(
         "auto_approved",
@@ -677,7 +677,7 @@ def test_datatables_payload_exposes_full_long_reason():
     payload = plugin._activity_datatables_payload({"draw": "1", "start": "0", "length": "25"})
 
     assert payload["data"][0]["reason"] == long_reason.strip()
-    assert payload["data"][0]["reason_short"].startswith("Allowed: llm low")
+    assert payload["data"][0]["reason_short"].startswith("Allowed: LLM verifier: risk=low")
     assert len(payload["data"][0]["reason_short"]) < len(long_reason)
 
 

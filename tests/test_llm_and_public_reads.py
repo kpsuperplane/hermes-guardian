@@ -84,7 +84,7 @@ def test_llm_privacy_denial_falls_back_to_manual_approval(monkeypatch):
     assert [call["purpose"] for call in fake_llm.calls].count("hermes-guardian.security_llm") == 1
     assert [call["purpose"] for call in fake_llm.calls].count("hermes-guardian.approval_code") == 0
     rows = plugin._activity_rows({}, limit=5)
-    assert any("llm high" in row["reason"] for row in rows)
+    assert any("risk=high" in row["reason"] and "authorization=unknown" in row["reason"] for row in rows)
 
 
 def test_llm_verifier_input_carries_real_payload_with_pseudonymous_planned_action():

@@ -335,7 +335,9 @@ def test_local_artifact_execution_does_not_autoapprove_under_private_taint():
 
         assert result is not None and result["action"] == "block", command
         rows = plugin._activity_rows({}, limit=5)
-        assert "verifier authorization was weak" in rows[0]["reason"], command
+        assert "risk=low" in rows[0]["reason"], command
+        assert "authorization=weak" in rows[0]["reason"], command
+        assert "external private export needs corroborated authorization" in rows[0]["reason"], command
 
 
 def test_remote_download_to_artifact_does_not_autoapprove_under_private_taint():
@@ -354,7 +356,9 @@ def test_remote_download_to_artifact_does_not_autoapprove_under_private_taint():
     assert result is not None and result["action"] == "block"
     rows = plugin._activity_rows({}, limit=5)
     assert rows[0]["rule_source"] != "safe_remote_read"
-    assert "verifier authorization was weak" in rows[0]["reason"]
+    assert "risk=low" in rows[0]["reason"]
+    assert "authorization=weak" in rows[0]["reason"]
+    assert "external private export needs corroborated authorization" in rows[0]["reason"]
 
 
 def test_execute_code_pending_approval_keeps_sanitized_code_detail():
@@ -459,7 +463,9 @@ def test_unsafe_remote_read_still_needs_corroboration():
 
     assert result is not None and result["action"] == "block"
     rows = plugin._activity_rows({}, limit=5)
-    assert "verifier authorization was weak" in rows[0]["reason"]
+    assert "risk=low" in rows[0]["reason"]
+    assert "authorization=weak" in rows[0]["reason"]
+    assert "external private export needs corroborated authorization" in rows[0]["reason"]
 
 
 def test_low_risk_message_send_with_weak_auth_still_needs_corroboration():
@@ -477,7 +483,9 @@ def test_low_risk_message_send_with_weak_auth_still_needs_corroboration():
 
     assert result is not None and result["action"] == "block"
     rows = plugin._activity_rows({}, limit=5)
-    assert "verifier authorization was weak" in rows[0]["reason"]
+    assert "risk=low" in rows[0]["reason"]
+    assert "authorization=weak" in rows[0]["reason"]
+    assert "external private export needs corroborated authorization" in rows[0]["reason"]
 
 
 def test_high_external_private_export_still_gates_without_owner_context():

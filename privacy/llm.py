@@ -406,12 +406,12 @@ def _llm_corroboration_downgrade_reason(
     authorization_level = str(verdict.get("authorization_level") or "").strip().lower()
     missing: list[str] = []
     if authorization_level not in {"explicit", "substantive"}:
-        missing.append(f"verifier authorization was {authorization_level or 'unknown'}")
+        missing.append(f"authorization={authorization_level or 'unknown'} is not explicit/substantive")
     if not owner_context_present:
         missing.append("owner/cron authorization context was absent")
     if not missing:
         return ""
-    return "external private export lacks corroboration: " + "; ".join(missing)
+    return "external private export needs corroborated authorization: " + "; ".join(missing)
 
 
 def _llm_verdict_input(shape: dict[str, Any], args: Any, *, expand_owner_context: bool = False) -> dict[str, Any]:
