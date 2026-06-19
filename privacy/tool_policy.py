@@ -1268,6 +1268,8 @@ def _intrinsic_mcp_sink_destination(lower: str, args: Any, args_text: str) -> st
         return _intrinsic_destination(args, default=_mcp_destination(lower))
     destination = _intrinsic_destination(args, default="")
     if destination:
+        if _is_mcp_write_tool(lower):
+            return _mcp_destination(lower)
         return destination
     return ""
 

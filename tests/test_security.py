@@ -490,6 +490,26 @@ def test_mcp_read_query_callback_still_intrinsic_network_sink():
     assert "same-call MCP private source plus network/share sink" in result["message"]
 
 
+def test_mcp_write_with_content_url_uses_connector_destination():
+    plugin = load_plugin()
+
+    result = plugin._on_pre_tool_call(
+        tool_name="mcp_craft_craft_write",
+        args={
+            "title": "Contacts from Notion",
+            "content": "Draft a contact note from https://app.notion.com/example-page",
+        },
+        session_id="s1",
+    )
+
+    assert result is not None
+    assert result["action"] == "block"
+    rows = plugin._activity_rows({"decision": "security_blocked"}, limit=5)
+    assert rows[0]["action_family"] == "mcp_write"
+    assert rows[0]["destination"] == "mcp:craft"
+    assert "destination=mcp:craft" in rows[0]["action_detail"]
+
+
 def test_transform_tool_result_logs_specific_content_pattern_taint_reason():
     plugin = load_plugin()
     bind_owner(plugin)
