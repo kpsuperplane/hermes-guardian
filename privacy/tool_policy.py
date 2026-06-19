@@ -11,6 +11,7 @@ import secrets
 from typing import Any
 from urllib.parse import urlparse
 
+from . import destinations
 from . import rules as rules_mod
 from . import terminal_analysis
 from .. import core
@@ -1274,6 +1275,19 @@ def _intrinsic_mcp_sink_destination(lower: str, args: Any, args_text: str) -> st
     return ""
 
 
+def _intrinsic_mcp_destination_is_self(destination: str) -> bool:
+    text = str(destination or "").strip().lower()
+    if not text.startswith("mcp:"):
+        return False
+    connector = text.split(":", 1)[1].strip()
+    if not connector:
+        return False
+    return (
+        destinations.resolve_destination_trust("mcp", connector, "write", "")
+        == destinations.DestinationTrust.SELF
+    )
+
+
 def _intrinsic_mcp_risk(lower: str, args: Any, args_text: str) -> dict[str, Any] | None:
     if not lower.startswith("mcp_"):
         return None
@@ -1282,6 +1296,8 @@ def _intrinsic_mcp_risk(lower: str, args: Any, args_text: str) -> dict[str, Any]
         return None
     destination = _intrinsic_mcp_sink_destination(lower, args, args_text)
     if not destination:
+        return None
+    if _intrinsic_mcp_destination_is_self(destination):
         return None
     return {
         "action_family": "mcp_write",

@@ -510,6 +510,38 @@ def test_mcp_write_with_content_url_uses_connector_destination():
     assert "destination=mcp:craft" in rows[0]["action_detail"]
 
 
+def test_mcp_write_to_self_connector_with_content_url_is_not_intrinsic_exfiltration():
+    plugin = load_plugin()
+    assert plugin._save_privacy_config({
+        "version": plugin._PRIVACY_RULE_FILE_VERSION,
+        "self": {
+            "destinations": ["store:files", "mcp:craft"],
+            "identities": [],
+            "hosts": [],
+        },
+        "privacy": {"egress_safety": "strict", "rules": []},
+    })
+    plugin._taint_session("s1", {"contacts", "documents"})
+
+    result = plugin._on_pre_tool_call(
+        tool_name="mcp_craft_craft_write",
+        args={
+            "title": "Contacts from Notion",
+            "content": "Draft a contact note from https://app.notion.com/example-page",
+        },
+        session_id="s1",
+    )
+
+    assert result is None
+    rows = plugin._activity_rows({}, limit=5)
+    assert rows[0]["decision"] == "allowed"
+    assert rows[0]["reason"] == "intra-boundary destination (self)"
+    assert rows[0]["action_family"] == "mcp_write"
+    assert rows[0]["destination"] == "mcp:craft"
+    assert rows[0]["destination_trust"] == "self"
+    assert rows[0]["decision_step"] == "step3_intra_boundary_self"
+
+
 def test_transform_tool_result_logs_specific_content_pattern_taint_reason():
     plugin = load_plugin()
     bind_owner(plugin)
