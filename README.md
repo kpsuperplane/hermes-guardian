@@ -605,14 +605,10 @@ set (content-bearing reads, `$`-expansion in output, real redirects, network
 tools, substitution, local artifact execution) taints the whole command.
 
 While a session is still untainted (and Egress Safety is not `off`), Guardian's
-`pre_llm_call` hook returns a short static hygiene note that Hermes appends to
-the current turn's user message at API-call time only — never persisted. The note
-steers the agent toward purpose-built public read tools and simple terminal/code
-shapes: direct fetch-to-stdout for public network reads, metadata-only
-environment preflights, and no nested terminal runners, local content reads,
-downloads, substitutions, or execution unless the user explicitly needs them.
-This is guidance only; the actual terminal/code payload is still checked by the
-same policy path.
+`pre_llm_call` hook returns a short static hygiene note at most once per session.
+Hermes appends it to the LLM call at API-call time only — never persisted — and
+the text is wrapped as `HERMES_GUARDIAN_SYSTEM_MESSAGE`. This is guidance only;
+the actual terminal/code payload is still checked by the same policy path.
 
 Web and browser reads are confidence-gated: contact-shaped content (an address, a
 phone number, an `address`/`contact` field label) only taints when the host

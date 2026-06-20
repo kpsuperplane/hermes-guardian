@@ -86,13 +86,16 @@ def _on_pre_llm_call_impl(
     )
     if chat_type:
         state["chat_type"] = chat_type
-    # While the session is still clean, hand the agent an ephemeral hygiene note
-    # (Hermes appends it to the current turn's user message at API-call time only).
-    # Once tainted — or with privacy checks off — the note has nothing to protect.
+    # While the session is still clean, hand the agent a one-time hygiene note
+    # (Hermes appends it to the LLM call at API-call time only). Once tainted,
+    # already sent, or with privacy checks off, the note has nothing to add.
     if rules._egress_safety_mode() == "off":
         return None
     if tool_policy._session_taint(session_id):
         return None
+    if state.get("taint_hygiene_note_sent"):
+        return None
+    state["taint_hygiene_note_sent"] = True
     return core._TAINT_HYGIENE_NOTE
 
 
