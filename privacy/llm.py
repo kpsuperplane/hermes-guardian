@@ -395,13 +395,19 @@ def _llm_corroboration_downgrade_reason(
     touches intra-boundary allows or reads (``_is_external_private_export`` excludes them).
     A low-risk verifier allow for a structurally safe public remote read is not a private
     export for corroboration purposes; the conservative safe-remote-read helper remains
-    the eligibility boundary.
+    the eligibility boundary. Low-risk web/browser reads with actual owner/cron context
+    are treated the same way: they pull public content into the agent, and any later
+    send/post/type action is gated separately.
     """
     if verdict.get("outcome") != "allow":
         return ""
     if not _is_external_private_export(shape):
         return ""
-    if str(verdict.get("risk_level") or "").strip().lower() == "low" and safe_remote_read:
+    risk_level = str(verdict.get("risk_level") or "").strip().lower()
+    action_family = str(shape.get("action_family") or "").strip().lower()
+    if risk_level == "low" and safe_remote_read:
+        return ""
+    if risk_level == "low" and owner_context_present and action_family in {"web_read", "browser_read"}:
         return ""
     authorization_level = str(verdict.get("authorization_level") or "").strip().lower()
     missing: list[str] = []

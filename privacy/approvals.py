@@ -770,7 +770,19 @@ def _remember_user_request(event: Any) -> None:
     if not isinstance(text, str) or not text.strip():
         return
     owner_hash = tool_policy._owner_hash_from_event(event)
+    _remember_owner_request_text(owner_hash, text)
+
+
+def _remember_owner_request_text(owner_hash: str, text: str) -> None:
+    """Cache sanitized owner-authored request text for verifier authorization.
+
+    This is the direct-text twin of `_remember_user_request` for trusted local
+    origins such as the CLI, where Hermes exposes the current user turn through
+    `pre_llm_call` rather than a gateway event object.
+    """
     if not _owner_is_authenticated(owner_hash):
+        return
+    if not isinstance(text, str) or not text.strip():
         return
     # A new owner message starts a fresh turn: reset the cross-channel egress lockdown
     # so a denial in the previous turn does not persist into this one, and rotate the

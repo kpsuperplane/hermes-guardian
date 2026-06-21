@@ -186,7 +186,10 @@ def _is_public_web_host(host: str) -> bool:
 
 
 def _canonical_public_url_match_key(value: Any) -> tuple[str, str]:
-    parsed = urlparse(str(value or "").strip())
+    try:
+        parsed = urlparse(str(value or "").strip())
+    except ValueError:
+        return "", ""
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
         return "", ""
     host = _safe_host_from_url(str(value or ""))

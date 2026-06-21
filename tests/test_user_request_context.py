@@ -87,6 +87,57 @@ def test_authenticated_owner_request_is_attached_and_enables_allow(monkeypatch):
     assert "submit this form" in request
 
 
+def test_cli_owner_request_is_attached_and_enables_public_lookup():
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    fake_llm = FakeSecurityLlm({
+        "outcome": "allow",
+        "risk_level": "low",
+        "authorization_level": "weak",
+        "rationale": "public restaurant lookup is consistent with the owner request",
+    })
+    plugin.state._PLUGIN_LLM = fake_llm
+
+    phrase = "Add south fork in north bend to my true list"
+    plugin._on_pre_llm_call(session_id="s1", platform="cli", sender_id="", user_message=phrase)
+    plugin._taint_session("s1", {"contacts"})
+
+    result = plugin._on_pre_tool_call(
+        "web_search",
+        {"query": "South Fork restaurant details north bend"},
+        session_id="s1",
+    )
+
+    assert result is None
+    assert not plugin._PENDING_APPROVALS
+    payload = json.loads(fake_llm.calls[0]["input"][0]["text"])
+    context = payload["user_request_context"]
+    assert context["mode"] == "minimal"
+    assert context["latest_sanitized_owner_message"] == phrase
+
+
+def test_low_risk_web_read_without_owner_context_still_requires_approval():
+    plugin = load_plugin()
+    save_privacy_config(plugin, mode="llm")
+    plugin.state._PLUGIN_LLM = FakeSecurityLlm({
+        "outcome": "allow",
+        "risk_level": "low",
+        "authorization_level": "weak",
+        "rationale": "public lookup, but no authenticated owner request was attached",
+    })
+    plugin._taint_session("s1", {"documents"})
+
+    result = plugin._on_pre_tool_call(
+        "web_search",
+        {"query": "South Fork restaurant details north bend"},
+        session_id="s1",
+    )
+
+    assert result is not None
+    assert result["action"] == "block"
+    assert plugin._PENDING_APPROVALS
+
+
 def test_unauthenticated_sender_request_is_not_attached(monkeypatch):
     # No configured owner: a gateway message is not trusted as authorization.
     monkeypatch.delenv("TELEGRAM_ALLOWED_USERS", raising=False)
@@ -134,6 +185,19 @@ def test_security_sensitive_message_is_not_cached(monkeypatch):
 
     owner_hash = plugin._hash_identity("telegram", "owner")
     assert plugin._latest_owner_request_for_owner(owner_hash) == ""
+
+
+def test_security_sensitive_cli_message_is_not_cached():
+    plugin = load_plugin()
+
+    plugin._on_pre_llm_call(
+        session_id="s1",
+        platform="cli",
+        sender_id="",
+        user_message="My password reset code is 123456",
+    )
+
+    assert plugin._latest_owner_request_for_owner(plugin._CLI_OWNER_HASH) == ""
 
 
 def test_cached_request_redacts_pii_before_storage(monkeypatch):

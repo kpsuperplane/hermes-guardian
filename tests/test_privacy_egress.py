@@ -634,6 +634,20 @@ def test_tainted_web_extract_discovered_url_mismatch_still_gates():
     assert "Action: web_read" in result["message"]
 
 
+def test_malformed_public_discovered_url_is_ignored():
+    plugin = load_plugin()
+    bind_owner(plugin)
+    assert plugin._on_pre_tool_call("web_search", {"query": "public briefing news"}, session_id="s1") is None
+
+    result = plugin._on_transform_tool_result(
+        "web_search",
+        "Malformed public result: https://[not-an-ipv6]/place",
+        session_id="s1",
+    )
+
+    assert result is None
+
+
 def test_private_discovered_url_is_not_remembered_for_tainted_web_extract():
     plugin = load_plugin()
     bind_owner(plugin)

@@ -16,6 +16,37 @@ from .runtime import activity_store
 from .security import module as security_module
 
 
+def _user_message_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, dict):
+        return ""
+    if str(value.get("role") or "user").strip().lower() != "user":
+        return ""
+    content = value.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") in {"text", "input_text"}:
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return ""
+
+
+def _remember_cli_user_request_if_present(owner_hash: str, kwargs: dict[str, Any]) -> None:
+    if owner_hash != core._CLI_OWNER_HASH:
+        return
+    text = _user_message_text(kwargs.get("user_message"))
+    if not text.strip():
+        return
+    if security_module._sensitive_reason(text):
+        return
+    approvals._remember_owner_request_text(owner_hash, text)
+
 
 def _emit_fail_closed_activity(
     decision: str,
@@ -78,6 +109,7 @@ def _on_pre_llm_call_impl(
     state = tool_policy._ensure_session(session_id, owner_hash)
     state["platform"] = str(platform or "")
     state["sender_id"] = str(sender_id or "")
+    _remember_cli_user_request_if_present(owner_hash, kwargs)
     chat_type = str(
         kwargs.get("chat_type")
         or kwargs.get("channel_type")
